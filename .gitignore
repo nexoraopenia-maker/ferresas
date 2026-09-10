@@ -1,0 +1,17 @@
+# Secretos. `.env.bak` NO lo cubrían los patrones anteriores (`.env` y
+# `.env*.local`), así que un backup con credenciales se habría subido al
+# primer commit. Se ignora toda variante y se rescata solo el ejemplo.
+.env
+.env.*
+!.env.example
+
+node_modules/
+.next/
+out/
+
+# Cliente de Prisma: se regenera con `prisma generate`, no se versiona.
+src/generated/
+
+# Artefactos locales
+tsconfig.tsbuildinfo
+.DS_Store

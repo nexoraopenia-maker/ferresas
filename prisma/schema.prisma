@@ -1,0 +1,1113 @@
+// ============================================================================
+//  FerreSaaS — Prisma Schema
+//  SaaS multi-tenant para ferreterías.
+//
+//  ESTRATEGIA MULTI-TENANT: shared database / shared schema.
+//  Toda tabla de negocio lleva `tenantId` como primer FK después del `id`.
+//
+//  DEFENSA EN PROFUNDIDAD (3 capas):
+//   1. Sesión/middleware  -> resuelve tenantId + role (nunca desde el cliente).
+//   2. Server Action      -> revalida tenantId, role y estado de suscripción.
+//   3. Base de datos      -> este schema: FKs COMPUESTAS (tenantId, id).
+//      Un SaleItem no puede apuntar a un Product de otro tenant porque la FK
+//      es (tenantId, productId) -> Product(tenantId, id). El aislamiento deja
+//      de depender de que el desarrollador recuerde el `where`.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// Prisma 7: la conexión ya NO se declara aquí.
+//  - CLI (migrate/db/studio)  -> prisma.config.ts  (datasource.url)
+//  - Runtime (PrismaClient)   -> driver adapter pasado al constructor
+//    (@prisma/adapter-pg). Pendiente: se cablea en la Fase 5.
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================================
+//  ENUMS
+// ============================================================================
+
+/// SUPERADMIN es el dueño del SaaS: es el ÚNICO rol con tenantId nulo y el
+/// único autorizado a consultar entre tenants (siempre vía módulo auditado).
+enum Role {
+  SUPERADMIN
+  OWNER
+  ADMIN
+  ALMACENERO
+  VENDEDOR
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+enum PaymentProvider {
+  STRIPE
+  MERCADOPAGO
+  MANUAL
+}
+
+/// Qué puede hacer el tenant según su estado de cuenta. Se calcula en el
+/// servidor a partir de Subscription.status + días de mora; nunca en la UI.
+enum AccessLevel {
+  FULL
+  WARN
+  READ_ONLY
+  BLOCKED
+}
+
+enum UnitType {
+  UNIDAD
+  KILOGRAMO
+  GRAMO
+  METRO
+  CENTIMETRO
+  LITRO
+  GALON
+  CAJA
+  PAQUETE
+  DOCENA
+  MILLAR
+  ROLLO
+  PLANCHA
+  BOLSA
+  JUEGO
+  PAR
+  SERVICIO
+}
+
+/// Tipos de movimiento de inventario. La cantidad en StockMovement es SIGNADA:
+/// positiva para entradas, negativa para salidas.
+enum MovementType {
+  INICIAL
+  ENTRADA
+  SALIDA
+  AJUSTE
+  TRANSFERENCIA_ENTRADA
+  TRANSFERENCIA_SALIDA
+  VENTA
+  DEVOLUCION_CLIENTE
+  DEVOLUCION_PROVEEDOR
+  MERMA
+}
+
+enum MovementSource {
+  MANUAL
+  ESCANER
+  VENTA
+  COMPRA
+  TRANSFERENCIA
+  IMPORTACION
+  CONTEO
+}
+
+enum SaleStatus {
+  BORRADOR
+  COMPLETADA
+  ANULADA
+  DEVUELTA
+}
+
+enum QuoteStatus {
+  BORRADOR
+  ENVIADA
+  ACEPTADA
+  RECHAZADA
+  VENCIDA
+  CONVERTIDA
+}
+
+enum PurchaseStatus {
+  BORRADOR
+  RECIBIDA
+  ANULADA
+}
+
+enum DocumentType {
+  NOTA_VENTA
+  BOLETA
+  FACTURA
+  TICKET
+}
+
+enum PaymentMethod {
+  EFECTIVO
+  TARJETA_DEBITO
+  TARJETA_CREDITO
+  TRANSFERENCIA
+  YAPE
+  PLIN
+  CREDITO
+  OTRO
+}
+
+enum CustomerDocType {
+  DNI
+  RUC
+  CE
+  PASAPORTE
+  SIN_DOCUMENTO
+}
+
+/// Política del tenant cuando una venta excede el stock disponible (§5.4).
+enum StockPolicy {
+  BLOQUEAR
+  PERMITIR_CON_ADVERTENCIA
+}
+
+enum WebhookStatus {
+  RECIBIDO
+  PROCESADO
+  FALLIDO
+  IGNORADO
+}
+
+// ============================================================================
+//  FACTURACIÓN — Plan es global (sin tenantId): lo define el dueño del SaaS.
+// ============================================================================
+
+model Plan {
+  id          String  @id @default(cuid())
+  code        String  @unique // "free" | "basico" | "pro" | "empresa"
+  name        String
+  description String?
+
+  priceMonthly Decimal @db.Decimal(12, 2)
+  priceYearly  Decimal @db.Decimal(12, 2)
+  currency     String  @default("PEN")
+
+  // Identificadores del proveedor de pagos (fuente de verdad: el webhook).
+  stripeProductId    String?
+  stripePriceMonthly String?
+  stripePriceYearly  String?
+  mercadoPagoPlanId  String?
+
+  // Límites del plan. NULL = ilimitado. Se aplican al CREAR el recurso
+  // (Server Action), no solo en la UI (§5.2).
+  maxUsers               Int?
+  maxWarehouses          Int?
+  maxProducts            Int?
+  maxMonthlyTransactions Int?
+
+  trialDays Int     @default(14)
+  features  Json?
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenants       Tenant[]
+  subscriptions Subscription[]
+
+  @@index([isActive, sortOrder])
+  @@map("plans")
+}
+
+// ============================================================================
+//  TENANT — la ferretería. Raíz del árbol de aislamiento.
+// ============================================================================
+
+model Tenant {
+  id   String @id @default(cuid())
+  slug String @unique // subdominio / path del tenant
+
+  name      String
+  legalName String?
+  taxId     String? // RUC
+  email     String?
+  phone     String?
+  address   String?
+  logoUrl   String?
+
+  currency String  @default("PEN")
+  timezone String  @default("America/Lima")
+  locale   String  @default("es-PE")
+  /// IGV por defecto para productos nuevos (18% en Perú).
+  taxRate  Decimal @default(0.1800) @db.Decimal(5, 4)
+
+  /// Kill switch del Super Admin. Independiente del estado de suscripción:
+  /// un tenant puede estar ACTIVE en Stripe y aun así suspendido por abuso.
+  isActive        Boolean   @default(true)
+  suspendedAt     DateTime?
+  suspendedReason String?
+
+  /// §5.4 — qué hacer si la venta excede el stock disponible.
+  stockPolicy StockPolicy @default(BLOQUEAR)
+
+  planId String?
+  plan   Plan?   @relation(fields: [planId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  subscription   Subscription?
+  users          User[]
+  warehouses     Warehouse[]
+  categories     Category[]
+  products       Product[]
+  variants       ProductVariant[]
+  stocks         Stock[]
+  movements      StockMovement[]
+  customers      Customer[]
+  suppliers      Supplier[]
+  sales          Sale[]
+  saleItems      SaleItem[]
+  payments       Payment[]
+  quotes         Quote[]
+  quoteItems     QuoteItem[]
+  purchases      Purchase[]
+  purchaseItems  PurchaseItem[]
+  counters       DocumentCounter[]
+  usage          UsagePeriod[]
+  auditLogs      AuditLog[]
+  impersonations ImpersonationSession[]
+  webhookEvents  WebhookEvent[]
+
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("tenants")
+}
+
+// ============================================================================
+//  SUSCRIPCIÓN — el webhook del proveedor es la ÚNICA fuente de verdad (§5.2).
+//  Nada en la app escribe `status` salvo el handler del webhook.
+// ============================================================================
+
+model Subscription {
+  id       String @id @default(cuid())
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  planId String
+  plan   Plan   @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  provider PaymentProvider    @default(STRIPE)
+  status   SubscriptionStatus @default(TRIALING)
+
+  externalCustomerId     String?
+  externalSubscriptionId String? @unique
+  externalPriceId        String?
+
+  trialEndsAt        DateTime?
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  cancelAtPeriodEnd  Boolean   @default(false)
+  canceledAt         DateTime?
+
+  /// Marca de inicio de mora. El bloqueo progresivo (§5.2) se calcula como
+  /// now() - pastDueSince > graceDays  ->  READ_ONLY.
+  pastDueSince DateTime?
+  graceDays    Int       @default(7)
+
+  lastPaymentAt     DateTime?
+  lastPaymentAmount Decimal?  @db.Decimal(12, 2)
+  /// Último evento del proveedor aplicado: descarta webhooks fuera de orden.
+  lastEventId       String?
+  lastEventAt       DateTime?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([status, currentPeriodEnd])
+  @@index([externalCustomerId])
+  @@map("subscriptions")
+}
+
+/// Log crudo de webhooks. `externalEventId` único = idempotencia:
+/// reintentos del proveedor no duplican cobros ni cambios de estado.
+model WebhookEvent {
+  id       String  @id @default(cuid())
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  provider        PaymentProvider
+  externalEventId String
+  type            String
+  payload         Json
+  status          WebhookStatus   @default(RECIBIDO)
+  error           String?
+  attempts        Int             @default(0)
+  processedAt     DateTime?
+  createdAt       DateTime        @default(now())
+
+  @@unique([provider, externalEventId])
+  @@index([status, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("webhook_events")
+}
+
+// ============================================================================
+//  USUARIOS Y AUTENTICACIÓN (NextAuth)
+// ============================================================================
+
+model User {
+  id String @id @default(cuid())
+
+  /// NULL únicamente para SUPERADMIN (§5.3). Cualquier otro rol con
+  /// tenantId nulo es un bug de datos: validar en el callback de sesión.
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  email         String    @unique
+  emailVerified DateTime?
+  passwordHash  String?
+  name          String
+  phone         String?
+  image         String?
+
+  role     Role    @default(VENDEDOR)
+  isActive Boolean @default(true)
+
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  accounts       Account[]
+  sessions       Session[]
+  movements      StockMovement[]
+  sales          Sale[]
+  payments       Payment[]
+  quotes         Quote[]
+  purchases      Purchase[]
+  auditLogs      AuditLog[]             @relation("AuditActor")
+  impersonations ImpersonationSession[] @relation("Impersonator")
+  impersonated   ImpersonationSession[] @relation("Impersonated")
+
+  @@unique([tenantId, id])
+  @@index([tenantId, role])
+  @@index([tenantId, isActive])
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ============================================================================
+//  CATÁLOGO
+// ============================================================================
+
+model Warehouse {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  code      String
+  name      String
+  address   String?
+  phone     String?
+  isDefault Boolean @default(false)
+  isActive  Boolean @default(true)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  stocks    Stock[]
+  movements StockMovement[]
+  sales     Sale[]
+  quotes    Quote[]
+  purchases Purchase[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, code])
+  @@index([tenantId, isActive])
+  @@map("warehouses")
+}
+
+model Category {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name String
+  slug String
+
+  parentId String?
+  parent   Category?  @relation("CategoryTree", fields: [tenantId, parentId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+  children Category[] @relation("CategoryTree")
+
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  products Product[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, slug])
+  @@index([tenantId, parentId])
+  @@map("categories")
+}
+
+model Supplier {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name    String
+  taxId   String?
+  contact String?
+  phone   String?
+  email   String?
+  address String?
+  notes   String?
+
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  products  Product[]
+  purchases Purchase[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, taxId])
+  @@index([tenantId, name])
+  @@map("suppliers")
+}
+
+model Customer {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  docType   CustomerDocType @default(SIN_DOCUMENTO)
+  docNumber String?
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  notes     String?
+
+  creditLimit Decimal @default(0) @db.Decimal(12, 2)
+
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  sales  Sale[]
+  quotes Quote[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, docType, docNumber])
+  @@index([tenantId, name])
+  @@index([tenantId, phone])
+  @@map("customers")
+}
+
+model Product {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  categoryId String?
+  category   Category? @relation(fields: [tenantId, categoryId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  supplierId String?
+  supplier   Supplier? @relation(fields: [tenantId, supplierId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  sku     String
+  /// Código de barras leído con @zxing/browser (§5.1). Índice dedicado:
+  /// el escaneo debe resolver en una sola query por (tenantId, barcode).
+  barcode String?
+
+  name        String
+  description String?
+  brand       String?
+  imageUrl    String?
+
+  unitType UnitType @default(UNIDAD)
+
+  costPrice Decimal @default(0) @db.Decimal(12, 4)
+  salePrice Decimal @default(0) @db.Decimal(12, 4)
+  taxRate   Decimal @default(0.1800) @db.Decimal(5, 4)
+
+  /// Umbrales del semáforo (§5.1): rojo <= 0, ámbar <= minStock, verde resto.
+  minStock Decimal  @default(0) @db.Decimal(14, 4)
+  maxStock Decimal? @db.Decimal(14, 4)
+
+  /// false para servicios (mano de obra, corte, delivery): no mueven stock.
+  trackStock  Boolean @default(true)
+  hasVariants Boolean @default(false)
+
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  variants      ProductVariant[]
+  stocks        Stock[]
+  movements     StockMovement[]
+  saleItems     SaleItem[]
+  quoteItems    QuoteItem[]
+  purchaseItems PurchaseItem[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, sku])
+  @@unique([tenantId, barcode])
+  @@index([tenantId, isActive, name])
+  @@index([tenantId, categoryId])
+  @@index([tenantId, deletedAt])
+  @@map("products")
+}
+
+model ProductVariant {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  sku        String
+  barcode    String?
+  /// Nombre visible de la variante: "1/2 pulgada", "Rojo", "3m".
+  name       String
+  /// Atributos estructurados: { "medida": "1/2\"", "color": "rojo" }
+  attributes Json?
+
+  costPrice Decimal? @db.Decimal(12, 4)
+  salePrice Decimal? @db.Decimal(12, 4)
+  minStock  Decimal  @default(0) @db.Decimal(14, 4)
+
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  stocks        Stock[]
+  movements     StockMovement[]
+  saleItems     SaleItem[]
+  quoteItems    QuoteItem[]
+  purchaseItems PurchaseItem[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, sku])
+  @@unique([tenantId, barcode])
+  @@index([tenantId, productId])
+  @@map("product_variants")
+}
+
+// ============================================================================
+//  INVENTARIO
+// ============================================================================
+
+/// Stock por (producto|variante) + almacén. Es un CACHÉ materializado del
+/// ledger StockMovement: se actualiza SIEMPRE dentro del mismo
+/// prisma.$transaction que inserta el movimiento (§6.2). Nunca por separado.
+model Stock {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [tenantId, warehouseId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  productId String
+  product   Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  variantId String?
+  variant   ProductVariant? @relation(fields: [tenantId, variantId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  quantity Decimal @default(0) @db.Decimal(14, 4)
+  /// Reservado por cotizaciones aceptadas / ventas en curso.
+  /// Disponible = quantity - reserved.
+  reserved Decimal @default(0) @db.Decimal(14, 4)
+
+  /// Override del mínimo a nivel de almacén; si es NULL manda Product.minStock.
+  minStock Decimal? @db.Decimal(14, 4)
+
+  /// Bloqueo optimista para el UI optimista del móvil (§5.1): el cliente
+  /// envía la versión que leyó y el servidor rechaza si ya cambió.
+  version Int @default(0)
+
+  lastCountedAt  DateTime?
+  lastMovementAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // OJO: PostgreSQL trata cada NULL como distinto, así que este @@unique NO
+  // impide dos filas de stock para el mismo producto sin variante. La
+  // migración debe añadir a mano el índice parcial que sí lo impide:
+  //   CREATE UNIQUE INDEX stocks_no_variant_uniq ON stocks
+  //     ("tenantId", "warehouseId", "productId") WHERE "variantId" IS NULL;
+  @@unique([tenantId, warehouseId, productId, variantId])
+  @@index([tenantId, productId])
+  @@index([tenantId, warehouseId])
+  @@map("stocks")
+}
+
+/// Ledger inmutable de inventario. NUNCA se hace UPDATE ni DELETE: un error
+/// se corrige con un movimiento de AJUSTE que lo compensa.
+/// `quantity` es SIGNADA: SUM(quantity) por (producto, almacén) === Stock.quantity.
+model StockMovement {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [tenantId, warehouseId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  productId String
+  product   Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  variantId String?
+  variant   ProductVariant? @relation(fields: [tenantId, variantId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  /// Quién lo hizo. FK simple a User (User.tenantId es nullable por el
+  /// SUPERADMIN, así que no admite FK compuesta): la coincidencia de tenant
+  /// se valida en la Server Action.
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  type   MovementType
+  source MovementSource @default(MANUAL)
+
+  quantity     Decimal  @db.Decimal(14, 4)
+  /// Snapshot del stock resultante: permite auditar sin recalcular el ledger.
+  balanceAfter Decimal  @db.Decimal(14, 4)
+  unitCost     Decimal? @db.Decimal(12, 4)
+
+  /// Obligatorio para AJUSTE y MERMA (§6.6). Se valida con Zod, no aquí.
+  reason String?
+
+  /// Documento que originó el movimiento (venta, compra, transferencia).
+  referenceType   String?
+  referenceId     String?
+  /// Une las dos piernas (SALIDA + ENTRADA) de una transferencia.
+  transferGroupId String?
+
+  /// Clave de idempotencia enviada por el móvil: si la red falla y el cliente
+  /// reintenta, el mismo movimiento no se aplica dos veces (§5.1).
+  idempotencyKey String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, productId, createdAt])
+  @@index([tenantId, warehouseId, createdAt])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, referenceType, referenceId])
+  @@index([transferGroupId])
+  @@map("stock_movements")
+}
+
+// ============================================================================
+//  PUNTO DE VENTA
+// ============================================================================
+
+model Sale {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [tenantId, warehouseId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  customerId String?
+  customer   Customer? @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  quoteId String?
+  quote   Quote?  @relation("QuoteToSale", fields: [tenantId, quoteId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  /// Correlativo por tenant (ver DocumentCounter). Único dentro del tenant.
+  number       String
+  documentType DocumentType @default(NOTA_VENTA)
+  status       SaleStatus   @default(BORRADOR)
+
+  subtotal      Decimal @default(0) @db.Decimal(14, 2)
+  discountTotal Decimal @default(0) @db.Decimal(14, 2)
+  taxTotal      Decimal @default(0) @db.Decimal(14, 2)
+  total         Decimal @default(0) @db.Decimal(14, 2)
+  currency      String  @default("PEN")
+
+  /// Se marcó como vendida por debajo del stock disponible (§5.4,
+  /// política PERMITIR_CON_ADVERTENCIA). Útil para auditar quiebres.
+  soldBelowStock Boolean @default(false)
+
+  notes       String?
+  completedAt DateTime?
+  voidedAt    DateTime?
+  voidReason  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items    SaleItem[]
+  payments Payment[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, number])
+  // Relación 1-1 con Quote: una cotización se convierte en una sola venta.
+  @@unique([tenantId, quoteId])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, customerId])
+  @@index([tenantId, warehouseId, createdAt])
+  @@map("sales")
+}
+
+/// Los campos *Snapshot congelan nombre y costo al momento de la venta:
+/// si el producto cambia de precio o se borra, el histórico no se altera.
+model SaleItem {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  saleId String
+  sale   Sale   @relation(fields: [tenantId, saleId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  productId String
+  product   Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  variantId String?
+  variant   ProductVariant? @relation(fields: [tenantId, variantId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  nameSnapshot String
+  skuSnapshot  String
+  unitType     UnitType @default(UNIDAD)
+
+  quantity  Decimal @db.Decimal(14, 4)
+  unitPrice Decimal @db.Decimal(12, 4)
+  discount  Decimal @default(0) @db.Decimal(12, 4)
+  taxRate   Decimal @default(0.1800) @db.Decimal(5, 4)
+  /// Costo al momento de vender: sin esto el margen histórico es irrecuperable.
+  unitCost  Decimal @default(0) @db.Decimal(12, 4)
+  lineTotal Decimal @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, saleId])
+  @@index([tenantId, productId])
+  @@map("sale_items")
+}
+
+/// Una venta admite varios pagos (mixto: efectivo + Yape, etc.).
+model Payment {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  saleId String
+  sale   Sale   @relation(fields: [tenantId, saleId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  method    PaymentMethod
+  amount    Decimal       @db.Decimal(14, 2)
+  /// Nº de operación / voucher / últimos 4 dígitos.
+  reference String?
+  /// Vuelto entregado (solo aplica a EFECTIVO).
+  change    Decimal       @default(0) @db.Decimal(14, 2)
+
+  receivedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, saleId])
+  @@index([tenantId, method, receivedAt])
+  @@map("payments")
+}
+
+// ============================================================================
+//  COTIZACIONES
+// ============================================================================
+
+model Quote {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [tenantId, warehouseId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  customerId String?
+  customer   Customer? @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  number String
+  status QuoteStatus @default(BORRADOR)
+
+  subtotal      Decimal @default(0) @db.Decimal(14, 2)
+  discountTotal Decimal @default(0) @db.Decimal(14, 2)
+  taxTotal      Decimal @default(0) @db.Decimal(14, 2)
+  total         Decimal @default(0) @db.Decimal(14, 2)
+  currency      String  @default("PEN")
+
+  validUntil DateTime?
+  notes      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items QuoteItem[]
+  /// Venta generada al convertir la cotización (§5.4).
+  sale  Sale?       @relation("QuoteToSale")
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, number])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, customerId])
+  @@map("quotes")
+}
+
+model QuoteItem {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  quoteId String
+  quote   Quote  @relation(fields: [tenantId, quoteId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  productId String
+  product   Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  variantId String?
+  variant   ProductVariant? @relation(fields: [tenantId, variantId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  nameSnapshot String
+  skuSnapshot  String
+  unitType     UnitType @default(UNIDAD)
+
+  quantity  Decimal @db.Decimal(14, 4)
+  unitPrice Decimal @db.Decimal(12, 4)
+  discount  Decimal @default(0) @db.Decimal(12, 4)
+  taxRate   Decimal @default(0.1800) @db.Decimal(5, 4)
+  lineTotal Decimal @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, quoteId])
+  @@map("quote_items")
+}
+
+// ============================================================================
+//  COMPRAS (ingreso de mercadería)
+// ============================================================================
+
+model Purchase {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [tenantId, warehouseId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  supplierId String?
+  supplier   Supplier? @relation(fields: [tenantId, supplierId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  number     String
+  status     PurchaseStatus @default(BORRADOR)
+  invoiceRef String?
+
+  subtotal Decimal @default(0) @db.Decimal(14, 2)
+  taxTotal Decimal @default(0) @db.Decimal(14, 2)
+  total    Decimal @default(0) @db.Decimal(14, 2)
+  currency String  @default("PEN")
+
+  receivedAt DateTime?
+  notes      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items PurchaseItem[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, number])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, supplierId])
+  @@map("purchases")
+}
+
+model PurchaseItem {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  purchaseId String
+  purchase   Purchase @relation(fields: [tenantId, purchaseId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  productId String
+  product   Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  variantId String?
+  variant   ProductVariant? @relation(fields: [tenantId, variantId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  quantity  Decimal @db.Decimal(14, 4)
+  unitCost  Decimal @db.Decimal(12, 4)
+  taxRate   Decimal @default(0.1800) @db.Decimal(5, 4)
+  lineTotal Decimal @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, purchaseId])
+  @@index([tenantId, productId])
+  @@map("purchase_items")
+}
+
+// ============================================================================
+//  CORRELATIVOS, CUOTAS DE PLAN Y AUDITORÍA
+// ============================================================================
+
+/// Correlativos por tenant y tipo de documento. Se incrementa DENTRO de la
+/// misma transacción que crea la venta, con SELECT ... FOR UPDATE sobre la
+/// fila: dos cajeros vendiendo a la vez no pueden obtener el mismo número.
+model DocumentCounter {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  scope  String // "SALE" | "QUOTE" | "PURCHASE"
+  series String @default("001")
+  prefix String @default("")
+  next   Int    @default(1)
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, scope, series])
+  @@map("document_counters")
+}
+
+/// Contadores de uso por mes para el enforcement de límites del plan (§5.2).
+/// `period` en formato YYYY-MM sobre el timezone del tenant.
+model UsagePeriod {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  period String
+
+  salesCount     Int @default(0)
+  movementsCount Int @default(0)
+  quotesCount    Int @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, period])
+  @@map("usage_periods")
+}
+
+/// Acciones sensibles (§6.6). tenantId es nullable porque el SUPERADMIN
+/// también actúa fuera del ámbito de un tenant (ej. crear planes).
+model AuditLog {
+  id       String  @id @default(cuid())
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  actorId    String?
+  actor      User?   @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  actorRole  Role?
+  /// Congelado por si el usuario se borra después.
+  actorEmail String?
+
+  action     String // "tenant.suspend" | "plan.change" | "stock.adjust" | ...
+  entityType String?
+  entityId   String?
+
+  /// Motivo obligatorio para impersonation y acciones destructivas.
+  reason String?
+  before Json?
+  after  Json?
+
+  ipAddress       String?
+  userAgent       String?
+  /// Si la acción se ejecutó durante una impersonation, queda trazada.
+  impersonationId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}
+
+/// Soporte vía impersonation (§5.3). Requiere motivo y tiene expiración:
+/// una sesión sin `endedAt` y vencida no debe otorgar acceso.
+model ImpersonationSession {
+  id String @id @default(cuid())
+
+  superAdminId String
+  superAdmin   User   @relation("Impersonator", fields: [superAdminId], references: [id], onDelete: Cascade)
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  targetUserId String?
+  targetUser   User?   @relation("Impersonated", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  reason String
+
+  startedAt DateTime  @default(now())
+  expiresAt DateTime
+  endedAt   DateTime?
+
+  ipAddress String?
+  userAgent String?
+
+  @@index([tenantId, startedAt])
+  @@index([superAdminId, startedAt])
+  @@map("impersonation_sessions")
+}

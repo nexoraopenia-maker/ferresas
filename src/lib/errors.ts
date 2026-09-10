@@ -1,0 +1,61 @@
+/**
+ * Errores de negocio tipados (§6.7).
+ *
+ * Regla: un error de negocio es un RESULTADO ESPERADO, no una excepción
+ * genérica. La UI debe poder distinguir "stock insuficiente" (mostrar aviso)
+ * de "algo explotó" (mostrar toast rojo y loguear).
+ *
+ * Ninguno de estos mensajes incluye tenantId, IDs internos ni datos de otro
+ * tenant: son texto seguro para mostrar al usuario final (§6.8).
+ */
+
+export type BusinessErrorCode =
+  | 'UNAUTHENTICATED'
+  | 'RATE_LIMITED'
+  | 'TENANT_MISMATCH'
+  | 'SUBSCRIPTION_BLOCKED'
+  | 'SUBSCRIPTION_READ_ONLY'
+  | 'PLAN_LIMIT_REACHED'
+  | 'PLAN_UNAVAILABLE'
+  | 'DUPLICATE_CODE'
+  | 'INSUFFICIENT_STOCK'
+  | 'FORBIDDEN_ROLE'
+  | 'STOCK_CONFLICT'
+
+export class BusinessError extends Error {
+  readonly code: BusinessErrorCode
+  /** Datos no sensibles para que la UI renderice el detalle. */
+  readonly details?: Record<string, string | number>
+
+  constructor(
+    code: BusinessErrorCode,
+    message: string,
+    details?: Record<string, string | number>,
+  ) {
+    super(message)
+    this.name = 'BusinessError'
+    this.code = code
+    this.details = details
+  }
+}
+
+/**
+ * Fuga de aislamiento detectada. Nunca debería ocurrir en producción: si
+ * salta, hay un bug de seguridad. El mensaje al cliente es deliberadamente
+ * opaco; el contexto real va al log del servidor.
+ */
+export class TenantIsolationError extends BusinessError {
+  constructor(message = 'Recurso no disponible.') {
+    super('TENANT_MISMATCH', message)
+    this.name = 'TenantIsolationError'
+  }
+}
+
+export function isBusinessError(e: unknown): e is BusinessError {
+  return e instanceof BusinessError
+}
+
+/** Resultado tipado para Server Actions (§6.3, §6.7). */
+export type ActionResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; code: BusinessErrorCode | 'VALIDATION'; message: string; details?: unknown }

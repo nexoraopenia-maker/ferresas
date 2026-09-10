@@ -1,0 +1,135 @@
+@import 'tailwindcss';
+
+/* ============================================================================
+   FerreSaaS — Sistema visual industrial (§5.5)
+
+   Tailwind 4 define los tokens en CSS con @theme, no en tailwind.config.ts.
+   Cada variable declarada aquí genera automáticamente sus utilidades:
+   `--color-industrial-600` habilita bg-industrial-600, text-industrial-600,
+   border-industrial-600, ring-industrial-600, etc.
+
+   Entorno de uso: almacén con poca luz o patio a pleno sol, operario con
+   guantes y una sola mano libre. De ahí el contraste alto y los targets de
+   44px como mínimo absoluto.
+   ========================================================================= */
+
+@theme {
+  /* --- Primario: Naranja Industrial -------------------------------------
+     Ancla en amber-600 (#d97706), la acción principal: escanear, cobrar,
+     confirmar. Se reserva para eso — si todo es naranja, nada resalta. */
+  --color-industrial-50: #fffbeb;
+  --color-industrial-100: #fef3c7;
+  --color-industrial-200: #fde68a;
+  --color-industrial-300: #fcd34d;
+  --color-industrial-400: #fbbf24;
+  --color-industrial-500: #f59e0b;
+  --color-industrial-600: #d97706;
+  --color-industrial-700: #b45309;
+  --color-industrial-800: #92400e;
+  --color-industrial-900: #78350f;
+  --color-industrial-950: #451a03;
+
+  /* --- Secundario: Grafito ----------------------------------------------
+     Base slate/zinc para textos, headers y superficies oscuras. */
+  --color-graphite-50: #f8fafc;
+  --color-graphite-100: #f1f5f9;
+  --color-graphite-200: #e2e8f0;
+  --color-graphite-300: #cbd5e1;
+  --color-graphite-400: #94a3b8;
+  --color-graphite-500: #64748b;
+  --color-graphite-600: #475569;
+  --color-graphite-700: #334155;
+  --color-graphite-800: #1e293b;
+  --color-graphite-900: #0f172a;
+  --color-graphite-950: #020617;
+
+  /* --- Semáforo de stock (§5.1) -----------------------------------------
+     Tres estados, nunca más: verde saludable, ámbar cerca del mínimo, rojo
+     agotado. El color va SIEMPRE acompañado de texto o ícono — un 8% de los
+     hombres tiene daltonismo rojo-verde y esto se usa en ferreterías. */
+  --color-stock-ok: #059669;        /* emerald-600 */
+  --color-stock-ok-soft: #d1fae5;
+  --color-stock-low: #f59e0b;       /* amber-500  */
+  --color-stock-low-soft: #fef3c7;
+  --color-stock-out: #e11d48;       /* rose-600   */
+  --color-stock-out-soft: #ffe4e6;
+
+  /* --- Ergonomía táctil --------------------------------------------------
+     44px es el mínimo de las WCAG 2.2; 56px es lo que de verdad se acierta
+     con guante de trabajo, que es el caso real de §5.5. */
+  --spacing-touch: 2.75rem;    /* 44px — mínimo absoluto */
+  --spacing-touch-lg: 3.5rem;  /* 56px — botones primarios de almacén */
+  --spacing-touch-xl: 4.5rem;  /* 72px — teclado numérico del POS  */
+
+  --radius-sheet: 1.5rem;
+
+  /* Altura real del viewport móvil descontando la barra del navegador. */
+  --height-screen-safe: 100dvh;
+}
+
+/* --- Tokens semánticos: claro por defecto, oscuro por preferencia --------
+   El modo claro es el que se lee a pleno sol; el oscuro reduce el
+   deslumbramiento en almacén cerrado. */
+:root {
+  --color-surface: #ffffff;
+  --color-surface-raised: var(--color-graphite-50);
+  --color-surface-sunken: var(--color-graphite-100);
+  --color-ink: var(--color-graphite-900);
+  --color-ink-muted: var(--color-graphite-500);
+  --color-hairline: var(--color-graphite-200);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-surface: var(--color-graphite-900);
+    --color-surface-raised: var(--color-graphite-800);
+    --color-surface-sunken: var(--color-graphite-950);
+    --color-ink: var(--color-graphite-50);
+    --color-ink-muted: var(--color-graphite-400);
+    --color-hairline: var(--color-graphite-700);
+  }
+}
+
+@theme inline {
+  --color-surface: var(--color-surface);
+  --color-surface-raised: var(--color-surface-raised);
+  --color-surface-sunken: var(--color-surface-sunken);
+  --color-ink: var(--color-ink);
+  --color-ink-muted: var(--color-ink-muted);
+  --color-hairline: var(--color-hairline);
+}
+
+@layer base {
+  html {
+    /* Evita el zoom automático de iOS al enfocar un input < 16px. */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-ink);
+    /* Sin rebote elástico: el bottom sheet del escáner se siente nativo. */
+    overscroll-behavior-y: none;
+  }
+
+  /* Quita el flash gris al tocar en Android. */
+  button,
+  a {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Respeta a quien desactivó animaciones en el sistema. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@utility safe-bottom {
+  /* El botón primario nunca debe quedar bajo la barra de gestos del iPhone. */
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
+}

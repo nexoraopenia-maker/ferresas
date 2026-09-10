@@ -1,0 +1,173 @@
+import bcrypt from 'bcryptjs'
+import { Prisma } from '@/generated/prisma/client'
+import { prisma } from '@/lib/prisma'
+import { BusinessError } from '@/lib/errors'
+import { slugify, SLUGS_RESERVADOS, type RegisterInput } from './schemas'
+
+/**
+ * Alta de un tenant nuevo.
+ *
+ * ⚠️ EXCEPCIÓN DELIBERADA a la regla de oro (§3): usa el cliente `prisma`
+ * base y no `getTenantPrisma()`. No puede ser de otro modo — el tenant no
+ * existe todavía, así que no hay contexto que inyectar. Es el mismo caso que
+ * la resolución de sesión. Por eso cada `create` de aquí lleva su `tenantId`
+ * explícito y todo ocurre dentro de una única transacción.
+ *
+ * Lo que se crea, atómicamente:
+ *   Tenant → Subscription (TRIALING) → User (OWNER) → Warehouse por defecto
+ *
+ * El almacén no es opcional: sin él, el primer escaneo del ferretero
+ * fallaría con "no tienes ningún almacén activo" en su primer minuto de uso.
+ */
+
+export interface RegisterResult {
+  tenantId: string
+  slug: string
+  userId: string
+  trialEndsAt: Date
+  planName: string
+}
+
+const P2002_UNIQUE = 'P2002'
+
+/**
+ * Busca un slug libre. La colisión es esperable: "Ferretería El Sol" existe
+ * en media docena de ciudades.
+ */
+async function slugDisponible(base: string): Promise<string> {
+  const candidatos = [
+    base,
+    ...Array.from({ length: 20 }, (_, i) => `${base}-${i + 2}`),
+  ]
+
+  for (const c of candidatos) {
+    if (SLUGS_RESERVADOS.has(c)) continue
+    const existe = await prisma.tenant.findUnique({
+      where: { slug: c },
+      select: { id: true },
+    })
+    if (!existe) return c
+  }
+
+  // Con 20 homónimos, se corta por lo sano en vez de iterar sin fin.
+  return `${base}-${Date.now().toString(36)}`
+}
+
+export async function registerTenant(
+  input: RegisterInput,
+  now: Date = new Date(),
+): Promise<RegisterResult> {
+  // El plan se lee de la BD: los límites, el precio y los días de prueba
+  // salen de aquí, nunca de lo que mande el navegador.
+  const plan = await prisma.plan.findFirst({
+    where: { code: input.planCode, isActive: true },
+    select: { id: true, name: true, trialDays: true },
+  })
+
+  if (!plan) {
+    throw new BusinessError('PLAN_UNAVAILABLE', 'El plan seleccionado no está disponible.')
+  }
+
+  // Comprobación temprana para dar un error claro. La garantía real es el
+  // índice único de `email`, que se maneja en el catch.
+  const emailTomado = await prisma.user.findUnique({
+    where: { email: input.email },
+    select: { id: true },
+  })
+  if (emailTomado) {
+    throw new BusinessError(
+      'DUPLICATE_CODE',
+      'Ya existe una cuenta con este correo. Inicia sesión o usa otro.',
+    )
+  }
+
+  const slug = await slugDisponible(slugify(input.businessName))
+  const trialEndsAt = new Date(now.getTime() + plan.trialDays * 24 * 60 * 60 * 1000)
+
+  // El hash va FUERA de la transacción: bcrypt con coste 12 tarda ~100 ms y
+  // mantener una transacción abierta ese tiempo desperdicia una conexión del
+  // pooler en cada registro.
+  const passwordHash = await bcrypt.hash(input.password, 12)
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const tenant = await tx.tenant.create({
+        data: {
+          slug,
+          name: input.businessName,
+          taxId: input.taxId || null,
+          phone: input.phone || null,
+          email: input.email,
+          planId: plan.id,
+        },
+        select: { id: true, slug: true },
+      })
+
+      await tx.subscription.create({
+        data: {
+          tenantId: tenant.id,
+          planId: plan.id,
+          // TRIALING sin proveedor de pagos todavía: el checkout llega
+          // cuando el ferretero decide pagar. Obligarle a poner tarjeta para
+          // probar es la forma más rápida de perderlo.
+          provider: 'MANUAL',
+          status: 'TRIALING',
+          trialEndsAt,
+        },
+      })
+
+      const user = await tx.user.create({
+        data: {
+          tenantId: tenant.id,
+          email: input.email,
+          name: input.ownerName,
+          role: 'OWNER',
+          passwordHash,
+        },
+        select: { id: true },
+      })
+
+      await tx.warehouse.create({
+        data: {
+          tenantId: tenant.id,
+          code: 'PRIN',
+          name: 'Almacén principal',
+          isDefault: true,
+        },
+      })
+
+      await tx.auditLog.create({
+        data: {
+          tenantId: tenant.id,
+          actorId: user.id,
+          actorRole: 'OWNER',
+          actorEmail: input.email,
+          action: 'tenant.register',
+          entityType: 'Tenant',
+          entityId: tenant.id,
+          after: { slug: tenant.slug, plan: plan.name, trialEndsAt: trialEndsAt.toISOString() },
+        },
+      })
+
+      return {
+        tenantId: tenant.id,
+        slug: tenant.slug,
+        userId: user.id,
+        trialEndsAt,
+        planName: plan.name,
+      }
+    })
+  } catch (e) {
+    // Carrera: dos registros con el mismo correo en el mismo instante.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === P2002_UNIQUE) {
+      const campos = (e.meta?.target as string[] | undefined)?.join(', ') ?? ''
+      throw new BusinessError(
+        'DUPLICATE_CODE',
+        campos.includes('slug')
+          ? 'Ese nombre de ferretería ya está tomado. Prueba con otro.'
+          : 'Ya existe una cuenta con este correo. Inicia sesión o usa otro.',
+      )
+    }
+    throw e
+  }
+}

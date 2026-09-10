@@ -1,0 +1,53 @@
+Actúa como un Ingeniero de Software Senior especializado en arquitecturas SaaS, TypeScript, Next.js (App Router), Tailwind CSS y Prisma ORM.
+
+Tu objetivo es construir un SaaS multi-tenant para ferreterías y negocios afines, optimizado para Vercel, con enfoque en usabilidad móvil para inventarios y un sistema robusto de monetización y control de cuentas.
+
+---
+
+### Sistema Visual y Paleta de Colores (Tailwind CSS)
+Identidad visual de alto contraste para entornos de almacén:
+* Primary (Naranja Industrial): amber-600 / orange-600 (acciones, botones de escaneo).
+* Secondary (Grafito): slate-900 / zinc-900 (textos, headers).
+* Semáforo de Stock: Óptimo (emerald-600), Crítico (amber-500), Quiebre (rose-600).
+
+---
+
+### Orden de Ejecución Paso a Paso
+
+#### Fase 1: Arquitectura Base y Setup Multi-Tenant
+1. Define la estructura en Next.js (App Router) usando TypeScript y Tailwind CSS.
+2. Configura los módulos por dominio:
+   * /app/(auth): Registro, login y resolución de tenant.
+   * /app/(dashboard): Layout para las ferreterías (clientes).
+   * /app/(superadmin): Panel Maestro (Solo para el dueño del SaaS). Para gestionar cuentas, ver MRR y bloquear/activar clientes.
+   * /app/api: Rutas API seguras para sincronización y webhooks de pagos.
+
+#### Fase 2: Modelo de Datos Multi-Tenant & Facturación (Prisma Schema)
+Diseña el esquema schema.prisma con aislamiento por tenantId. Debe incluir:
+1. Organization (Tenant): Datos fiscales, logo, y estado de la cuenta (isActive, planTier).
+2. Subscription: Manejo de pagos (ej. Stripe). Campos: stripeCustomerId, status (TRIAL, ACTIVE, PAST_DUE, CANCELED), currentPeriodEnd.
+3. User: Roles (SUPERADMIN, OWNER, ADMIN, CASHIER, WAREHOUSE).
+4. Product: id, tenantId, barcode, currentStock, minStock, unitType, etc.
+5. StockMovement: Auditoría estricta de inventario.
+
+#### Fase 3: Módulo de Inventario Mobile-First (Escáner)
+1. Implementa @zxing/browser para lectura de códigos de barras/QR desde el navegador móvil.
+2. Flujo ultrarrápido (Bottom Sheet):
+   * Al escanear, muestra stock actual y un selector táctil grande (+1, +5, +10, input directo).
+   * Tipos de movimiento: Entrada, Salida, Ajuste.
+   * Si no existe: Formulario exprés (Nombre, Precio, Stock Inicial).
+
+#### Fase 4: Suscripciones y Panel Super Admin (Monetización)
+1. Middleware de Acceso: Bloquea automáticamente el acceso al /app/(dashboard) si la cuenta de la ferretería está en estado PAST_DUE o CANCELED, redirigiendo a un portal de pago.
+2. Dashboard Super Admin: Tabla con listado de ferreterías, métricas de suscripciones, y botón de "Desactivar Cuenta" o "Iniciar sesión como cliente" para soporte.
+
+#### Fase 5: Lógica Backend Segura (Server Actions)
+1. Toda acción a la base de datos (ej. updateStockAction) debe verificar:
+   * Autenticación del usuario.
+   * El tenantId coincida (para evitar fugas de datos).
+   * La organización tenga una suscripción activa (isActive == true).
+
+---
+
+### Entregable Requerido:
+Por favor, comienza ejecutando la Fase 2 entregando únicamente el archivo schema.prisma completo y listo para producción, incluyendo los modelos de Subscription, Organization, Product y StockMovement.
