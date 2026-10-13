@@ -101,6 +101,55 @@ function startsWithAny(pathname: string, prefixes: readonly string[]) {
   return prefixes.some((p) => pathname === p || pathname.startsWith(`${p}/`))
 }
 
+/**
+ * Rutas que NO necesitan resolver la sesión para decidir si pasan.
+ *
+ * ─── POR QUÉ EXISTE ESTA LISTA ───────────────────────────────────────────
+ *
+ * Resolver la sesión cuesta un `auth()` MÁS una consulta a Postgres. En un
+ * servidor propio eso es despreciable; en Vercel + Neon no:
+ *
+ *   · Neon suspende el cómputo tras unos minutos de inactividad. La primera
+ *     consulta después de un rato tarda segundos en despertarlo.
+ *   · El proxy corre ANTES que el handler, así que ese retraso se paga en
+ *     cada petición, incluida la POST de `/api/auth/callback/credentials`.
+ *
+ * Resultado: pulsas "Entrar" y la pantalla se queda colgada, porque antes de
+ * validar la contraseña el proxy está esperando a que Neon despierte para
+ * resolver una sesión que todavía no existe.
+ *
+ * Estas rutas se autentican por otra vía —firma HMAC los webhooks,
+ * CRON_SECRET el cron, el propio NextAuth su callback— o son públicas, así
+ * que la sesión no aporta nada a la decisión. Saltársela quita una consulta
+ * del camino crítico del login.
+ *
+ * `/login` NO está aquí: sí necesita saber si ya hay sesión, para mandar al
+ * usuario a su sitio en vez de enseñarle otra vez el formulario.
+ */
+const SKIP_SESSION_PREFIXES = [
+  /**
+   * TODA la superficie de API, sin excepción.
+   *
+   * No es solo rendimiento: el proxy no debe REDIRIGIR nunca una llamada de
+   * API. Un cliente que hace POST /api/tenants y recibe un 307 hacia una
+   * página HTML de login no tiene forma de entenderlo — espera JSON con un
+   * código de estado. Antes de este cambio, un SUPERADMIN (que no tiene
+   * tenantId) veía su propia llamada desviada a /superadmin por la regla que
+   * saca del dashboard a las sesiones sin negocio.
+   *
+   * Cada handler bajo /api se autentica por su cuenta y con el mecanismo que
+   * le toca: firma HMAC los webhooks, CRON_SECRET el cron, el propio NextAuth
+   * su callback, y sesión + rol los endpoints de gestión.
+   */
+  '/api',
+  '/registro',
+  '/legal',
+]
+
+export function requiresSessionLookup(pathname: string): boolean {
+  return !startsWithAny(pathname, SKIP_SESSION_PREFIXES)
+}
+
 export function resolveRouteAccess(input: {
   pathname: string
   session: RouteSession | null

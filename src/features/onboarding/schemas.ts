@@ -60,3 +60,26 @@ export const SLUGS_RESERVADOS = new Set([
   'api', 'admin', 'superadmin', 'login', 'registro', 'app', 'www',
   'facturacion', 'inventario', 'cuenta', 'soporte', 'legal', 'blog',
 ])
+
+/**
+ * Alta de un tenant desde la torre de control (§5.3).
+ *
+ * Reutiliza las mismas reglas que el autoservicio, con una diferencia: la
+ * contraseña es OPCIONAL. Si el Super Admin no la indica, el sistema genera
+ * una y la devuelve UNA sola vez para que se la pase al cliente. Es mejor que
+ * obligarle a inventarse una: las inventadas por una persona que crea veinte
+ * cuentas acaban siendo todas la misma.
+ */
+export const createTenantBySuperAdminSchema = registerSchema
+  .omit({ password: true })
+  .extend({
+    password: z
+      .string()
+      .min(8, 'Usa al menos 8 caracteres.')
+      .max(200, 'La contraseña es demasiado larga.')
+      .optional(),
+  })
+
+export type CreateTenantBySuperAdminInput = z.infer<
+  typeof createTenantBySuperAdminSchema
+>

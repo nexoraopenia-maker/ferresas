@@ -1,6 +1,8 @@
 import { requireSuperAdmin } from '@/lib/session'
+import { prisma } from '@/lib/prisma'
 import { getSuperAdminDashboard, getRecentAuditLog } from '@/features/superadmin/queries'
 import { TenantActions } from '@/features/superadmin/components/TenantActions'
+import { NewTenantForm } from '@/features/superadmin/components/NewTenantForm'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,9 +15,14 @@ const ACCESO_ESTILO: Record<string, string> = {
 
 export default async function SuperadminPage() {
   const admin = await requireSuperAdmin()
-  const [{ metrics, tenants }, auditoria] = await Promise.all([
+  const [{ metrics, tenants }, auditoria, planes] = await Promise.all([
     getSuperAdminDashboard(),
     getRecentAuditLog(10),
+    prisma.plan.findMany({
+      where: { isActive: true },
+      orderBy: { sortOrder: 'asc' },
+      select: { code: true, name: true, trialDays: true },
+    }),
   ])
 
   const money = (n: number) =>
@@ -28,9 +35,12 @@ export default async function SuperadminPage() {
           <h1 className="text-2xl font-bold text-ink">Torre de control</h1>
           <p className="text-sm text-ink-muted">{admin.email}</p>
         </div>
-        <span className="rounded-full bg-graphite-900 px-3 py-1 text-xs font-bold uppercase tracking-wide text-graphite-50">
-          Super Admin
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="rounded-full bg-graphite-900 px-3 py-1 text-xs font-bold uppercase tracking-wide text-graphite-50">
+            Super Admin
+          </span>
+          <NewTenantForm plans={planes} />
+        </div>
       </header>
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -105,7 +115,8 @@ export default async function SuperadminPage() {
               {tenants.length === 0 && (
                 <tr>
                   <td colSpan={8} className="px-3 py-8 text-center text-ink-muted">
-                    Todavía no hay ferreterías registradas.
+                    Todavía no hay ferreterías registradas. Usa «Nueva
+                    ferretería» para dar de alta la primera.
                   </td>
                 </tr>
               )}

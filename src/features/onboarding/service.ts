@@ -53,9 +53,22 @@ async function slugDisponible(base: string): Promise<string> {
   return `${base}-${Date.now().toString(36)}`
 }
 
+/**
+ * Quién da de alta la cuenta. En el autoservicio es el propio dueño; cuando
+ * la crea el Super Admin desde la torre de control hay que decirlo, o el
+ * AuditLog afirmaría que el ferretero se registró solo — y eso es justo el
+ * dato que haría falta el día que alguien pregunte de dónde salió una cuenta.
+ */
+export interface RegisterActor {
+  id: string
+  email: string
+  role: 'SUPERADMIN'
+}
+
 export async function registerTenant(
   input: RegisterInput,
   now: Date = new Date(),
+  actor?: RegisterActor,
 ): Promise<RegisterResult> {
   // El plan se lee de la BD: los límites, el precio y los días de prueba
   // salen de aquí, nunca de lo que mande el navegador.
@@ -139,13 +152,18 @@ export async function registerTenant(
       await tx.auditLog.create({
         data: {
           tenantId: tenant.id,
-          actorId: user.id,
-          actorRole: 'OWNER',
-          actorEmail: input.email,
-          action: 'tenant.register',
+          actorId: actor?.id ?? user.id,
+          actorRole: actor?.role ?? 'OWNER',
+          actorEmail: actor?.email ?? input.email,
+          action: actor ? 'tenant.create.superadmin' : 'tenant.register',
           entityType: 'Tenant',
           entityId: tenant.id,
-          after: { slug: tenant.slug, plan: plan.name, trialEndsAt: trialEndsAt.toISOString() },
+          after: {
+            slug: tenant.slug,
+            plan: plan.name,
+            trialEndsAt: trialEndsAt.toISOString(),
+            ownerEmail: input.email,
+          },
         },
       })
 

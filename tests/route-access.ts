@@ -92,5 +92,29 @@ console.log('\n7) FULL — sin fricción')
 check('cuenta ya regularizada no se queda atrapada en /cuenta-suspendida',
   at('/cuenta-suspendida', sess({ access: 'FULL' })).kind === 'redirect')
 
-console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
-process.exit(fail === 0 ? 0 : 1)
+
+async function bloque8() {
+  console.log('\n8) Rutas que NO deben resolver sesión (bloqueo del login en Vercel)')
+  const { requiresSessionLookup } = await import('@/lib/route-access')
+  const sinSesion = [
+    '/api/auth/callback/credentials',
+    '/api/auth/csrf',
+    '/api/auth/session',
+    '/api/webhooks/billing/stripe',
+    '/api/cron/expire-trials',
+    '/registro',
+    '/legal/terminos',
+  ]
+  for (const r of sinSesion) {
+    check(`${r} se resuelve sin tocar la BD`, !requiresSessionLookup(r))
+  }
+  const conSesion = ['/login', '/inventario', '/facturacion', '/superadmin', '/']
+  for (const r of conSesion) {
+    check(`${r} sí necesita la sesión`, requiresSessionLookup(r))
+  }
+}
+
+bloque8().then(() => {
+  console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
+  process.exit(fail === 0 ? 0 : 1)
+})

@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { auth } from '@/auth'
 import { getRouteSession } from '@/lib/session'
-import { resolveRouteAccess } from '@/lib/route-access'
+import { requiresSessionLookup, resolveRouteAccess } from '@/lib/route-access'
 import { IMPERSONATION_COOKIE } from '@/lib/impersonation'
 
 /**
@@ -23,6 +23,18 @@ import { IMPERSONATION_COOKIE } from '@/lib/impersonation'
  */
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl
+
+  /**
+   * Atajo sin NADA de E/S para las rutas que no dependen de la sesión.
+   *
+   * Es lo que quita el bloqueo del login en Vercel: la POST a
+   * /api/auth/callback/credentials ya no espera a que Neon despierte para
+   * resolver una sesión que aún no existe. Se sale antes de tocar `auth()`
+   * y antes de consultar la base.
+   */
+  if (!requiresSessionLookup(pathname)) {
+    return NextResponse.next()
+  }
 
   const token = await auth()
   const impersonationId = req.cookies.get(IMPERSONATION_COOKIE)?.value
