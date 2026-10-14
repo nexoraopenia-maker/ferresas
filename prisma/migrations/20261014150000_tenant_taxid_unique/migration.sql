@@ -1,0 +1,13 @@
+-- RUC único en todo el SaaS.
+--
+-- SEGURIDAD DE LA MIGRACIÓN: se comprobó antes de escribirla que no hay
+-- RUC duplicados en producción (0 duplicados, 0 cuentas con RUC), así que
+-- el índice se crea sin rechazar ninguna fila existente.
+--
+-- Es ADITIVA: no borra columnas ni cambia tipos. Los NULL no colisionan
+-- entre sí en Postgres, así que las cuentas sin RUC declarado conviven.
+--
+-- Si en el futuro esta migración se aplicara a una base CON duplicados,
+-- fallaría en seco en lugar de perder datos — que es el comportamiento
+-- correcto: hay que resolver los duplicados a mano antes.
+CREATE UNIQUE INDEX "tenants_taxId_key" ON "tenants"("taxId");

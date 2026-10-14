@@ -4,6 +4,7 @@ import { getSuperAdminDashboard, getRecentAuditLog } from '@/features/superadmin
 import { NewTenantForm } from '@/features/superadmin/components/NewTenantForm'
 import { ChangePasswordModal } from '@/features/superadmin/components/ChangePasswordModal'
 import { TenantTable, type TenantTableRow } from '@/features/superadmin/components/TenantTable'
+import { AuditTable, type AuditRow } from '@/features/superadmin/components/AuditTable'
 import type { PlanOpcion } from '@/features/superadmin/components/BillingPanel'
 
 export const dynamic = 'force-dynamic'
@@ -12,7 +13,7 @@ export default async function SuperadminPage() {
   const admin = await requireSuperAdmin()
   const [{ metrics, tenants }, auditoria, planes] = await Promise.all([
     getSuperAdminDashboard(),
-    getRecentAuditLog(12),
+    getRecentAuditLog(60),
     prisma.plan.findMany({
       where: { isActive: true },
       orderBy: { sortOrder: 'asc' },
@@ -36,6 +37,7 @@ export default async function SuperadminPage() {
     tenantId: t.id,
     tenantName: t.name,
     slug: t.slug,
+    legalName: t.legalName,
     ownerEmail: t.ownerEmail,
     ownerName: t.ownerName,
     billingEmail: t.billingEmail,
@@ -97,25 +99,22 @@ export default async function SuperadminPage() {
         <TenantTable rows={filas} plans={planOpciones} />
       </section>
 
-      <section className="rounded-2xl border border-hairline bg-surface p-4">
-        <h2 className="font-bold text-ink">Auditoría reciente</h2>
-        <ul className="mt-2 flex flex-col gap-2">
-          {auditoria.map((a) => (
-            <li key={a.id} className="flex flex-wrap gap-x-2 text-sm">
-              <span className="font-mono text-xs text-ink-muted">
-                {a.createdAt.toLocaleString('es-PE')}
-              </span>
-              <span className="font-semibold text-ink">{a.action}</span>
-              <span className="text-ink-muted">{a.tenant?.name ?? '—'}</span>
-              <span className="text-ink-muted">por {a.actorEmail ?? 'sistema'}</span>
-              {a.reason && <span className="w-full text-xs text-ink-muted">“{a.reason}”</span>}
-            </li>
-          ))}
-          {auditoria.length === 0 && (
-            <li className="text-sm text-ink-muted">Sin acciones sensibles registradas.</li>
-          )}
-        </ul>
-      </section>
+      <AuditTable
+        rows={auditoria.map((a): AuditRow => ({
+          id: a.id,
+          action: a.action,
+          actorEmail: a.actorEmail,
+          actorRole: a.actorRole,
+          tenantName: a.tenant?.name ?? null,
+          tenantSlug: a.tenant?.slug ?? null,
+          reason: a.reason,
+          before: a.before,
+          after: a.after,
+          ipAddress: a.ipAddress,
+          impersonationId: a.impersonationId,
+          createdAt: a.createdAt.toISOString(),
+        }))}
+      />
     </main>
   )
 }

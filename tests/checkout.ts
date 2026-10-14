@@ -46,6 +46,20 @@ async function nuevoTenant(estado: any = 'TRIALING', extra: any = {}) {
 }
 
 async function main() {
+  /**
+   * Los planes necesitan su `stripePriceMonthly` para que el checkout exista.
+   * Se prepara AQUÍ y no a mano: un test que depende de un paso manual
+   * previo pasa la primera vez y falla para quien lo corra después, en una
+   * base recién migrada — que es justo lo que ocurrió.
+   */
+  for (const [code, price] of [
+    ['basico', 'price_test_basico'],
+    ['pro', 'price_test_pro'],
+    ['premium', 'price_test_premium'],
+  ] as const) {
+    await prisma.plan.update({ where: { code }, data: { stripePriceMonthly: price } })
+  }
+
   console.log('\n1) Sesión de checkout: qué se le manda a Stripe')
   const A = await nuevoTenant()
   const { visto, cliente } = fakeStripe()
@@ -56,7 +70,7 @@ async function main() {
   check('devuelve la URL de pago', r.url.startsWith('https://checkout.stripe.com/'))
   check('llama al endpoint correcto', visto.url === 'https://api.stripe.com/v1/checkout/sessions')
   check('modo suscripción', body.includes('mode=subscription'))
-  check('usa el priceId DE NUESTRA BD', body.includes('price_pro'))
+  check('usa el priceId DE NUESTRA BD', body.includes('price_test_pro'))
   check('manda client_reference_id con el tenant', body.includes(`client_reference_id=${A.t.id}`))
   check('y metadata[tenantId], para el webhook', body.includes(`metadata[tenantId]=${A.t.id}`))
   check('también en subscription_data (llega antes a veces)',
@@ -84,7 +98,7 @@ async function main() {
     planCode: 'premium', appUrl: 'http://x',
   }).then(() => null).catch((e) => e)
   check('un plan sin precio de Stripe no genera checkout', sinPrecio?.code === 'PLAN_UNAVAILABLE')
-  await prisma.plan.update({ where: { code: 'premium' }, data: { stripePriceMonthly: 'price_premium' } })
+  await prisma.plan.update({ where: { code: 'premium' }, data: { stripePriceMonthly: 'price_test_premium' } })
 
   console.log('\n3) EL CASO CRÍTICO: un moroso en READ_ONLY debe poder pagar')
   const B = await nuevoTenant('PAST_DUE', { pastDueSince: new Date('2026-01-01') })

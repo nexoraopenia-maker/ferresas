@@ -12,9 +12,15 @@ import { ROUTES } from '@/lib/route-access'
 import { IMPERSONATION_COOKIE, IMPERSONATION_MAX_MINUTES } from '@/lib/impersonation'
 import {
   reactivateTenantSchema,
+  resetOwnerPasswordSchema,
   startImpersonationSchema,
   suspendTenantSchema,
+  updateTenantProfileSchema,
 } from './schemas'
+import {
+  resetOwnerPassword as runResetPassword,
+  updateTenantProfile as runUpdateProfile,
+} from './tenant-admin-service'
 
 /**
  * Acciones del Panel Maestro (§5.3).
@@ -329,4 +335,61 @@ export async function endImpersonation() {
   }
 
   redirect(ROUTES.superadmin)
+}
+
+// ---------------------------------------------------------------------------
+//  GESTIÓN DE CUENTAS DE CLIENTE
+// ---------------------------------------------------------------------------
+
+/**
+ * Resetea la contraseña del dueño de una ferretería.
+ *
+ * Devuelve la contraseña temporal UNA sola vez: en la base solo queda su
+ * hash y no hay forma de recuperarla después.
+ */
+export async function resetTenantOwnerPassword(
+  raw: unknown,
+): Promise<ActionResult<{ userEmail: string; temporaryPassword: string }>> {
+  const parsed = resetOwnerPasswordSchema.safeParse(raw)
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: 'VALIDATION',
+      message: 'Falta el motivo del reseteo (mínimo 10 caracteres).',
+      details: z.flattenError(parsed.error).fieldErrors,
+    }
+  }
+
+  try {
+    const admin = await requireSuperAdmin()
+    const r = await runResetPassword(parsed.data, { id: admin.id, email: admin.email })
+    revalidatePath(ROUTES.superadmin)
+    return { ok: true, data: r }
+  } catch (e) {
+    return fallo(e, 'resetTenantOwnerPassword')
+  }
+}
+
+/** Edita los datos fiscales y de contacto de una ferretería. */
+export async function updateTenantProfileAction(
+  raw: unknown,
+): Promise<ActionResult<{ cambios: string[] }>> {
+  const parsed = updateTenantProfileSchema.safeParse(raw)
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: 'VALIDATION',
+      message: 'Revisa los datos del perfil.',
+      details: z.flattenError(parsed.error).fieldErrors,
+    }
+  }
+
+  try {
+    const admin = await requireSuperAdmin()
+    const r = await runUpdateProfile(parsed.data, { id: admin.id, email: admin.email })
+    revalidatePath(ROUTES.superadmin)
+    return { ok: true, data: { cambios: r.cambios } }
+  } catch (e) {
+    return fallo(e, 'updateTenantProfileAction')
+  }
 }

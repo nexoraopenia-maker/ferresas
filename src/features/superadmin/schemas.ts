@@ -80,3 +80,45 @@ export const extendTrialSchema = z.object({
 })
 
 export type ExtendTrialInput = z.infer<typeof extendTrialSchema>
+
+/**
+ * Reseteo de la contraseña del dueño de una ferretería, hecho por soporte.
+ *
+ * No pide la contraseña actual —el Super Admin no la conoce— así que el
+ * control es el rol más el motivo auditado. La nueva la genera el sistema:
+ * dejar que soporte la elija termina en que las veinte cuentas comparten la
+ * misma.
+ */
+export const resetOwnerPasswordSchema = z.object({
+  tenantId: z.string().min(1).max(64),
+  /** Usuario concreto; si falta, se resetea al OWNER del tenant. */
+  userId: z.string().min(1).max(64).optional(),
+  reason: z
+    .string()
+    .trim()
+    .min(10, 'Explica el motivo con al menos 10 caracteres.')
+    .max(500),
+})
+
+export type ResetOwnerPasswordInput = z.infer<typeof resetOwnerPasswordSchema>
+
+/** Edición de los datos fiscales y de contacto de una ferretería. */
+export const updateTenantProfileSchema = z.object({
+  tenantId: z.string().min(1).max(64),
+  name: z.string().trim().min(3, 'El nombre es muy corto.').max(120).optional(),
+  legalName: z.string().trim().max(160).optional(),
+  // 11 dígitos exactos: un RUC mal escrito invalida las facturas emitidas
+  // después, y eso no se ve hasta que SUNAT las rechaza.
+  taxId: z
+    .string()
+    .trim()
+    .regex(/^\d{11}$/, 'El RUC debe tener exactamente 11 dígitos.')
+    .optional()
+    .or(z.literal('')),
+  phone: z.string().trim().max(30).optional().or(z.literal('')),
+  email: z.email('Correo inválido.').max(200).optional().or(z.literal('')),
+  address: z.string().trim().max(300).optional().or(z.literal('')),
+  reason: z.string().trim().min(10, 'Explica el motivo.').max(500),
+})
+
+export type UpdateTenantProfileInput = z.infer<typeof updateTenantProfileSchema>

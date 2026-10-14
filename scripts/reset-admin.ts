@@ -1,4 +1,15 @@
-import 'dotenv/config'
+/**
+ * Carga de entorno: `.env.local` ANTES de `.env`.
+ *
+ * dotenv no sobrescribe lo ya definido, así que `.env.local` —donde vive
+ * staging— gana sobre `.env` —producción—. Sin este orden, el CLI de Prisma
+ * apuntaba siempre a producción aunque `.env.local` dijera otra cosa: eso ya
+ * hizo que un `migrate deploy` y un `db seed` destinados a staging se
+ * ejecutaran contra la base real.
+ */
+import { config } from 'dotenv'
+config({ path: '.env.local' })
+config({ path: '.env' })
 import bcrypt from 'bcryptjs'
 import { prisma } from '../src/lib/prisma'
 import { verifyCredentialsDetailed } from '../src/lib/credentials'

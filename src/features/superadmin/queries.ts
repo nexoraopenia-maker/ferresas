@@ -16,6 +16,7 @@ export interface TenantRow {
   id: string
   name: string
   slug: string
+  legalName: string | null
   // --- Contacto ---
   /** Correo del usuario OWNER: el que de verdad sirve para entrar. */
   ownerEmail: string | null
@@ -67,6 +68,7 @@ export async function getSuperAdminDashboard(
       isActive: true,
       suspendedReason: true,
       createdAt: true,
+      legalName: true,
       email: true,
       phone: true,
       taxId: true,
@@ -128,6 +130,7 @@ export async function getSuperAdminDashboard(
         id: tenant.id,
         name: tenant.name,
         slug: tenant.slug,
+        legalName: tenant.legalName,
         ownerEmail: owner?.email ?? null,
         ownerName: owner?.name ?? null,
         billingEmail: tenant.email,
@@ -168,6 +171,8 @@ export async function getRecentAuditLog(limit = 25) {
           'impersonation.start', 'impersonation.end',
           'tenant.create.superadmin', 'tenant.plan.change',
           'tenant.trial.extend', 'superadmin.password.change',
+          'tenant.password.reset', 'tenant.profile.update',
+          'taxdocument.issue', 'stock.adjust', 'trial.expired',
         ],
       },
     },
@@ -177,9 +182,14 @@ export async function getRecentAuditLog(limit = 25) {
       id: true,
       action: true,
       actorEmail: true,
+      actorRole: true,
       reason: true,
+      before: true,
+      after: true,
+      ipAddress: true,
+      impersonationId: true,
       createdAt: true,
-      tenant: { select: { name: true } },
+      tenant: { select: { name: true, slug: true } },
     },
   })
 }

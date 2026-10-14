@@ -241,7 +241,18 @@ model Tenant {
 
   name      String
   legalName String?
-  taxId     String? // RUC
+  /**
+   * RUC. Único en todo el SaaS, no solo por tenant.
+   * Un RUC identifica a UNA persona jurídica. Dos cuentas con el mismo RUC
+   * serían o un alta duplicada o un error de tecleo, y el problema no es
+   * cosmético: el RUC va impreso en los comprobantes, así que dos cuentas
+   * emitiendo bajo el mismo RUC con series independientes producirían
+   * correlativos solapados para un mismo contribuyente. Eso es una
+   * contingencia tributaria, no un duplicado molesto.
+   * Nullable: en Postgres los NULL no colisionan entre sí, así que las
+   * cuentas que aún no han declarado su RUC conviven sin problema.
+   */
+  taxId     String? @unique
   email     String?
   phone     String?
   address   String?
