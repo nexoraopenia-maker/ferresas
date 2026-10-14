@@ -1,4 +1,5 @@
 import { Prisma } from '@/generated/prisma/client'
+import type { MovementSource } from '@/generated/prisma/enums'
 import { BusinessError } from '@/lib/errors'
 import { hasRole, type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
@@ -66,6 +67,202 @@ async function ensureStockRow(
 }
 
 /**
+ * Cuerpo transaccional del movimiento de stock.
+ *
+ * Se exporta por separado para que el POS pueda descontar stock DENTRO de la
+ * transacción que registra la venta. Prisma no admite $transaction anidadas,
+ * así que sin esta separación habría que duplicar la lógica — y el día que
+ * alguien corrigiera el guard de concurrencia en un sitio y no en el otro,
+ * las ventas volverían a poder dejar el stock en negativo.
+ *
+ * El llamador es responsable de abrir la transacción y de comprobar el rol.
+ *
+ * `sourceOverride` existe para que el POS pueda marcar el movimiento como
+ * VENTA. El esquema Zod público NO admite ese valor a propósito: si lo
+ * hiciera, un cliente podría registrar una salida manual disfrazada de venta
+ * y el histórico de inventario dejaría de ser fiable. El origen interno se
+ * fija aquí, en código, no en el cuerpo de la petición.
+ */
+export async function applyStockMovement(
+  t: TenantPrismaClient,
+  ctx: TenantContext,
+  input: CreateStockMovementInput,
+  sourceOverride?: MovementSource,
+): Promise<StockMovementResult> {
+  const variantId = input.variantId ?? null
+
+  // 1. Producto: debe existir, ser del tenant (lo garantiza el cliente
+  //    aislado) y llevar control de stock.
+  const product = await t.product.findFirst({
+    where: { id: input.productId, deletedAt: null },
+    select: { id: true, name: true, trackStock: true, isActive: true, costPrice: true },
+  })
+
+  if (!product) {
+    throw new BusinessError('TENANT_MISMATCH', 'El producto no existe.')
+  }
+  if (!product.trackStock) {
+    throw new BusinessError(
+      'INSUFFICIENT_STOCK',
+      'Este producto no lleva control de stock.',
+    )
+  }
+
+  const warehouse = await t.warehouse.findFirst({
+    where: { id: input.warehouseId, deletedAt: null, isActive: true },
+    select: { id: true },
+  })
+  if (!warehouse) {
+    throw new BusinessError('TENANT_MISMATCH', 'El almacén no está disponible.')
+  }
+
+  const stock = await ensureStockRow(t, ctx.tenantId, {
+    productId: input.productId,
+    variantId,
+    warehouseId: input.warehouseId,
+  })
+
+  const tenant = await t.tenant.findFirstOrThrow({
+    select: { stockPolicy: true },
+  })
+
+  // 2. Mutación atómica del stock.
+  let updated: { quantity: Prisma.Decimal; version: number }
+  let delta: number
+  let wentNegative = false
+
+  if (input.type === 'AJUSTE') {
+    const nuevo = input.quantity
+    delta = nuevo - toNumber(stock.quantity)
+
+    const rows = await t.stock.updateManyAndReturn({
+      // El guard es la versión que el operario tenía en pantalla.
+      where: { id: stock.id, version: input.expectedVersion },
+      data: {
+        quantity: nuevo,
+        version: { increment: 1 },
+        lastMovementAt: new Date(),
+        lastCountedAt: new Date(),
+      },
+      select: { quantity: true, version: true },
+    })
+
+    const row = rows[0]
+    if (!row) {
+      throw new BusinessError(
+        'STOCK_CONFLICT',
+        'Otra persona movió este stock mientras contabas. Vuelve a cargar y repite el ajuste.',
+      )
+    }
+    updated = row
+  } else {
+    const esSalida = input.type === 'SALIDA'
+    delta = esSalida ? -input.quantity : input.quantity
+
+    // El guard solo se aplica a salidas y solo si el tenant bloquea
+    // negativos. Con PERMITIR_CON_ADVERTENCIA la venta pasa y se marca.
+    const bloquea = esSalida && tenant.stockPolicy === 'BLOQUEAR'
+
+    const rows = await t.stock.updateManyAndReturn({
+      where: bloquea
+        ? { id: stock.id, quantity: { gte: input.quantity } }
+        : { id: stock.id },
+      data: {
+        quantity: { increment: delta },
+        version: { increment: 1 },
+        lastMovementAt: new Date(),
+      },
+      select: { quantity: true, version: true },
+    })
+
+    const row = rows[0]
+    if (!row) {
+      // Solo puede ocurrir por el guard: la fila existe (la aseguramos
+      // arriba) y el tenant ya está filtrado por el cliente aislado.
+      throw new BusinessError(
+        'INSUFFICIENT_STOCK',
+        'No hay stock suficiente para esta salida.',
+        {
+          disponible: toNumber(stock.quantity),
+          solicitado: input.quantity,
+          producto: product.name,
+        },
+      )
+    }
+    updated = row
+    wentNegative = toNumber(updated.quantity) < 0
+  }
+
+  const balanceAfter = toNumber(updated.quantity)
+
+  // 3. Ledger. Va DESPUÉS del stock a propósito: si la clave de
+  //    idempotencia choca (reintento del móvil), este insert revienta y
+  //    toda la transacción — incluida la resta de stock — se deshace.
+  //    Esa es exactamente la semántica que queremos en un reintento.
+  const movement = await t.stockMovement.create({
+    data: {
+      tenantId: ctx.tenantId,
+      productId: input.productId,
+      variantId,
+      warehouseId: input.warehouseId,
+      userId: ctx.userId,
+      type: input.type,
+      source: sourceOverride ?? input.source,
+      quantity: delta,
+      balanceAfter,
+      unitCost:
+        input.type === 'ENTRADA' && input.unitCost !== undefined
+          ? input.unitCost
+          : undefined,
+      reason: input.reason ?? null,
+      referenceType: 'MANUAL',
+      idempotencyKey: input.idempotencyKey ?? null,
+    },
+    select: { id: true },
+  })
+
+  // 4. Contador de uso del período (§5.2). Se incrementa para MEDIR, no
+  //    para bloquear. Decisión de negocio confirmada: el inventario nunca
+  //    se frena por límite de plan — queremos que el ferretero ordene su
+  //    almacén sin fricción y perciba el valor. `maxMonthlyTransactions`
+  //    se aplica estrictamente sobre Ventas (POS) y Cotizaciones.
+  const period = new Date().toISOString().slice(0, 7) // YYYY-MM
+  await t.usagePeriod.upsert({
+    where: { tenantId_period: { tenantId: ctx.tenantId, period } },
+    create: { tenantId: ctx.tenantId, period, movementsCount: 1 },
+    update: { movementsCount: { increment: 1 } },
+  })
+
+  // 5. Auditoría de ajustes manuales (§6.6).
+  if (input.type === 'AJUSTE') {
+    await t.auditLog.create({
+      data: {
+        tenantId: ctx.tenantId,
+        actorId: ctx.userId,
+        actorRole: ctx.role,
+        action: 'stock.adjust',
+        entityType: 'Stock',
+        entityId: stock.id,
+        reason: input.reason,
+        before: { quantity: toNumber(stock.quantity) },
+        after: { quantity: balanceAfter },
+        impersonationId: ctx.impersonationId ?? null,
+      },
+    })
+  }
+
+  return {
+    movementId: movement.id,
+    productId: input.productId,
+    warehouseId: input.warehouseId,
+    balanceAfter,
+    version: updated.version,
+    replayed: false,
+    wentNegative,
+  }
+}
+
+/**
  * Registra un movimiento de inventario de forma atómica (§6.2).
  *
  * ─── Por qué está escrito así ────────────────────────────────────────────
@@ -112,179 +309,7 @@ export async function createStockMovement(
   const variantId = input.variantId ?? null
 
   try {
-    return await db.$transaction(async (tx) => {
-      const t = tx as unknown as TenantPrismaClient
-
-      // 1. Producto: debe existir, ser del tenant (lo garantiza el cliente
-      //    aislado) y llevar control de stock.
-      const product = await t.product.findFirst({
-        where: { id: input.productId, deletedAt: null },
-        select: { id: true, name: true, trackStock: true, isActive: true, costPrice: true },
-      })
-
-      if (!product) {
-        throw new BusinessError('TENANT_MISMATCH', 'El producto no existe.')
-      }
-      if (!product.trackStock) {
-        throw new BusinessError(
-          'INSUFFICIENT_STOCK',
-          'Este producto no lleva control de stock.',
-        )
-      }
-
-      const warehouse = await t.warehouse.findFirst({
-        where: { id: input.warehouseId, deletedAt: null, isActive: true },
-        select: { id: true },
-      })
-      if (!warehouse) {
-        throw new BusinessError('TENANT_MISMATCH', 'El almacén no está disponible.')
-      }
-
-      const stock = await ensureStockRow(t, ctx.tenantId, {
-        productId: input.productId,
-        variantId,
-        warehouseId: input.warehouseId,
-      })
-
-      const tenant = await t.tenant.findFirstOrThrow({
-        select: { stockPolicy: true },
-      })
-
-      // 2. Mutación atómica del stock.
-      let updated: { quantity: Prisma.Decimal; version: number }
-      let delta: number
-      let wentNegative = false
-
-      if (input.type === 'AJUSTE') {
-        const nuevo = input.quantity
-        delta = nuevo - toNumber(stock.quantity)
-
-        const rows = await t.stock.updateManyAndReturn({
-          // El guard es la versión que el operario tenía en pantalla.
-          where: { id: stock.id, version: input.expectedVersion },
-          data: {
-            quantity: nuevo,
-            version: { increment: 1 },
-            lastMovementAt: new Date(),
-            lastCountedAt: new Date(),
-          },
-          select: { quantity: true, version: true },
-        })
-
-        const row = rows[0]
-        if (!row) {
-          throw new BusinessError(
-            'STOCK_CONFLICT',
-            'Otra persona movió este stock mientras contabas. Vuelve a cargar y repite el ajuste.',
-          )
-        }
-        updated = row
-      } else {
-        const esSalida = input.type === 'SALIDA'
-        delta = esSalida ? -input.quantity : input.quantity
-
-        // El guard solo se aplica a salidas y solo si el tenant bloquea
-        // negativos. Con PERMITIR_CON_ADVERTENCIA la venta pasa y se marca.
-        const bloquea = esSalida && tenant.stockPolicy === 'BLOQUEAR'
-
-        const rows = await t.stock.updateManyAndReturn({
-          where: bloquea
-            ? { id: stock.id, quantity: { gte: input.quantity } }
-            : { id: stock.id },
-          data: {
-            quantity: { increment: delta },
-            version: { increment: 1 },
-            lastMovementAt: new Date(),
-          },
-          select: { quantity: true, version: true },
-        })
-
-        const row = rows[0]
-        if (!row) {
-          // Solo puede ocurrir por el guard: la fila existe (la aseguramos
-          // arriba) y el tenant ya está filtrado por el cliente aislado.
-          throw new BusinessError(
-            'INSUFFICIENT_STOCK',
-            'No hay stock suficiente para esta salida.',
-            {
-              disponible: toNumber(stock.quantity),
-              solicitado: input.quantity,
-              producto: product.name,
-            },
-          )
-        }
-        updated = row
-        wentNegative = toNumber(updated.quantity) < 0
-      }
-
-      const balanceAfter = toNumber(updated.quantity)
-
-      // 3. Ledger. Va DESPUÉS del stock a propósito: si la clave de
-      //    idempotencia choca (reintento del móvil), este insert revienta y
-      //    toda la transacción — incluida la resta de stock — se deshace.
-      //    Esa es exactamente la semántica que queremos en un reintento.
-      const movement = await t.stockMovement.create({
-        data: {
-          tenantId: ctx.tenantId,
-          productId: input.productId,
-          variantId,
-          warehouseId: input.warehouseId,
-          userId: ctx.userId,
-          type: input.type,
-          source: input.source,
-          quantity: delta,
-          balanceAfter,
-          unitCost:
-            input.type === 'ENTRADA' && input.unitCost !== undefined
-              ? input.unitCost
-              : undefined,
-          reason: input.reason ?? null,
-          referenceType: 'MANUAL',
-          idempotencyKey: input.idempotencyKey ?? null,
-        },
-        select: { id: true },
-      })
-
-      // 4. Contador de uso del período (§5.2). Se incrementa para MEDIR, no
-      //    para bloquear. Decisión de negocio confirmada: el inventario nunca
-      //    se frena por límite de plan — queremos que el ferretero ordene su
-      //    almacén sin fricción y perciba el valor. `maxMonthlyTransactions`
-      //    se aplica estrictamente sobre Ventas (POS) y Cotizaciones.
-      const period = new Date().toISOString().slice(0, 7) // YYYY-MM
-      await t.usagePeriod.upsert({
-        where: { tenantId_period: { tenantId: ctx.tenantId, period } },
-        create: { tenantId: ctx.tenantId, period, movementsCount: 1 },
-        update: { movementsCount: { increment: 1 } },
-      })
-
-      // 5. Auditoría de ajustes manuales (§6.6).
-      if (input.type === 'AJUSTE') {
-        await t.auditLog.create({
-          data: {
-            tenantId: ctx.tenantId,
-            actorId: ctx.userId,
-            actorRole: ctx.role,
-            action: 'stock.adjust',
-            entityType: 'Stock',
-            entityId: stock.id,
-            reason: input.reason,
-            before: { quantity: toNumber(stock.quantity) },
-            after: { quantity: balanceAfter },
-            impersonationId: ctx.impersonationId ?? null,
-          },
-        })
-      }
-
-      return {
-        movementId: movement.id,
-        productId: input.productId,
-        warehouseId: input.warehouseId,
-        balanceAfter,
-        version: updated.version,
-        replayed: false,
-        wentNegative,
-      }
-    })
+    return await db.$transaction(async (tx) => applyStockMovement(tx as unknown as TenantPrismaClient, ctx, input))
   } catch (e) {
     // Reintento del cliente: la transacción se deshizo entera, así que el
     // stock nunca se aplicó dos veces. Devolvemos el resultado original.

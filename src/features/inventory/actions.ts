@@ -137,19 +137,20 @@ export async function findProductByCode(
       }
     }
 
-    // Se busca por código de barras y por SKU: los tenants imprimen sus
-    // propias etiquetas y no siempre distinguen uno de otro.
+    // Se busca por código de barras, QR y SKU en la misma consulta: el
+    // operario no sabe —ni tiene por qué— qué clase de código está leyendo.
     const product = await db.product.findFirst({
       where: {
         deletedAt: null,
         isActive: true,
-        OR: [{ barcode: code }, { sku: code }],
+        OR: [{ barcode: code }, { qrCode: code }, { sku: code }],
       },
       select: {
         id: true,
         name: true,
         sku: true,
         barcode: true,
+        qrCode: true,
         unitType: true,
         salePrice: true,
         minStock: true,

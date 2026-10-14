@@ -162,6 +162,26 @@ enum StockPolicy {
   PERMITIR_CON_ADVERTENCIA
 }
 
+/**
+ * Estado del comprobante frente a la administración tributaria.
+ * PENDIENTE y ACEPTADO son los dos que pidió el negocio; los otros tres
+ * existen porque sin ellos el flujo real no se puede representar: un
+ * comprobante enviado del que aún no hay respuesta no es lo mismo que uno
+ * sin enviar, y uno rechazado necesita que alguien lo corrija a mano.
+ */
+enum TaxDocumentStatus {
+  /// Emitido localmente, todavía no enviado.
+  PENDIENTE
+  /// Enviado; esperando respuesta.
+  ENVIADO
+  /// Aceptado por la administración.
+  ACEPTADO
+  /// Rechazado: requiere corrección manual.
+  RECHAZADO
+  /// Anulado (en Perú, mediante nota de crédito).
+  ANULADO
+}
+
 enum WebhookStatus {
   RECIBIDO
   PROCESADO
@@ -266,6 +286,7 @@ model Tenant {
   quoteItems     QuoteItem[]
   purchases      Purchase[]
   purchaseItems  PurchaseItem[]
+  taxDocuments   TaxDocument[]
   counters       DocumentCounter[]
   usage          UsagePeriod[]
   auditLogs      AuditLog[]
@@ -369,6 +390,17 @@ model User {
 
   role     Role    @default(VENDEDOR)
   isActive Boolean @default(true)
+
+  /**
+   * Momento del último cambio de contraseña.
+   * Existe por una razón concreta: la estrategia de sesión es JWT, y un JWT
+   * es válido hasta que caduca. Sin esta columna, cambiar la contraseña NO
+   * echa a quien ya tenga una sesión abierta — justo lo que uno espera al
+   * cambiarla porque sospecha que se la robaron.
+   * La sesión guarda su `iat`; si es anterior a esta marca, se rechaza. Así
+   * el cambio de contraseña revoca de verdad lo que había.
+   */
+  passwordChangedAt DateTime?
 
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
@@ -560,9 +592,24 @@ model Product {
   supplier   Supplier? @relation(fields: [tenantId, supplierId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
 
   sku     String
-  /// Código de barras leído con @zxing/browser (§5.1). Índice dedicado:
-  /// el escaneo debe resolver en una sola query por (tenantId, barcode).
+  /// Código de barras del fabricante (EAN/UPC/CODE-128), leído con
+  /// @zxing/browser. Índice dedicado: el escaneo debe resolver en una sola
+  /// query por (tenantId, barcode).
   barcode String?
+  /**
+   * Código QR propio del negocio.
+   * Va en una columna aparte y no reutiliza `barcode` porque conviven: el
+   * EAN lo trae el fabricante impreso en el empaque, y el QR lo imprime la
+   * ferretería para lo que no viene etiquetado —tornillos a granel, tubería
+   * cortada, mercadería de proveedor informal—. Un solo campo obligaría a
+   * elegir cuál de los dos guardar.
+   * NOTA DE DISEÑO: lo correcto a largo plazo es una tabla ProductCode
+   * (un producto, N códigos con su tipo), porque un mismo producto llega con
+   * EAN distinto según proveedor y el de la caja no es el de la unidad. Dos
+   * columnas cubren el caso de hoy sin esa migración; cuando aparezca el
+   * tercer código, toca hacerla.
+   */
+  qrCode  String?
 
   name        String
   description String?
@@ -598,6 +645,7 @@ model Product {
   @@unique([tenantId, id])
   @@unique([tenantId, sku])
   @@unique([tenantId, barcode])
+  @@unique([tenantId, qrCode])
   @@index([tenantId, isActive, name])
   @@index([tenantId, categoryId])
   @@index([tenantId, deletedAt])
@@ -614,6 +662,8 @@ model ProductVariant {
 
   sku        String
   barcode    String?
+  /// QR propio del negocio, igual que en Product.
+  qrCode     String?
   /// Nombre visible de la variante: "1/2 pulgada", "Rojo", "3m".
   name       String
   /// Atributos estructurados: { "medida": "1/2\"", "color": "rojo" }
@@ -637,6 +687,7 @@ model ProductVariant {
   @@unique([tenantId, id])
   @@unique([tenantId, sku])
   @@unique([tenantId, barcode])
+  @@unique([tenantId, qrCode])
   @@index([tenantId, productId])
   @@map("product_variants")
 }
@@ -790,8 +841,9 @@ model Sale {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  items    SaleItem[]
-  payments Payment[]
+  items       SaleItem[]
+  payments    Payment[]
+  taxDocument TaxDocument?
 
   @@unique([tenantId, id])
   @@unique([tenantId, number])
@@ -1110,4 +1162,91 @@ model ImpersonationSession {
   @@index([tenantId, startedAt])
   @@index([superAdminId, startedAt])
   @@map("impersonation_sessions")
+}
+
+// ============================================================================
+//  FACTURACIÓN ELECTRÓNICA
+// ============================================================================
+
+/// Comprobante de pago (boleta o factura) emitido para una venta.
+///
+/// ─── LO QUE ESTE MODELO SÍ RESUELVE ──────────────────────────────────────
+///
+/// La numeración legal (serie + correlativo sin huecos), el estado tributario
+/// y la INMUTABILIDAD del documento. Un comprobante emitido no cambia nunca,
+/// ni siquiera si el cliente corrige su RUC después: por eso los datos del
+/// emisor y del receptor se congelan aquí en vez de leerse por relación.
+///
+/// ─── LO QUE NO RESUELVE ──────────────────────────────────────────────────
+///
+/// La firma digital y el envío a SUNAT/OSE. Eso exige certificado digital,
+/// generación de XML UBL 2.1 y un proveedor autorizado — otra pieza. Los
+/// campos `xmlHash`, `externalTicket` y `responseCode` están preparados para
+/// recibir el resultado de ese paso cuando exista.
+model TaxDocument {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Un comprobante por venta. Corregir uno emitido se hace con nota de
+  /// crédito, nunca reemplazándolo — de ahí el único y no una lista.
+  saleId String
+  sale   Sale   @relation(fields: [tenantId, saleId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  documentType DocumentType
+  /// Serie del comprobante: "B001" para boletas, "F001" para facturas.
+  series       String
+  /// Correlativo SIN HUECOS dentro de (tenant, tipo, serie). El índice único
+  /// de abajo es la última línea de defensa; la numeración la asigna un
+  /// contador bloqueado dentro de la transacción de emisión.
+  correlativo  Int
+  /// Representación impresa: "F001-00000123".
+  fullNumber   String
+
+  status        TaxDocumentStatus @default(PENDIENTE)
+  /// Mensaje del rechazo o de la observación, tal como lo devuelve el OSE.
+  statusMessage String?
+
+  // --- Emisor congelado al emitir ---
+  issuerTaxId     String?
+  issuerLegalName String?
+
+  // --- Receptor congelado al emitir ---
+  /// DNI / RUC / SIN_DOCUMENTO. Una factura exige RUC; una boleta no.
+  receiverDocType   CustomerDocType @default(SIN_DOCUMENTO)
+  receiverDocNumber String?
+  receiverName      String?
+  receiverAddress   String?
+
+  // --- Importes congelados al emitir ---
+  currency      String  @default("PEN")
+  /// Base imponible.
+  subtotal      Decimal @db.Decimal(14, 2)
+  /// IGV.
+  taxTotal      Decimal @db.Decimal(14, 2)
+  discountTotal Decimal @default(0) @db.Decimal(14, 2)
+  total         Decimal @db.Decimal(14, 2)
+
+  // --- Pista de la integración fiscal (se rellena en la fase de firma) ---
+  xmlHash        String?
+  externalTicket String?
+  responseCode   String?
+
+  issuedAt   DateTime  @default(now())
+  sentAt     DateTime?
+  acceptedAt DateTime?
+  rejectedAt DateTime?
+  voidedAt   DateTime?
+  voidReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, saleId])
+  /// La restricción LEGAL: no puede haber dos comprobantes con el mismo
+  /// tipo, serie y correlativo en un mismo negocio.
+  @@unique([tenantId, documentType, series, correlativo])
+  @@index([tenantId, status, issuedAt])
+  @@index([tenantId, documentType, series])
+  @@map("tax_documents")
 }

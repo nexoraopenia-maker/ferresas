@@ -111,6 +111,7 @@ export async function createProductExpress(
           tenantId: ctx.tenantId,
           sku,
           barcode: input.barcode ?? null,
+          qrCode: input.qrCode ?? null,
           name: input.name,
           unitType: input.unitType,
           salePrice: input.salePrice,

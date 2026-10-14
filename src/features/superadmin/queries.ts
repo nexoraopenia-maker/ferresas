@@ -16,13 +16,34 @@ export interface TenantRow {
   id: string
   name: string
   slug: string
+  // --- Contacto ---
+  /** Correo del usuario OWNER: el que de verdad sirve para entrar. */
+  ownerEmail: string | null
+  ownerName: string | null
+  /** Correo de la ficha de la ferretería; puede diferir del del dueño. */
+  billingEmail: string | null
+  phone: string | null
+  taxId: string | null
+  // --- Facturación ---
+  planCode: string | null
   planName: string | null
+  priceMonthly: string | null
+  currency: string
   status: string
   access: AccessLevel
-  isActive: boolean
-  suspendedReason: string | null
+  provider: string | null
   trialEndsAt: Date | null
   currentPeriodEnd: Date | null
+  pastDueSince: Date | null
+  graceDays: number | null
+  lastPaymentAt: Date | null
+  lastPaymentAmount: string | null
+  cancelAtPeriodEnd: boolean
+  /** true si el cobro vive en una pasarela; false si es alta manual. */
+  gatewayLinked: boolean
+  // --- Estado y uso ---
+  isActive: boolean
+  suspendedReason: string | null
   users: number
   products: number
   createdAt: Date
@@ -46,7 +67,10 @@ export async function getSuperAdminDashboard(
       isActive: true,
       suspendedReason: true,
       createdAt: true,
-      plan: { select: { name: true, priceMonthly: true } },
+      email: true,
+      phone: true,
+      taxId: true,
+      plan: { select: { code: true, name: true, priceMonthly: true, currency: true } },
       subscription: {
         select: {
           status: true,
@@ -55,8 +79,21 @@ export async function getSuperAdminDashboard(
           graceDays: true,
           currentPeriodEnd: true,
           canceledAt: true,
-          plan: { select: { name: true, priceMonthly: true } },
+          cancelAtPeriodEnd: true,
+          provider: true,
+          externalSubscriptionId: true,
+          lastPaymentAt: true,
+          lastPaymentAmount: true,
+          plan: { select: { code: true, name: true, priceMonthly: true, currency: true } },
         },
+      },
+      // El OWNER se trae en la misma consulta en vez de una por fila: con
+      // cien clientes, lo segundo serían cien viajes a Neon.
+      users: {
+        where: { role: 'OWNER', deletedAt: null },
+        select: { email: true, name: true },
+        orderBy: { createdAt: 'asc' },
+        take: 1,
       },
       _count: { select: { users: true, products: true } },
     },
@@ -84,28 +121,56 @@ export async function getSuperAdminDashboard(
       })),
       now,
     ),
-    tenants: filas.map(({ tenant, plan, access }) => ({
-      id: tenant.id,
-      name: tenant.name,
-      slug: tenant.slug,
-      planName: plan?.name ?? null,
-      status: tenant.subscription?.status ?? 'SIN SUSCRIPCIÓN',
-      access,
-      isActive: tenant.isActive,
-      suspendedReason: tenant.suspendedReason,
-      trialEndsAt: tenant.subscription?.trialEndsAt ?? null,
-      currentPeriodEnd: tenant.subscription?.currentPeriodEnd ?? null,
-      users: tenant._count.users,
-      products: tenant._count.products,
-      createdAt: tenant.createdAt,
-    })),
+    tenants: filas.map(({ tenant, plan, access }) => {
+      const sub = tenant.subscription
+      const owner = tenant.users[0]
+      return {
+        id: tenant.id,
+        name: tenant.name,
+        slug: tenant.slug,
+        ownerEmail: owner?.email ?? null,
+        ownerName: owner?.name ?? null,
+        billingEmail: tenant.email,
+        phone: tenant.phone,
+        taxId: tenant.taxId,
+        planCode: plan?.code ?? null,
+        planName: plan?.name ?? null,
+        priceMonthly: plan?.priceMonthly.toFixed(2) ?? null,
+        currency: plan?.currency ?? 'PEN',
+        status: sub?.status ?? 'SIN SUSCRIPCIÓN',
+        access,
+        provider: sub?.provider ?? null,
+        trialEndsAt: sub?.trialEndsAt ?? null,
+        currentPeriodEnd: sub?.currentPeriodEnd ?? null,
+        pastDueSince: sub?.pastDueSince ?? null,
+        graceDays: sub?.graceDays ?? null,
+        lastPaymentAt: sub?.lastPaymentAt ?? null,
+        lastPaymentAmount: sub?.lastPaymentAmount?.toFixed(2) ?? null,
+        cancelAtPeriodEnd: sub?.cancelAtPeriodEnd ?? false,
+        gatewayLinked: Boolean(sub?.externalSubscriptionId),
+        isActive: tenant.isActive,
+        suspendedReason: tenant.suspendedReason,
+        users: tenant._count.users,
+        products: tenant._count.products,
+        createdAt: tenant.createdAt,
+      }
+    }),
   }
 }
 
 /** Últimas acciones sensibles, para que la torre de control se vigile a sí misma. */
 export async function getRecentAuditLog(limit = 25) {
   return prisma.auditLog.findMany({
-    where: { action: { in: ['tenant.suspend', 'tenant.reactivate', 'impersonation.start', 'impersonation.end'] } },
+    where: {
+      action: {
+        in: [
+          'tenant.suspend', 'tenant.reactivate',
+          'impersonation.start', 'impersonation.end',
+          'tenant.create.superadmin', 'tenant.plan.change',
+          'tenant.trial.extend', 'superadmin.password.change',
+        ],
+      },
+    },
     orderBy: { createdAt: 'desc' },
     take: limit,
     select: {

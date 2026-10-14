@@ -98,6 +98,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
     session({ session, token }) {
       if (token.sub) session.user.id = token.sub
+      // `iat` lo pone Auth.js al firmar. Viaja a la sesión para que
+      // resolveTenantContext pueda descartar tokens emitidos antes del
+      // último cambio de contraseña.
+      if (typeof token.iat === 'number') session.issuedAt = token.iat
       return session
     },
   },

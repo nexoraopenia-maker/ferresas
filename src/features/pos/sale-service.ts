@@ -1,0 +1,328 @@
+import { Prisma } from '@/generated/prisma/client'
+import { BusinessError } from '@/lib/errors'
+import { hasRole, type TenantContext } from '@/lib/tenant-context'
+import type { TenantPrismaClient } from '@/lib/tenant-prisma'
+import { applyStockMovement } from '@/features/inventory/stock-service'
+import type { RegisterSaleInput } from './schemas'
+
+const P2002_UNIQUE = 'P2002'
+
+export interface RegisterSaleResult {
+  saleId: string
+  number: string
+  subtotal: number
+  taxTotal: number
+  discountTotal: number
+  total: number
+  /** Ya existía: fue un reintento del cliente, no una venta nueva. */
+  replayed: boolean
+  /** Alguna línea se vendió bajo el stock disponible (§5.4). */
+  soldBelowStock: boolean
+}
+
+function num(d: Prisma.Decimal | number | null | undefined): number {
+  if (d === null || d === undefined) return 0
+  return typeof d === 'number' ? d : d.toNumber()
+}
+
+/** Redondeo a céntimos. Sin esto, 0.1 + 0.2 acaba en el total de la boleta. */
+const cent = (n: number) => Math.round(n * 100) / 100
+
+/**
+ * Reserva el siguiente número de un contador, de forma atómica y sin huecos.
+ *
+ * ─── POR QUÉ ESTE INCREMENTO Y NO LEER-LUEGO-ESCRIBIR ────────────────────
+ *
+ * `update` con `increment` es una sola sentencia SQL
+ * (`UPDATE ... SET next = next + 1 RETURNING next`), así que Postgres
+ * bloquea la fila y serializa a los llamadores concurrentes. Dos cajeros
+ * cobrando a la vez obtienen números distintos sin que nadie coordine nada.
+ *
+ * Y va DENTRO de la transacción de la venta a propósito: si la venta falla,
+ * el incremento se deshace con ella y el número no se quema. Eso es lo que
+ * mantiene la serie sin huecos, que para un comprobante no es una
+ * preferencia estética sino un requisito legal.
+ *
+ * El precio es que el contador se vuelve un punto de serialización: las
+ * ventas de una misma serie se encolan. Para una ferretería es irrelevante,
+ * y es el coste inevitable de numerar sin huecos.
+ */
+export async function claimNextNumber(
+  t: TenantPrismaClient,
+  tenantId: string,
+  scope: string,
+  series: string,
+): Promise<{ correlativo: number; prefix: string; series: string }> {
+  const contador = await t.documentCounter.update({
+    where: { tenantId_scope_series: { tenantId, scope, series } },
+    data: { next: { increment: 1 } },
+    select: { next: true, prefix: true, series: true },
+  })
+
+  // `update` devuelve el valor YA incrementado; el que nos toca es el previo.
+  return {
+    correlativo: contador.next - 1,
+    prefix: contador.prefix,
+    series: contador.series,
+  }
+}
+
+/**
+ * Garantiza que el contador exista. Va fuera de la transacción de la venta:
+ * crearlo dentro haría que dos cajeros simultáneos chocasen en el índice
+ * único y una de las dos ventas fallara sin motivo real.
+ */
+export async function ensureCounter(
+  db: TenantPrismaClient,
+  tenantId: string,
+  scope: string,
+  series: string,
+  prefix: string,
+): Promise<void> {
+  const existe = await db.documentCounter.findFirst({ where: { scope, series } })
+  if (existe) return
+
+  try {
+    await db.documentCounter.create({
+      data: { tenantId, scope, series, prefix, next: 1 },
+    })
+  } catch (e) {
+    // Otro cajero lo creó en el mismo instante: perder esa carrera es normal.
+    if (!(e instanceof Prisma.PrismaClientKnownRequestError) || e.code !== P2002_UNIQUE) {
+      throw e
+    }
+  }
+}
+
+/**
+ * Registra una venta del POS (§5.4, §6.2).
+ *
+ * TODO ocurre en una sola transacción: cabecera, líneas, pagos, descuento de
+ * stock y movimientos del ledger. No hay forma de que quede una venta cobrada
+ * cuyo stock no bajó, ni stock descontado sin venta que lo justifique.
+ *
+ * El stock se descuenta reutilizando `applyStockMovement`, el mismo código
+ * que usa el escáner de almacén. Eso importa: el guard de concurrencia que
+ * impide dejar el inventario en negativo vive ahí y en un solo sitio.
+ */
+export async function registerSale(
+  db: TenantPrismaClient,
+  ctx: TenantContext,
+  input: RegisterSaleInput,
+): Promise<RegisterSaleResult> {
+  if (!hasRole(ctx.role, 'VENDEDOR')) {
+    throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para registrar ventas.')
+  }
+
+  await ensureCounter(db, ctx.tenantId, 'SALE', '001', 'V')
+
+  return db.$transaction(async (tx) => {
+      const t = tx as unknown as TenantPrismaClient
+
+      const warehouse = await t.warehouse.findFirst({
+        where: { id: input.warehouseId, isActive: true, deletedAt: null },
+        select: { id: true },
+      })
+      if (!warehouse) {
+        throw new BusinessError('TENANT_MISMATCH', 'El almacén no está disponible.')
+      }
+
+      if (input.customerId) {
+        const cliente = await t.customer.findFirst({
+          where: { id: input.customerId, deletedAt: null },
+          select: { id: true },
+        })
+        if (!cliente) {
+          throw new BusinessError('TENANT_MISMATCH', 'El cliente no existe.')
+        }
+      }
+
+      // --- 1. Precios desde la BASE, nunca del carrito -------------------
+      const ids = [...new Set(input.items.map((i) => i.productId))]
+      const productos = await t.product.findMany({
+        where: { id: { in: ids }, deletedAt: null, isActive: true },
+        select: {
+          id: true, name: true, sku: true, unitType: true,
+          salePrice: true, costPrice: true, taxRate: true, trackStock: true,
+        },
+      })
+      const porId = new Map(productos.map((p) => [p.id, p]))
+
+      const faltante = ids.find((i) => !porId.has(i))
+      if (faltante) {
+        throw new BusinessError('TENANT_MISMATCH', 'Un producto del carrito ya no está disponible.')
+      }
+
+      // --- 2. Importes ---------------------------------------------------
+      let subtotal = 0
+      let taxTotal = 0
+      let discountTotal = 0
+
+      const lineas = input.items.map((item) => {
+        const p = porId.get(item.productId)!
+        const precio = num(p.salePrice)
+        const bruto = cent(precio * item.quantity)
+
+        if (item.discount > bruto) {
+          throw new BusinessError(
+            'INSUFFICIENT_STOCK',
+            `El descuento de "${p.name}" supera el importe de la línea.`,
+            { producto: p.name, importe: bruto, descuento: item.discount },
+          )
+        }
+
+        const neto = cent(bruto - item.discount)
+        const tasa = num(p.taxRate)
+        // El precio de venta en Perú se muestra CON IGV incluido, así que el
+        // impuesto se extrae del total, no se suma encima. Sumarlo haría que
+        // la boleta cobrara un 18% más de lo que marca la etiqueta.
+        const base = cent(neto / (1 + tasa))
+        const igv = cent(neto - base)
+
+        subtotal = cent(subtotal + base)
+        taxTotal = cent(taxTotal + igv)
+        discountTotal = cent(discountTotal + item.discount)
+
+        return {
+          item,
+          producto: p,
+          unitPrice: precio,
+          lineTotal: neto,
+          taxRate: tasa,
+        }
+      })
+
+      const total = cent(subtotal + taxTotal)
+
+      const pagado = cent(input.payments.reduce((s, p) => s + p.amount, 0))
+      if (pagado + 0.009 < total) {
+        throw new BusinessError(
+          'INSUFFICIENT_STOCK',
+          'Los pagos no cubren el total de la venta.',
+          { total, pagado },
+        )
+      }
+
+      // --- 3. Numeración sin huecos --------------------------------------
+      const { correlativo, prefix, series } = await claimNextNumber(
+        t, ctx.tenantId, 'SALE', '001',
+      )
+      const number = `${prefix}${series}-${String(correlativo).padStart(8, '0')}`
+
+      // --- 4. Cabecera ---------------------------------------------------
+      const sale = await t.sale.create({
+        data: {
+          tenantId: ctx.tenantId,
+          warehouseId: input.warehouseId,
+          customerId: input.customerId ?? null,
+          userId: ctx.userId,
+          number,
+          documentType: input.documentType,
+          status: 'COMPLETADA',
+          subtotal, taxTotal, discountTotal, total,
+          notes: input.notes ?? null,
+          completedAt: new Date(),
+        },
+        select: { id: true, number: true },
+      })
+
+      // --- 5. Líneas, con precio y costo CONGELADOS ----------------------
+      await t.saleItem.createMany({
+        data: lineas.map((l) => ({
+          tenantId: ctx.tenantId,
+          saleId: sale.id,
+          productId: l.producto.id,
+          variantId: l.item.variantId ?? null,
+          nameSnapshot: l.producto.name,
+          skuSnapshot: l.producto.sku,
+          unitType: l.producto.unitType,
+          quantity: l.item.quantity,
+          unitPrice: l.unitPrice,
+          discount: l.item.discount,
+          taxRate: l.taxRate,
+          unitCost: num(l.producto.costPrice),
+          lineTotal: l.lineTotal,
+        })),
+      })
+
+      // --- 6. Pagos ------------------------------------------------------
+      const vuelto = cent(pagado - total)
+      await t.payment.createMany({
+        data: input.payments.map((p, i) => ({
+          tenantId: ctx.tenantId,
+          saleId: sale.id,
+          userId: ctx.userId,
+          method: p.method,
+          amount: p.amount,
+          reference: p.reference ?? null,
+          // El vuelto se registra en el primer pago en efectivo; si no hay
+          // efectivo, no hay vuelto que dar.
+          change: i === 0 && p.method === 'EFECTIVO' ? vuelto : 0,
+        })),
+      })
+
+      // --- 7. Stock, con el MISMO código que el escáner ------------------
+      let soldBelowStock = false
+      for (const l of lineas) {
+        if (!l.producto.trackStock) continue
+
+        const mov = await applyStockMovement(t, ctx, {
+          type: 'SALIDA',
+          productId: l.producto.id,
+          variantId: l.item.variantId ?? null,
+          warehouseId: input.warehouseId,
+          quantity: l.item.quantity,
+          source: 'MANUAL',
+          reason: `Venta ${number}`,
+          // Sin clave propia: la idempotencia de la venta entera la da el
+          // único de Sale.number, y la transacción cubre estos movimientos.
+        }, 'VENTA')
+        if (mov.wentNegative) soldBelowStock = true
+      }
+
+      if (soldBelowStock) {
+        await t.sale.update({
+          where: { id: sale.id },
+          data: { soldBelowStock: true },
+        })
+      }
+
+      // --- 8. Contador de uso del período (§5.2) -------------------------
+      // Aquí SÍ se mide para cobrar: maxMonthlyTransactions se aplica sobre
+      // ventas, no sobre movimientos de inventario.
+      const period = new Date().toISOString().slice(0, 7)
+      await t.usagePeriod.upsert({
+        where: { tenantId_period: { tenantId: ctx.tenantId, period } },
+        create: { tenantId: ctx.tenantId, period, salesCount: 1 },
+        update: { salesCount: { increment: 1 } },
+      })
+
+      return {
+        saleId: sale.id,
+        number: sale.number,
+        subtotal, taxTotal, discountTotal, total,
+        replayed: false,
+        soldBelowStock,
+      }
+    },
+    {
+      /**
+       * Tiempos ampliados a propósito.
+       *
+       * El contador de correlativos SERIALIZA las transacciones de una misma
+       * serie: es el precio inevitable de numerar sin huecos. Con la base en
+       * otra región —Neon, ~130 ms por consulta— cada transacción tarda cerca
+       * de un segundo, así que varias ventas simultáneas encolan más de los
+       * 2 s que Prisma espera por defecto antes de rendirse, y la venta falla
+       * sin que nada esté mal.
+       *
+       * LÍMITE CONOCIDO: esto fija un techo de rendimiento. Una serie admite
+       * del orden de una venta por segundo. Para una ferretería con dos o
+       * tres cajas sobra; una cadena con veinte cajas necesitaría una serie
+       * por caja, que es además como lo resuelve la norma.
+       */
+      maxWait: 15_000,
+      timeout: 30_000,
+    },
+  )
+}

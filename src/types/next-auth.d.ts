@@ -7,6 +7,12 @@ import type { DefaultSession } from 'next-auth'
 declare module 'next-auth' {
   interface Session {
     user: { id: string } & DefaultSession['user']
+    /**
+     * Segundos epoch en que se emitió el JWT (`iat`). Se usa para revocar
+     * sesiones anteriores a un cambio de contraseña; sin él, cambiar la
+     * contraseña no echaría a nadie.
+     */
+    issuedAt?: number
   }
 }
 

@@ -453,6 +453,11 @@ function ExpressProductForm({
     startTransition(async () => {
       const res = await createProductExpress({
         barcode: code,
+        // El alta exprés guarda lo leído como código de barras. Distinguir si
+        // era un QR exigiría propagar el formato que devuelve @zxing
+        // (result.getBarcodeFormat()); mientras no se haga, el QR se asigna
+        // desde el catálogo.
+        qrCode: undefined,
         name,
         salePrice: Number(salePrice) || 0,
         initialStock: Number(initialStock) || 0,

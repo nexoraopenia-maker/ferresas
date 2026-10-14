@@ -114,6 +114,13 @@ export const createProductExpressSchema = z.object({
     .max(64, 'El código es demasiado largo.')
     .optional()
     .transform((v) => (v ? v : undefined)),
+  /** QR propio del negocio, para lo que no viene etiquetado de fábrica. */
+  qrCode: z
+    .string()
+    .trim()
+    .max(64, 'El código es demasiado largo.')
+    .optional()
+    .transform((v) => (v ? v : undefined)),
   sku: z.string().trim().min(1).max(64).optional(),
   name: z
     .string()

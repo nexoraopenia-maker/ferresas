@@ -39,7 +39,7 @@ export async function proxy(req: NextRequest) {
   const token = await auth()
   const impersonationId = req.cookies.get(IMPERSONATION_COOKIE)?.value
   const session = token?.user?.id
-    ? await getRouteSession(token.user.id, impersonationId)
+    ? await getRouteSession(token.user.id, impersonationId, new Date(), token.issuedAt)
     : null
 
   const decision = resolveRouteAccess({ pathname, session })

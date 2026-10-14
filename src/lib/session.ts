@@ -29,6 +29,7 @@ const USER_SELECT = {
   isActive: true,
   deletedAt: true,
   tenantId: true,
+  passwordChangedAt: true,
   tenant: {
     select: {
       isActive: true,
@@ -46,6 +47,27 @@ const USER_SELECT = {
 } as const
 
 /**
+ * ¿El token se emitió ANTES del último cambio de contraseña?
+ *
+ * Con sesiones JWT no hay nada que borrar en el servidor para echar a
+ * alguien: el token vale hasta que caduca. Esta comparación es lo que
+ * convierte "cambié la contraseña" en "las sesiones abiertas dejan de
+ * servir", que es lo que el usuario da por hecho al cambiarla.
+ *
+ * Se resta un segundo de margen porque `iat` va en segundos enteros y
+ * `passwordChangedAt` en milisegundos: sin el margen, la propia sesión que
+ * acaba de cambiar la contraseña se invalidaría a sí misma.
+ */
+function sesionRevocada(
+  passwordChangedAt: Date | null,
+  issuedAt: number | undefined,
+): boolean {
+  if (!passwordChangedAt) return false
+  if (issuedAt === undefined) return false
+  return issuedAt * 1000 < passwordChangedAt.getTime() - 1000
+}
+
+/**
  * Datos mínimos para decidir el enrutado. Devuelve `null` en vez de lanzar:
  * el proxy necesita distinguir "no hay sesión" de "algo falló".
  */
@@ -53,6 +75,7 @@ export async function getRouteSession(
   userId: string,
   impersonationId?: string,
   now: Date = new Date(),
+  issuedAt?: number,
 ): Promise<RouteSession | null> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -60,6 +83,7 @@ export async function getRouteSession(
   })
 
   if (!user || !user.isActive || user.deletedAt) return null
+  if (sesionRevocada(user.passwordChangedAt, issuedAt)) return null
 
   // Impersonation en curso: el enrutado debe verse como el del cliente, pero
   // conservando el rastro de quién está detrás.
@@ -118,6 +142,7 @@ async function cargarContextoSuplantado(
 export async function resolveTenantContext(
   userId: string,
   now: Date = new Date(),
+  issuedAt?: number,
 ): Promise<TenantContext> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -126,6 +151,12 @@ export async function resolveTenantContext(
 
   if (!user || !user.isActive || user.deletedAt) {
     throw new TenantIsolationError('Sesión no válida.')
+  }
+  if (sesionRevocada(user.passwordChangedAt, issuedAt)) {
+    throw new BusinessError(
+      'UNAUTHENTICATED',
+      'Tu contraseña cambió. Vuelve a iniciar sesión.',
+    )
   }
 
   // Un SUPERADMIN no opera dentro de un tenant: entra por el módulo auditado
@@ -170,7 +201,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
     }
   }
 
-  return resolveTenantContext(session.user.id)
+  return resolveTenantContext(session.user.id, new Date(), session.issuedAt)
 }
 
 /** Sesión de SUPERADMIN real, ignorando cualquier impersonation en curso. */
@@ -182,10 +213,18 @@ export async function requireSuperAdmin(): Promise<{ id: string; email: string }
 
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { id: true, email: true, role: true, isActive: true, deletedAt: true },
+    select: {
+      id: true, email: true, role: true, isActive: true,
+      deletedAt: true, passwordChangedAt: true,
+    },
   })
 
   if (!user || user.role !== 'SUPERADMIN' || !user.isActive || user.deletedAt) {
+    throw new TenantIsolationError('Recurso no disponible.')
+  }
+  // Un token anterior al cambio de contraseña no sirve ni siquiera aquí: es
+  // precisamente la cuenta cuyo robo más daño haría.
+  if (sesionRevocada(user.passwordChangedAt, session.issuedAt)) {
     throw new TenantIsolationError('Recurso no disponible.')
   }
 

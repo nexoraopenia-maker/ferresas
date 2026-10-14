@@ -28,14 +28,20 @@ export default function DashboardLayout({
       <div className="flex-1">{children}</div>
 
       <nav className="safe-bottom sticky bottom-0 flex items-center justify-between border-t border-hairline bg-surface px-4 pt-2">
-        <Link href={ROUTES.dashboard} className="h-touch px-3 font-semibold text-ink">
+        <Link href={ROUTES.dashboard} className="h-touch px-2 text-sm font-semibold text-ink">
           Inventario
         </Link>
-        <Link href={ROUTES.billing} className="h-touch px-3 font-semibold text-ink">
-          Facturación
+        <Link href="/pos" className="h-touch px-2 text-sm font-semibold text-ink">
+          Vender
+        </Link>
+        <Link href="/comprobantes" className="h-touch px-2 text-sm font-semibold text-ink">
+          Comprobantes
+        </Link>
+        <Link href={ROUTES.billing} className="h-touch px-2 text-sm font-semibold text-ink">
+          Mi plan
         </Link>
         <form action={logoutAction}>
-          <button type="submit" className="h-touch px-3 font-semibold text-ink-muted">
+          <button type="submit" className="h-touch px-2 text-sm font-semibold text-ink-muted">
             Salir
           </button>
         </form>
