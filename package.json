@@ -26,7 +26,8 @@
     "test:mp": "tsx tests/mercadopago.ts",
     "test:tenants-api": "tsx tests/tenants-api.ts",
     "test:sa-account": "tsx tests/superadmin-account.ts",
-    "test:pos": "tsx tests/pos-invoicing.ts"
+    "test:pos": "tsx tests/pos-invoicing.ts",
+    "reset-admin": "tsx scripts/reset-admin.ts"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",

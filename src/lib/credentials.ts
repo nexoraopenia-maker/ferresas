@@ -19,6 +19,39 @@ export interface VerifiedUser {
 }
 
 /**
+ * Resultado CLASIFICADO de la verificación.
+ *
+ * ─── POR QUÉ NO BASTA DEVOLVER null ──────────────────────────────────────
+ *
+ * Antes esta función devolvía `VerifiedUser | null` y no capturaba errores.
+ * Consecuencia: si Neon estaba inalcanzable, Prisma lanzaba, NextAuth lo
+ * atrapaba y respondía `CredentialsSignin` — el MISMO error que una
+ * contraseña equivocada.
+ *
+ * Es el peor modo de fallo posible para depurar: un problema de
+ * infraestructura se disfraza de error del usuario, así que uno pasa horas
+ * revisando hashes y contraseñas mientras el fallo real está en la cadena de
+ * conexión. Clasificar el motivo cuesta veinte líneas y ahorra esa tarde.
+ *
+ * Lo que se le dice al CLIENTE sigue siendo genérico: la clasificación es
+ * para el log del servidor.
+ */
+export type CredentialsOutcome =
+  | { ok: true; user: VerifiedUser }
+  /** Correo mal formado o campos vacíos. */
+  | { ok: false; reason: 'INVALID_INPUT' }
+  /** No existe ningún usuario con ese correo. */
+  | { ok: false; reason: 'NO_SUCH_USER' }
+  /** Existe pero entró por OAuth y no tiene contraseña. */
+  | { ok: false; reason: 'NO_PASSWORD_SET' }
+  /** El bcrypt no coincide. */
+  | { ok: false; reason: 'BAD_PASSWORD' }
+  /** Desactivado o borrado lógicamente. */
+  | { ok: false; reason: 'USER_DISABLED' }
+  /** La base no respondió. NO es culpa del usuario. */
+  | { ok: false; reason: 'DATABASE_ERROR'; detail: string }
+
+/**
  * Hash descartable con el que comparar cuando el correo NO existe.
  *
  * Sin esto, un correo inexistente responde en microsegundos y uno real tarda
@@ -28,35 +61,76 @@ export interface VerifiedUser {
  */
 const DUMMY_HASH = bcrypt.hashSync('contraseña-que-nunca-se-usa', 12)
 
-export async function verifyCredentials(
+export async function verifyCredentialsDetailed(
   raw: unknown,
-): Promise<VerifiedUser | null> {
+): Promise<CredentialsOutcome> {
   const parsed = credentialsSchema.safeParse(raw)
-  if (!parsed.success) return null
+  if (!parsed.success) return { ok: false, reason: 'INVALID_INPUT' }
 
   const { email, password } = parsed.data
 
-  const user = await prisma.user.findUnique({
-    where: { email },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      passwordHash: true,
-      isActive: true,
-      deletedAt: true,
-    },
-  })
+  let user: {
+    id: string
+    email: string
+    name: string
+    passwordHash: string | null
+    isActive: boolean
+    deletedAt: Date | null
+  } | null
+
+  try {
+    user = await prisma.user.findUnique({
+      where: { email },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        passwordHash: true,
+        isActive: true,
+        deletedAt: true,
+      },
+    })
+  } catch (e) {
+    // La causa más probable en producción: cadena de conexión mal puesta,
+    // base suspendida o conexiones agotadas. Se distingue explícitamente.
+    return {
+      ok: false,
+      reason: 'DATABASE_ERROR',
+      detail: e instanceof Error ? `${e.name}: ${e.message.split('\n')[0]}` : String(e),
+    }
+  }
 
   // Se compara SIEMPRE, exista el usuario o no (ver DUMMY_HASH).
   const hash = user?.passwordHash ?? DUMMY_HASH
-  const coincide = await bcrypt.compare(password, hash)
+  let coincide: boolean
+  try {
+    coincide = await bcrypt.compare(password, hash)
+  } catch (e) {
+    // Un hash corrupto en la base entra aquí: bcrypt lanza en vez de
+    // devolver false, y sin esta rama se leería como contraseña incorrecta.
+    return {
+      ok: false,
+      reason: 'DATABASE_ERROR',
+      detail: `bcrypt: ${e instanceof Error ? e.message : String(e)}`,
+    }
+  }
 
-  if (!user || !user.passwordHash || !coincide) return null
+  if (!user) return { ok: false, reason: 'NO_SUCH_USER' }
+  if (!user.passwordHash) return { ok: false, reason: 'NO_PASSWORD_SET' }
+  if (!coincide) return { ok: false, reason: 'BAD_PASSWORD' }
 
   // Un usuario desactivado o borrado tampoco entra. Se comprueba DESPUÉS del
   // bcrypt para no reintroducir la diferencia de tiempos.
-  if (!user.isActive || user.deletedAt) return null
+  if (!user.isActive || user.deletedAt) return { ok: false, reason: 'USER_DISABLED' }
 
-  return { id: user.id, email: user.email, name: user.name }
+  return { ok: true, user: { id: user.id, email: user.email, name: user.name } }
+}
+
+/**
+ * Forma compatible con el resto del código y con los tests: devuelve el
+ * usuario o null. Usa `verifyCredentialsDetailed` cuando necesites el motivo.
+ */
+export async function verifyCredentials(raw: unknown): Promise<VerifiedUser | null> {
+  const r = await verifyCredentialsDetailed(raw)
+  return r.ok ? r.user : null
 }

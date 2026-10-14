@@ -1,7 +1,7 @@
 import { headers } from 'next/headers'
 import NextAuth from 'next-auth'
 import Credentials from 'next-auth/providers/credentials'
-import { verifyCredentials } from '@/lib/credentials'
+import { verifyCredentialsDetailed } from '@/lib/credentials'
 import { checkRateLimit, clientIp, RATE_RULES } from '@/lib/rate-limit'
 import { ROUTES } from '@/lib/route-access'
 
@@ -28,6 +28,31 @@ import { ROUTES } from '@/lib/route-access'
  * exige. El modelo Session del schema queda reservado para cuando se añada
  * OAuth con el PrismaAdapter.
  */
+/**
+ * Diagnóstico de arranque.
+ *
+ * Se ejecuta una vez al cargar el módulo y deja en el log de Vercel lo
+ * mínimo para descartar los dos fallos de configuración más comunes, SIN
+ * imprimir ningún valor secreto: solo si está presente y su longitud.
+ */
+if (!process.env.AUTH_SECRET && !process.env.NEXTAUTH_SECRET) {
+  console.error(
+    '[auth] FALTA AUTH_SECRET (ni NEXTAUTH_SECRET). Las cookies de sesión no ' +
+      'se podrán firmar ni verificar: el login parecerá funcionar y rebotará ' +
+      'al formulario. Añádela en Vercel, entorno Production.',
+  )
+} else {
+  const fuente = process.env.AUTH_SECRET ? 'AUTH_SECRET' : 'NEXTAUTH_SECRET'
+  const valor = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET!
+  console.info('[auth] configuración', {
+    secreto: `${fuente} presente (${valor.length} caracteres)`,
+    authUrl: process.env.AUTH_URL ?? process.env.NEXTAUTH_URL ?? '(sin fijar: se deduce por trustHost)',
+    trustHost: true,
+    vercelEnv: process.env.VERCEL_ENV ?? '(no es Vercel)',
+    vercelUrl: process.env.VERCEL_URL ?? '(sin VERCEL_URL)',
+  })
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   session: {
     strategy: 'jwt',
@@ -65,38 +90,85 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
        * la misma respuesta opaca, pero en el servidor queda claro por qué.
        */
       authorize: async (credentials) => {
-        const ip = clientIp(await headers())
-        const limite = await checkRateLimit(`login:${ip}`, RATE_RULES.login)
+        const t0 = Date.now()
+        const correo =
+          typeof credentials?.email === 'string' ? credentials.email : '(sin correo)'
 
-        if (!limite.ok) {
-          console.warn(
-            `[auth] login bloqueado por rate limit — ip ${ip}, reintenta en ${limite.retryAfterSeconds}s. ` +
-              'Ojo: con el límite activo, incluso la contraseña correcta se rechaza.',
-          )
-          return null
-        }
-
-        const user = await verifyCredentials(credentials)
-
-        if (!user && process.env.NODE_ENV !== 'production') {
-          // Solo en desarrollo: en producción esto sería una pista para quien
-          // esté probando correos a ver cuáles existen.
-          console.warn('[auth] credenciales incorrectas', {
-            email: typeof credentials?.email === 'string' ? credentials.email : '(sin correo)',
-            intentosRestantes: limite.remaining,
+        /**
+         * `headers()` puede lanzar si Auth.js invoca authorize fuera del
+         * ámbito de la petición. Si eso pasara, el throw subiría y NextAuth
+         * respondería CredentialsSignin — otra forma de que un problema de
+         * infraestructura se disfrace de contraseña mala. Se aísla.
+         */
+        let ip = 'desconocida'
+        try {
+          ip = clientIp(await headers())
+        } catch (e) {
+          console.error('[auth] no se pudo leer la IP del request', {
+            error: e instanceof Error ? e.message : e,
           })
         }
 
-        return user
+        const limite = await checkRateLimit(`login:${ip}`, RATE_RULES.login)
+        if (!limite.ok) {
+          console.warn('[auth] RECHAZO: rate limit', {
+            correo,
+            ip,
+            reintentarEnSegundos: limite.retryAfterSeconds,
+            nota: 'con el límite activo, incluso la contraseña correcta se rechaza',
+          })
+          return null
+        }
+
+        const r = await verifyCredentialsDetailed(credentials)
+        const ms = Date.now() - t0
+
+        if (r.ok) {
+          console.info('[auth] OK', { correo: r.user.email, userId: r.user.id, ms })
+          return r.user
+        }
+
+        // Un fallo de base NO es culpa del usuario: se registra como error,
+        // no como aviso, para que destaque en el panel de Vercel.
+        if (r.reason === 'DATABASE_ERROR') {
+          console.error('[auth] RECHAZO POR FALLO DE BASE DE DATOS', {
+            correo,
+            ms,
+            detalle: r.detail,
+            revisar: 'DATABASE_URL en Vercel (pooled, con pgbouncer=true&connection_limit=1)',
+          })
+          return null
+        }
+
+        console.warn('[auth] RECHAZO: credenciales', {
+          correo,
+          motivo: r.reason,
+          ms,
+          intentosRestantes: limite.remaining,
+        })
+        return null
       },
     }),
   ],
   callbacks: {
     jwt({ token, user }) {
       if (user?.id) token.sub = user.id
+      if (!token.sub) {
+        // Sin `sub` no hay sesión utilizable: todo lo que dependa de la
+        // identidad fallará después sin decir por qué.
+        console.error('[auth] callback jwt SIN sub', {
+          tieneUser: Boolean(user),
+          claves: Object.keys(token),
+        })
+      }
       return token
     },
     session({ session, token }) {
+      if (!token.sub) {
+        console.error('[auth] callback session: token sin sub', {
+          nota: 'la cookie no se pudo descifrar o se firmó con otro AUTH_SECRET',
+        })
+      }
       if (token.sub) session.user.id = token.sub
       // `iat` lo pone Auth.js al firmar. Viaja a la sesión para que
       // resolveTenantContext pueda descartar tokens emitidos antes del
