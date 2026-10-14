@@ -1,4 +1,4 @@
-import 'dotenv/config'
+import './guard'
 import { randomUUID } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'

@@ -27,7 +27,9 @@
     "test:tenants-api": "tsx tests/tenants-api.ts",
     "test:sa-account": "tsx tests/superadmin-account.ts",
     "test:pos": "tsx tests/pos-invoicing.ts",
-    "reset-admin": "tsx scripts/reset-admin.ts"
+    "reset-admin": "tsx scripts/reset-admin.ts",
+    "db:deploy": "prisma migrate deploy",
+    "db:new-migration": "prisma migrate dev --create-only"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",

@@ -1,4 +1,4 @@
-import 'dotenv/config'
+import './guard'
 import { prisma } from '@/lib/prisma'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { createStockMovement } from '@/features/inventory/stock-service'

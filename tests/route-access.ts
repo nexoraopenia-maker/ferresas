@@ -1,3 +1,4 @@
+import './guard'
 import { resolveRouteAccess, ROUTES, type RouteSession } from '@/lib/route-access'
 
 let pass = 0, fail = 0

@@ -1,3 +1,4 @@
+import './guard'
 import {
   verifyStripeSignature, verifyMercadoPagoSignature,
   signStripePayload, signMercadoPagoManifest,

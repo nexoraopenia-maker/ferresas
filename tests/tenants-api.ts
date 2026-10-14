@@ -1,3 +1,4 @@
+import './guard'
 // `generateTempPassword` vive en un módulo que arrastra prisma.ts por la
 // cadena de imports, y ese exige DATABASE_URL al cargarse. Este test no hace
 // ninguna consulta: solo necesita que la variable exista.

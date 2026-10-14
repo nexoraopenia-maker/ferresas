@@ -1,3 +1,4 @@
+import './guard'
 import { checkRateLimit, resetRateLimits, clientIp, RATE_RULES } from '@/lib/rate-limit'
 import { getAccountBanner } from '@/features/billing/account-status'
 import { toFormEncoded } from '@/features/billing/stripe-client'

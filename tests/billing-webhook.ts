@@ -1,4 +1,4 @@
-import 'dotenv/config'
+import './guard'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { normalizeStripeEvent, mapStripeStatus } from '@/features/billing/webhook-events'
