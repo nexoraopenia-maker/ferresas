@@ -38,7 +38,7 @@ export async function startCheckout(
   }
 
   const secretKey = process.env.STRIPE_SECRET_KEY
-  const appUrl = process.env.APP_URL ?? (await inferirAppUrl())
+  const appUrl = (await resolverAppUrl())
 
   if (!secretKey) {
     console.error('[billing] falta STRIPE_SECRET_KEY')
@@ -98,7 +98,7 @@ export async function openBillingPortal(): Promise<ActionResult<{ url: string }>
       }
     }
 
-    const appUrl = process.env.APP_URL ?? (await inferirAppUrl())
+    const appUrl = (await resolverAppUrl())
     const stripe = createStripeClient({ secretKey })
     const { url } = await stripe.createBillingPortalSession({
       customerId: sub.externalCustomerId,
@@ -116,9 +116,38 @@ export async function openBillingPortal(): Promise<ActionResult<{ url: string }>
 }
 
 /**
- * Deduce la URL pública cuando APP_URL no está configurada. Las URLs de
- * retorno de Stripe deben ser absolutas, y una equivocada deja al cliente
- * pagando y aterrizando en ninguna parte.
+ * URL pública absoluta para las URLs de retorno de las pasarelas.
+ *
+ * Usa `||` y no `??` a propósito. En Vercel la variable estaba DEFINIDA pero
+ * VACÍA, y `??` solo cae al fallback con null o undefined: `'' ?? x` es `''`.
+ * El resultado era una URL de retorno relativa —`/facturacion?checkout=exito`—
+ * que Stripe y MercadoPago rechazan porque exigen absoluta. El cliente habría
+ * pulsado "Pagar" y recibido un error de la pasarela, con la causa escondida
+ * en una variable de entorno vacía.
+ *
+ * Se valida además que sea http(s): una cadena cualquiera pasaría el `||` y
+ * volvería a producir una URL inválida, solo que más difícil de ver.
+ */
+async function resolverAppUrl(): Promise<string> {
+  const declarada = process.env.APP_URL?.trim()
+  if (declarada && /^https?:\/\//.test(declarada)) return declarada
+
+  if (declarada) {
+    console.warn('[billing] APP_URL no es una URL absoluta; se deduce del request', {
+      valor: declarada.slice(0, 40),
+    })
+  }
+
+  // Vercel expone el dominio del despliegue; sirve de red si APP_URL falta.
+  const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL
+  if (vercel) return `https://${vercel}`
+
+  return inferirAppUrl()
+}
+
+/**
+ * Último recurso: deducir de las cabeceras del request. Funciona, pero
+ * depende de que el proxy las reenvíe bien, así que es preferible APP_URL.
  */
 async function inferirAppUrl(): Promise<string> {
   const h = await headers()
@@ -157,7 +186,7 @@ export async function startMercadoPagoCheckout(
   }
 
   try {
-    const appUrl = process.env.APP_URL ?? (await inferirAppUrl())
+    const appUrl = (await resolverAppUrl())
     const db = getTenantPrisma(ctx)
     const mp = createMercadoPagoClient({ accessToken })
     const { url } = await runMpCheckout(db, ctx, mp, { planCode, appUrl })

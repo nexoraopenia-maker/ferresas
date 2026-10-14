@@ -129,6 +129,16 @@ export async function GET(req: NextRequest) {
   if (directa && conexion.directaUsaPooler) {
     problemas.push('DIRECT_URL apunta al pooler: `prisma migrate deploy` fallará en el build.')
   }
+  const appUrl = process.env.APP_URL?.trim()
+  if (process.env.APP_URL !== undefined && !appUrl) {
+    problemas.push(
+      'APP_URL está definida pero VACÍA. Las URLs de retorno de Stripe y ' +
+        'MercadoPago deben ser absolutas: bórrala o ponle el dominio completo.',
+    )
+  } else if (appUrl && !/^https?:\/\//.test(appUrl)) {
+    problemas.push('APP_URL no empieza por http(s)://: las pasarelas la rechazarán.')
+  }
+
   if (entorno.AUTH_URL || entorno.NEXTAUTH_URL) {
     problemas.push(
       'AUTH_URL/NEXTAUTH_URL está fijada. Con trustHost:true no hace falta, y si no coincide ' +
