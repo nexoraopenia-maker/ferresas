@@ -11,7 +11,12 @@ import {
   stepsFor,
   unitLabel,
 } from '@/lib/quantity'
-import { lookupForPos, registerSale, searchForPos, type PosProduct } from '../actions'
+import {
+  lookupForPos, registerQuote, registerSale, searchForPos,
+  type PosCustomer, type PosProduct,
+} from '../actions'
+import { CustomerPicker } from './CustomerPicker'
+import { ATAJOS_VISIBLES, usePosShortcuts } from './use-pos-shortcuts'
 
 interface LineaCarrito {
   key: string
@@ -57,8 +62,19 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
   const [aviso, setAviso] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [recibo, setRecibo] = useState<{ saleId: string; number: string; total: number } | null>(null)
+  const [cliente, setCliente] = useState<PosCustomer | null>(null)
+  const [forzarStock, setForzarStock] = useState(false)
+  const [cotizacion, setCotizacion] = useState<{ number: string; validUntil: string } | null>(null)
   const [pendiente, startTransition] = useTransition()
   const idemRef = useRef<string | null>(null)
+  const buscadorRef = useRef<HTMLInputElement>(null)
+
+  usePosShortcuts({
+    onBuscar: () => buscadorRef.current?.focus(),
+    onEscanear: () => { setAviso(null); setEscaneando(true) },
+    onCobrar: () => { if (carrito.length > 0 && !pendiente) cobrar() },
+    onCotizar: () => { if (carrito.length > 0 && !pendiente) cotizar() },
+  })
 
   const totales = useMemo(() => {
     let bruto = 0
@@ -148,6 +164,7 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
     startTransition(async () => {
       const res = await registerSale({
         warehouseId: carrito[0]!.producto.warehouseId,
+        customerId: cliente?.id ?? null,
         items: carrito.map((l) => ({
           productId: l.producto.productId,
           variantId: l.producto.variantId,
@@ -156,13 +173,24 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
         })),
         payments: [{ method: metodo, amount: Math.max(entregado, totales.total) }],
         documentType: 'NOTA_VENTA',
+        allowNegativeStock: forzarStock,
         idempotencyKey: idemRef.current ?? undefined,
       })
 
-      if (!res.ok) { setError(res.message); return }
+      if (!res.ok) {
+        setError(res.message)
+        // Si el bloqueo fue por stock, se ofrece forzar en lugar de dejar al
+        // cajero atascado con el cliente delante.
+        if (res.code === 'INSUFFICIENT_STOCK' && !forzarStock) {
+          setAviso('Marca «Vender sin stock» si el producto está físicamente disponible.')
+        }
+        return
+      }
 
       setRecibo({ saleId: res.data.saleId, number: res.data.number, total: res.data.total })
       setCarrito([])
+      setCliente(null)
+      setForzarStock(false)
       setRecibido('')
       setBusqueda('')
       setResultados([])
@@ -173,7 +201,39 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
     })
   }
 
+  const cotizar = () => {
+    if (carrito.length === 0) return
+    setError(null)
+    setAviso(null)
+
+    startTransition(async () => {
+      const res = await registerQuote({
+        warehouseId: carrito[0]!.producto.warehouseId,
+        customerId: cliente?.id ?? null,
+        items: carrito.map((l) => ({
+          productId: l.producto.productId,
+          variantId: l.producto.variantId,
+          quantity: l.quantity,
+          discount: l.discount,
+        })),
+        validDays: 15,
+        idempotencyKey: crypto.randomUUID(),
+      })
+
+      if (!res.ok) { setError(res.message); return }
+
+      setCotizacion({ number: res.data.number, validUntil: res.data.validUntil })
+      // El carrito se VACÍA: la cotización ya quedó guardada y dejarlo lleno
+      // haría que el siguiente cliente heredara los productos del anterior.
+      setCarrito([])
+      setCliente(null)
+    })
+  }
+
   const vuelto = Number(recibido) > 0 ? cent(Number(recibido) - totales.total) : 0
+  const hayFaltaDeStock = carrito.some(
+    (l) => l.producto.trackStock && l.quantity > l.producto.stock,
+  )
 
   return (
     /**
@@ -197,6 +257,32 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
           {recibo && (
             <ReciboEmitido recibo={recibo} onCerrar={() => setRecibo(null)} />
           )}
+          {cotizacion && (
+            <div className="rounded-2xl border-2 border-industrial-600 bg-industrial-50 p-4 dark:bg-industrial-950">
+              <p className="font-bold text-industrial-700 dark:text-industrial-300">
+                Cotización guardada
+              </p>
+              <p className="mt-1 text-sm text-ink">
+                <span className="font-mono font-semibold">{cotizacion.number}</span> · válida
+                hasta {new Date(cotizacion.validUntil).toLocaleDateString('es-PE')}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <a
+                  href={`/cotizaciones?print=${cotizacion.number}`}
+                  className="h-touch inline-flex items-center rounded-xl bg-graphite-900 px-4 text-sm font-bold text-white dark:bg-graphite-50 dark:text-graphite-900"
+                >
+                  Ver e imprimir
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setCotizacion(null)}
+                  className="h-touch rounded-xl border border-hairline px-4 text-sm font-semibold text-ink"
+                >
+                  Nueva venta
+                </button>
+              </div>
+            </div>
+          )}
           {aviso && (
             <p role="status" className="rounded-xl border border-stock-low/40 bg-stock-low-soft px-4 py-3 text-sm font-semibold text-stock-low">
               {aviso}
@@ -219,15 +305,16 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
           onClick={() => { setAviso(null); setEscaneando(true) }}
           className="h-touch-xl flex-1 rounded-2xl bg-industrial-600 text-lg font-bold text-white transition active:scale-95"
         >
-          Escanear
+          Escanear <span className="hidden text-sm font-normal opacity-75 lg:inline">(F4)</span>
         </button>
       </div>
 
       <div>
         <input
+          ref={buscadorRef}
           value={busqueda}
           onChange={(e) => buscar(e.target.value)}
-          placeholder="O busca por nombre…"
+          placeholder="O busca por nombre…  (F2)"
           className="h-touch-lg w-full rounded-xl border border-hairline bg-surface px-4 text-base text-ink placeholder:text-ink-muted focus:border-industrial-600 focus:outline-none focus:ring-2 focus:ring-industrial-600/40"
         />
         {resultados.length > 0 && (
@@ -272,6 +359,10 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
           En escritorio se queda pegada arriba mientras la izquierda crece:
           el cajero no pierde de vista el total al bajar por la lista. */}
       <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-4">
+      {/* --- Cliente: encima del carrito, que es donde se decide el
+              comprobante ------------------------------------------------- */}
+      <CustomerPicker cliente={cliente} onChange={setCliente} />
+
       {/* --- Carrito ----------------------------------------------------- */}
       <section>
         <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted">
@@ -400,14 +491,53 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={cobrar}
-              disabled={pendiente || carrito.some((l) => l.quantity <= 0)}
-              className="mt-2 h-touch-xl w-full rounded-2xl bg-industrial-600 text-lg font-bold text-white transition active:scale-95 disabled:opacity-40"
-            >
-              {pendiente ? 'Registrando…' : `Cobrar ${money(totales.total)}`}
-            </button>
+            {/* Venta forzada. Solo aparece cuando hace falta: una casilla
+                permanente invitaría a marcarla por costumbre, y entonces la
+                política de stock dejaría de significar nada. */}
+            {hayFaltaDeStock && (
+              <label className="mt-2 flex items-start gap-2 rounded-xl border border-stock-low/40 bg-stock-low-soft px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={forzarStock}
+                  onChange={(e) => setForzarStock(e.target.checked)}
+                  className="mt-0.5 size-5 shrink-0 accent-stock-low"
+                />
+                <span className="text-xs font-semibold text-stock-low">
+                  Vender sin stock suficiente
+                  <span className="mt-0.5 block font-normal">
+                    El inventario quedará en negativo y se registrará para
+                    que puedas contar esos productos.
+                  </span>
+                </span>
+              </label>
+            )}
+
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={cotizar}
+                disabled={pendiente || carrito.some((l) => l.quantity <= 0)}
+                className="h-touch-xl shrink-0 rounded-2xl border border-graphite-900 px-4 text-sm font-bold text-ink transition active:scale-95 disabled:opacity-40 dark:border-graphite-50"
+              >
+                Cotizar
+                <span className="hidden text-xs font-normal opacity-70 lg:block">Ctrl+G</span>
+              </button>
+              <button
+                type="button"
+                onClick={cobrar}
+                disabled={pendiente || carrito.some((l) => l.quantity <= 0)}
+                className="h-touch-xl min-w-0 flex-1 rounded-2xl bg-industrial-600 text-lg font-bold text-white transition active:scale-95 disabled:opacity-40"
+              >
+                {pendiente ? 'Registrando…' : `Cobrar ${money(totales.total)}`}
+                <span className="hidden text-xs font-normal opacity-75 lg:block">F9</span>
+              </button>
+            </div>
+
+            {/* Los atajos solo en escritorio y solo si hay carrito: un atajo
+                que nadie descubre no existe, pero en móvil no hay teclado. */}
+            <p className="mt-1.5 hidden text-center text-xs text-ink-muted lg:block">
+              {ATAJOS_VISIBLES.map((a) => `${a.teclas} ${a.accion.toLowerCase()}`).join(' · ')}
+            </p>
           </div>
         </div>
       )}

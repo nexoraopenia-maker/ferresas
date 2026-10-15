@@ -88,6 +88,14 @@ export async function applyStockMovement(
   ctx: TenantContext,
   input: CreateStockMovementInput,
   sourceOverride?: MovementSource,
+  /**
+   * Relaja el guard de stock para ESTA operación.
+   *
+   * El guard sigue viviendo aquí y en un solo sitio; lo que cambia es que el
+   * POS pueda desactivarlo de forma explícita y por venta, en lugar de que
+   * el tenant tenga que aflojar su política global.
+   */
+  allowNegative?: boolean,
 ): Promise<StockMovementResult> {
   const variantId = input.variantId ?? null
 
@@ -161,7 +169,12 @@ export async function applyStockMovement(
 
     // El guard solo se aplica a salidas y solo si el tenant bloquea
     // negativos. Con PERMITIR_CON_ADVERTENCIA la venta pasa y se marca.
-    const bloquea = esSalida && tenant.stockPolicy === 'BLOQUEAR'
+    // `allowNegative` lo pasa el POS para una venta concreta. El guard sigue
+    // viviendo aquí y en un solo sitio; lo que se puede es desactivarlo de
+    // forma explícita y por operación, en lugar de obligar al tenant a
+    // aflojar su política global para todas las ventas.
+    const bloquea =
+      esSalida && tenant.stockPolicy === 'BLOQUEAR' && !allowNegative
 
     const rows = await t.stock.updateManyAndReturn({
       where: bloquea

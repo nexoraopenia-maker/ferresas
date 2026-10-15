@@ -33,6 +33,13 @@ export const NAV_ITEMS: NavItem[] = [
     icon: 'M20 7 12 3 4 7m16 0-8 4m8-4v10l-8 4m0-14L4 7m8 4v10M4 7v10l8 4',
   },
   {
+    href: '/cotizaciones',
+    label: 'Cotizaciones',
+    short: 'Cotiz.',
+    // Etiqueta con precio
+    icon: 'M7 7h.01M7 3h5a2 2 0 0 1 1.4.6l7 7a2 2 0 0 1 0 2.8l-5.6 5.6a2 2 0 0 1-2.8 0l-7-7A2 2 0 0 1 4 10.6V5a2 2 0 0 1 2-2h1Z',
+  },
+  {
     href: '/comprobantes',
     label: 'Comprobantes',
     short: 'Docs',

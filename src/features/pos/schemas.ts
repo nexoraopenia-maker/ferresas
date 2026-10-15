@@ -54,6 +54,20 @@ export const registerSaleSchema = z.object({
   documentType: z.enum(['NOTA_VENTA', 'BOLETA', 'FACTURA', 'TICKET']).default('NOTA_VENTA'),
   notes: z.string().trim().max(500).optional(),
   /**
+   * Venta forzada por debajo del stock disponible.
+   *
+   * No es una chapuza: en una ferretería el inventario físico y el del
+   * sistema divergen a diario —mercadería mal ubicada, un conteo pendiente,
+   * una entrada que nadie registró—. Bloquear la venta cuando el producto
+   * está ahí, en el mostrador, delante del cliente, hace que el cajero
+   * abandone el sistema y apunte en un papel. Eso destruye el inventario
+   * mucho más que un negativo temporal.
+   *
+   * El negativo queda MARCADO en la venta y AUDITADO, así que el dueño ve
+   * exactamente qué productos necesitan conteo.
+   */
+  allowNegativeStock: z.boolean().default(false),
+  /**
    * Generada por el cliente antes de enviar. Es lo que impide que un doble
    * toque en "Cobrar" con la red lenta registre la venta dos veces y
    * descuente el stock dos veces.
@@ -71,3 +85,49 @@ export const posLookupSchema = z.object({
 })
 
 export type PosLookupInput = z.infer<typeof posLookupSchema>
+
+/**
+ * Alta o búsqueda rápida de cliente por documento, desde el mostrador.
+ *
+ * El largo del documento define su tipo, así que no se pregunta: 8 dígitos
+ * es DNI, 11 es RUC. Obligar al cajero a elegir en un desplegable mientras
+ * el cliente espera es fricción que no aporta nada — el número ya lo dice.
+ */
+export const customerByDocSchema = z.object({
+  docNumber: z
+    .string()
+    .trim()
+    .regex(/^\d{8}$|^\d{11}$/, 'El DNI tiene 8 dígitos y el RUC 11.'),
+  /** Solo se usa al CREAR; si el cliente ya existe, se ignora. */
+  name: z.string().trim().min(2).max(200).optional(),
+})
+
+export type CustomerByDocInput = z.infer<typeof customerByDocSchema>
+
+/** Guardar el carrito como cotización. */
+export const registerQuoteSchema = z.object({
+  warehouseId: id,
+  customerId: id.nullish(),
+  items: z.array(saleLineSchema).min(1, 'Agrega al menos un producto.').max(200),
+  /**
+   * Días de validez. Por defecto 15: en ferretería los precios se mueven con
+   * el tipo de cambio y el acero, y una cotización sin caducidad se convierte
+   * en una promesa que el negocio no puede sostener.
+   */
+  validDays: z.number().int().min(1).max(90).default(15),
+  notes: z.string().trim().max(500).optional(),
+  idempotencyKey: z.uuid().optional(),
+})
+
+export type RegisterQuoteInput = z.infer<typeof registerQuoteSchema>
+
+/** Convertir una cotización en venta. */
+export const convertQuoteSchema = z.object({
+  quoteId: id,
+  payments: z.array(paymentLineSchema).min(1, 'Registra al menos un pago.').max(5),
+  documentType: z.enum(['NOTA_VENTA', 'BOLETA', 'FACTURA', 'TICKET']).default('NOTA_VENTA'),
+  allowNegativeStock: z.boolean().default(false),
+  idempotencyKey: z.uuid().optional(),
+})
+
+export type ConvertQuoteInput = z.infer<typeof convertQuoteSchema>

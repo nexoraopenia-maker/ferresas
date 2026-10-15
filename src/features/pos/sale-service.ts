@@ -105,10 +105,33 @@ export async function ensureCounter(
  * que usa el escáner de almacén. Eso importa: el guard de concurrencia que
  * impide dejar el inventario en negativo vive ahí y en un solo sitio.
  */
+/**
+ * Precios congelados que SOBREESCRIBEN la lista actual, por línea.
+ *
+ * ─── POR QUÉ NO ESTÁ EN EL ESQUEMA ZOD ───────────────────────────────────
+ *
+ * Es un argumento aparte de la FUNCIÓN, deliberadamente fuera del cuerpo
+ * validado. Si viviera en `RegisterSaleInput`, el navegador podría enviar
+ * `priceOverrides` y venderse un taladro a un sol — exactamente el agujero
+ * que el resto del servicio evita leyendo los precios de la base.
+ *
+ * Solo lo rellena código del SERVIDOR con un origen fiable: hoy, las líneas
+ * de una cotización guardada.
+ *
+ * La clave es `productId:variantId` para no confundir variantes del mismo
+ * producto.
+ */
+export type PriceOverrides = Map<string, number>
+
+export function overrideKey(productId: string, variantId: string | null | undefined): string {
+  return `${productId}:${variantId ?? ''}`
+}
+
 export async function registerSale(
   db: TenantPrismaClient,
   ctx: TenantContext,
   input: RegisterSaleInput,
+  priceOverrides?: PriceOverrides,
 ): Promise<RegisterSaleResult> {
   if (!hasRole(ctx.role, 'VENDEDOR')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para registrar ventas.')
@@ -160,7 +183,11 @@ export async function registerSale(
 
       const lineas = input.items.map((item) => {
         const p = porId.get(item.productId)!
-        const precio = num(p.salePrice)
+        // El precio congelado manda sobre la lista: es lo que hace que una
+        // cotización signifique algo. Sin esto, el cliente que pidió
+        // presupuesto pagaría el precio del día de la conversión.
+        const congelado = priceOverrides?.get(overrideKey(item.productId, item.variantId))
+        const precio = congelado ?? num(p.salePrice)
         const bruto = cent(precio * item.quantity)
 
         if (item.discount > bruto) {
@@ -273,10 +300,12 @@ export async function registerSale(
           warehouseId: input.warehouseId,
           quantity: l.item.quantity,
           source: 'MANUAL',
-          reason: `Venta ${number}`,
+          reason: input.allowNegativeStock
+            ? `Venta ${number} (forzada: stock insuficiente)`
+            : `Venta ${number}`,
           // Sin clave propia: la idempotencia de la venta entera la da el
           // único de Sale.number, y la transacción cubre estos movimientos.
-        }, 'VENTA')
+        }, 'VENTA', input.allowNegativeStock)
         if (mov.wentNegative) soldBelowStock = true
       }
 
@@ -284,6 +313,39 @@ export async function registerSale(
         await t.sale.update({
           where: { id: sale.id },
           data: { soldBelowStock: true },
+        })
+
+        // Se audita con el detalle de QUÉ quedó negativo. La marca en la
+        // venta dice que pasó; esto dice qué contar, que es lo accionable.
+        const negativos: Record<string, number> = {}
+        for (const l of lineas) {
+          if (!l.producto.trackStock) continue
+          const s = await t.stock.findFirst({
+            where: {
+              productId: l.producto.id,
+              variantId: l.item.variantId ?? null,
+              warehouseId: input.warehouseId,
+            },
+            select: { quantity: true },
+          })
+          const q = num(s?.quantity)
+          if (q < 0) negativos[l.producto.name] = q
+        }
+
+        await t.auditLog.create({
+          data: {
+            tenantId: ctx.tenantId,
+            actorId: ctx.userId,
+            actorRole: ctx.role,
+            action: 'sale.below_stock',
+            entityType: 'Sale',
+            entityId: sale.id,
+            reason: input.allowNegativeStock
+              ? 'El cajero forzó la venta: el producto estaba físicamente disponible'
+              : 'Política del tenant permite stock negativo',
+            after: { venta: number, forzada: input.allowNegativeStock, negativos },
+            impersonationId: ctx.impersonationId ?? null,
+          },
         })
       }
 
