@@ -81,15 +81,35 @@ export async function GET(req: NextRequest) {
   const t0 = Date.now()
   try {
     const [migraciones, planes, superadmins, tenants] = await Promise.all([
-      prisma.$queryRawUnsafe<{ migration_name: string }[]>(
-        'SELECT migration_name FROM _prisma_migrations ORDER BY finished_at',
+      /**
+       * Se distingue ÉXITO de simple presencia.
+       *
+       * La consulta anterior contaba FILAS de _prisma_migrations. Prisma
+       * inserta la fila al EMPEZAR y rellena `finished_at` al terminar, así
+       * que una migración que falló a mitad deja su fila con `finished_at`
+       * NULL y `logs` con el error — y se habría contado como aplicada.
+       * Un falso verde justo en el momento en que el dato importa.
+       *
+       * `rolled_back_at` cubre el otro caso: una migración revertida a mano
+       * con `prisma migrate resolve --rolled-back`.
+       */
+      prisma.$queryRawUnsafe<
+        { migration_name: string; ok: boolean; rolled_back: boolean }[]
+      >(
+        `SELECT migration_name,
+                (finished_at IS NOT NULL AND rolled_back_at IS NULL) AS ok,
+                (rolled_back_at IS NOT NULL) AS rolled_back
+         FROM _prisma_migrations
+         ORDER BY started_at`,
       ),
       prisma.plan.count({ where: { isActive: true } }),
       prisma.user.count({ where: { role: 'SUPERADMIN', isActive: true } }),
       prisma.tenant.count({ where: { deletedAt: null } }),
     ])
 
-    const aplicadas = migraciones.map((m) => m.migration_name)
+    const aplicadas = migraciones.filter((m) => m.ok).map((m) => m.migration_name)
+    // Fallidas o revertidas: existen en la tabla pero NO están aplicadas.
+    const fallidas = migraciones.filter((m) => !m.ok).map((m) => m.migration_name)
 
     /**
      * Migraciones PENDIENTES: las que vienen en el repositorio y no están
@@ -119,6 +139,7 @@ export async function GET(req: NextRequest) {
       latenciaMs: Date.now() - t0,
       migracionesAplicadas: aplicadas,
       migracionesPendientes: pendientes,
+      migracionesFallidas: fallidas,
       planesActivos: planes,
       superadminsActivos: superadmins,
       tenants,
@@ -145,6 +166,15 @@ export async function GET(req: NextRequest) {
   if (baseDatos.alcanzable === false) {
     problemas.push('La base de datos no responde: todo login fallará como si la contraseña fuera incorrecta.')
   }
+  const fall = baseDatos.migracionesFallidas
+  if (Array.isArray(fall) && fall.length > 0) {
+    problemas.push(
+      `${fall.length} migración(es) FALLIDA(S) o revertida(s): ${fall.join(', ')}. ` +
+        'El esquema quedó a medias. Resuélvelo con `prisma migrate resolve` ' +
+        'antes de desplegar nada más.',
+    )
+  }
+
   const pend = baseDatos.migracionesPendientes
   if (Array.isArray(pend) && pend.length > 0) {
     problemas.push(
