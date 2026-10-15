@@ -115,13 +115,20 @@ export function QuoteList({ quotes }: { quotes: QuoteListRow[] }) {
                   >
                     Convertir en venta
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => window.print()}
-                    className="h-touch rounded-lg border border-hairline px-4 text-sm font-semibold text-ink"
+                  {/*
+                    * Antes esto era `window.print()`, que imprimía la PÁGINA
+                    * entera: el listado de todas las cotizaciones, con las
+                    * tarjetas de contadores y el menú. Ahora abre la vista de
+                    * 80 mm de ESTA cotización.
+                    */}
+                  <a
+                    href={`/imprimir/cotizacion/${q.id}?auto=1`}
+                    target="_blank"
+                    rel="noopener"
+                    className="h-touch inline-flex items-center rounded-lg border border-hairline px-4 text-sm font-semibold text-ink"
                   >
                     Imprimir
-                  </button>
+                  </a>
                   {q.vencida && (
                     <p className="w-full text-xs font-semibold text-stock-low">
                       Vencida. Los precios son de otro momento: vuelve a

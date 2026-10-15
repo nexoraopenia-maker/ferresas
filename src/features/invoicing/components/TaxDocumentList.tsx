@@ -95,6 +95,7 @@ export function TaxDocumentList({
                 <th className="px-3 py-2 font-semibold">Cliente</th>
                 <th className="px-3 py-2 font-semibold">Importes</th>
                 <th className="px-3 py-2 font-semibold">Estado</th>
+                <th className="px-3 py-2 font-semibold">Imprimir</th>
                 {canManage && <th className="px-3 py-2 font-semibold">Acción</th>}
               </tr>
             </thead>
@@ -131,6 +132,21 @@ export function TaxDocumentList({
                       {d.statusMessage && (
                         <p className="mt-1 max-w-[16rem] text-xs text-ink-muted">{d.statusMessage}</p>
                       )}
+                    </td>
+                    <td className="px-3 py-3">
+                      {/*
+                        * Reimprimir no es una escritura, así que está abierto
+                        * a cualquier rol: el cliente que vuelve con el ticket
+                        * perdido lo atiende quien esté en el mostrador.
+                        */}
+                      <a
+                        href={`/imprimir/comprobante/${d.id}?auto=1`}
+                        target="_blank"
+                        rel="noopener"
+                        className="h-touch inline-flex items-center rounded-lg border border-hairline px-3 text-sm font-semibold text-ink"
+                      >
+                        80 mm
+                      </a>
                     </td>
                     {canManage && (
                       <td className="px-3 py-3">

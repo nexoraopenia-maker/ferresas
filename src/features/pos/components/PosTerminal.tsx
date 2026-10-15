@@ -64,7 +64,9 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
   const [recibo, setRecibo] = useState<{ saleId: string; number: string; total: number } | null>(null)
   const [cliente, setCliente] = useState<PosCustomer | null>(null)
   const [forzarStock, setForzarStock] = useState(false)
-  const [cotizacion, setCotizacion] = useState<{ number: string; validUntil: string } | null>(null)
+  const [cotizacion, setCotizacion] = useState<
+    { quoteId: string; number: string; validUntil: string } | null
+  >(null)
   const [pendiente, startTransition] = useTransition()
   const idemRef = useRef<string | null>(null)
   const buscadorRef = useRef<HTMLInputElement>(null)
@@ -222,7 +224,11 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
 
       if (!res.ok) { setError(res.message); return }
 
-      setCotizacion({ number: res.data.number, validUntil: res.data.validUntil })
+      setCotizacion({
+        quoteId: res.data.quoteId,
+        number: res.data.number,
+        validUntil: res.data.validUntil,
+      })
       // El carrito se VACÍA: la cotización ya quedó guardada y dejarlo lleno
       // haría que el siguiente cliente heredara los productos del anterior.
       setCarrito([])
@@ -268,10 +274,18 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <a
-                  href={`/cotizaciones?print=${cotizacion.number}`}
+                  href={`/imprimir/cotizacion/${cotizacion.quoteId}?auto=1`}
+                  target="_blank"
+                  rel="noopener"
                   className="h-touch inline-flex items-center rounded-xl bg-graphite-900 px-4 text-sm font-bold text-white dark:bg-graphite-50 dark:text-graphite-900"
                 >
-                  Ver e imprimir
+                  Imprimir 80 mm
+                </a>
+                <a
+                  href="/cotizaciones"
+                  className="h-touch inline-flex items-center rounded-xl border border-hairline px-4 text-sm font-semibold text-ink"
+                >
+                  Ver listado
                 </a>
                 <button
                   type="button"
@@ -563,7 +577,7 @@ function ReciboEmitido({
   recibo: { saleId: string; number: string; total: number }
   onCerrar: () => void
 }) {
-  const [doc, setDoc] = useState<{ fullNumber: string; status: string } | null>(null)
+  const [doc, setDoc] = useState<{ id: string; fullNumber: string; status: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pendiente, startTransition] = useTransition()
 
@@ -581,7 +595,7 @@ function ReciboEmitido({
         setError(d?.message ?? 'No se pudo emitir el comprobante.')
         return
       }
-      setDoc({ fullNumber: d.fullNumber, status: d.status })
+      setDoc({ id: d.id, fullNumber: d.fullNumber, status: d.status })
     })
   }
 
@@ -593,11 +607,35 @@ function ReciboEmitido({
         {money(recibo.total)}
       </p>
 
+      {/*
+        * El ticket se puede imprimir siempre, incluso antes de decidir si la
+        * venta lleva comprobante: en el mostrador el cliente se va con un
+        * papel en la mano, y esperar a emitir la boleta lo retiene.
+        */}
+      <a
+        href={`/imprimir/venta/${recibo.saleId}?auto=1`}
+        target="_blank"
+        rel="noopener"
+        className="mt-3 flex h-touch-lg items-center justify-center rounded-xl bg-graphite-900 px-4 font-bold text-white dark:bg-graphite-50 dark:text-graphite-900"
+      >
+        Imprimir ticket 80 mm
+      </a>
+
       {doc ? (
-        <p className="mt-3 rounded-xl bg-surface px-3 py-2 text-sm text-ink">
-          Comprobante <span className="font-mono font-bold">{doc.fullNumber}</span>{' '}
-          — estado <span className="font-semibold">{doc.status}</span>
-        </p>
+        <div className="mt-3 rounded-xl bg-surface px-3 py-2">
+          <p className="text-sm text-ink">
+            Comprobante <span className="font-mono font-bold">{doc.fullNumber}</span>{' '}
+            — estado <span className="font-semibold">{doc.status}</span>
+          </p>
+          <a
+            href={`/imprimir/comprobante/${doc.id}?auto=1`}
+            target="_blank"
+            rel="noopener"
+            className="mt-2 flex h-touch items-center justify-center rounded-lg border border-hairline text-sm font-semibold text-ink"
+          >
+            Imprimir {doc.fullNumber}
+          </a>
+        </div>
       ) : (
         <>
           <p className="mt-3 text-sm text-ink-muted">¿Emitir comprobante?</p>

@@ -19,6 +19,8 @@ export type BusinessErrorCode =
   | 'PLAN_UNAVAILABLE'
   | 'DUPLICATE_CODE'
   | 'INVALID_DOCUMENT'
+  /** El recurso no existe, o existe pero en otro tenant: indistinguible a propósito. */
+  | 'NOT_FOUND'
   | 'INSUFFICIENT_STOCK'
   | 'FORBIDDEN_ROLE'
   | 'STOCK_CONFLICT'
