@@ -13,6 +13,7 @@ config({ path: '.env' })
 import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from '../src/generated/prisma/client'
 import bcrypt from 'bcryptjs'
+import { assertWritableEnvironment } from '../src/lib/env-guard'
 
 /**
  * Seed idempotente: se puede correr N veces sin duplicar nada (todo va por
@@ -21,6 +22,11 @@ import bcrypt from 'bcryptjs'
  *
  * Usa DIRECT_URL si existe: el seed es DDL-adyacente y no debe ir por pooler.
  */
+assertWritableEnvironment({
+  script: 'prisma/seed.ts',
+  efecto: 'crea/actualiza planes y SOBREESCRIBE la contraseña del SUPERADMIN',
+})
+
 const connectionString = process.env.DIRECT_URL ?? process.env.DATABASE_URL
 
 if (!connectionString) {

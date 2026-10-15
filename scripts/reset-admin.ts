@@ -13,6 +13,7 @@ config({ path: '.env' })
 import bcrypt from 'bcryptjs'
 import { prisma } from '../src/lib/prisma'
 import { verifyCredentialsDetailed } from '../src/lib/credentials'
+import { assertWritableEnvironment } from '../src/lib/env-guard'
 
 /**
  * Reseteo de la contraseña del SUPERADMIN.
@@ -40,6 +41,11 @@ import { verifyCredentialsDetailed } from '../src/lib/credentials'
 const MINIMO = 12
 
 async function main() {
+  assertWritableEnvironment({
+    script: 'scripts/reset-admin.ts',
+    efecto: 'SOBREESCRIBE la contraseña del SUPERADMIN y revoca sus sesiones',
+  })
+
   const email = (process.env.SUPERADMIN_EMAIL ?? 'admin@ferresaas.dev').toLowerCase().trim()
   const password = process.argv[2] ?? process.env.SUPERADMIN_PASSWORD ?? 'cambiala-en-produccion'
 
