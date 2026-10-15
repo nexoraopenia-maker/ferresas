@@ -2,7 +2,9 @@
 
 import { useCallback, useRef, useState, useTransition } from 'react'
 import { InventoryScannerModal } from '@/components/inventory/InventoryScannerModal'
+import { QuantityInput } from '@/components/ui/quantity-input'
 import { getStockStatusView } from '@/lib/stock-status'
+import { formatQuantity, stepsFor, unitLabel } from '@/lib/quantity'
 import {
   createProductExpress,
   createStockMovement,
@@ -34,7 +36,6 @@ const TIPOS: { value: MovementType; label: string; verb: string }[] = [
   { value: 'AJUSTE', label: 'Ajuste', verb: 'Fijar en' },
 ]
 
-const ATAJOS = [1, 5, 10, 25]
 
 export function ScanToStockSheet() {
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
@@ -294,7 +295,8 @@ function ProductSheet({
       <div className={`mt-3 flex items-center gap-2 rounded-xl border px-3 py-2 ${actual.className}`}>
         <span className={`size-3 rounded-full ${actual.dotClassName}`} />
         <span className="text-sm font-bold">
-          {product.quantity} {product.unitType.toLowerCase()} · {actual.label}
+          {formatQuantity(product.quantity, product.unitType)}{' '}
+          {unitLabel(product.unitType)} · {actual.label}
         </span>
       </div>
 
@@ -317,44 +319,29 @@ function ProductSheet({
         ))}
       </div>
 
-      {/* Selector táctil grande */}
-      <div className="mt-4 flex items-center gap-2">
-        <button
-          type="button"
-          aria-label="Quitar uno"
-          onClick={() => setQty(Math.max(type === 'AJUSTE' ? 0 : 1, qty - 1))}
-          className="size-touch-xl shrink-0 rounded-2xl bg-surface-sunken text-3xl font-bold text-ink active:scale-95"
-        >
-          −
-        </button>
-        <input
-          type="number"
-          inputMode="decimal"
-          value={qty}
-          min={type === 'AJUSTE' ? 0 : 1}
-          onChange={(e) => setQty(Math.max(0, Number(e.target.value) || 0))}
-          aria-label="Cantidad"
-          className="h-touch-xl min-w-0 flex-1 rounded-2xl border border-hairline bg-surface text-center text-3xl font-bold text-ink focus:border-industrial-600 focus:outline-none focus:ring-2 focus:ring-industrial-600/40"
-        />
-        <button
-          type="button"
-          aria-label="Añadir uno"
-          onClick={() => setQty(qty + 1)}
-          className="size-touch-xl shrink-0 rounded-2xl bg-surface-sunken text-3xl font-bold text-ink active:scale-95"
-        >
-          +
-        </button>
-      </div>
+      {/* Selector táctil. Admite decimales: 0.250 kg de clavos, 1.5 m de
+          cable. El estado del input es una cadena mientras se teclea, si no
+          el punto se perdía en cada pulsación. */}
+      <QuantityInput
+        value={qty}
+        onChange={setQty}
+        unitType={product.unitType}
+        min={type === 'AJUSTE' ? 0 : 0}
+        ariaLabel="Cantidad"
+        className="mt-4"
+      />
 
       <div className="mt-2 flex gap-2">
-        {ATAJOS.map((n) => (
+        {stepsFor(product.unitType).map((n) => (
           <button
             key={n}
             type="button"
             onClick={() => setQty(type === 'AJUSTE' ? n : qty + n)}
             className="h-touch flex-1 rounded-xl border border-hairline bg-surface text-base font-bold text-ink active:scale-95"
           >
-            {type === 'AJUSTE' ? n : `+${n}`}
+            {type === 'AJUSTE'
+              ? formatQuantity(n, product.unitType)
+              : `+${formatQuantity(n, product.unitType)}`}
           </button>
         ))}
       </div>
@@ -375,9 +362,9 @@ function ProductSheet({
       )}
 
       <p className="mt-4 text-center text-sm text-ink-muted">
-        {verb} {type === 'AJUSTE' ? '' : qty} → quedará en{' '}
+        {verb} {type === 'AJUSTE' ? '' : formatQuantity(qty, product.unitType)} → quedará en{' '}
         <span className={`font-bold ${resultado < 0 ? 'text-stock-out' : ''}`}>
-          {resultado}
+          {formatQuantity(resultado, product.unitType)} {unitLabel(product.unitType)}
         </span>{' '}
         <span className="font-semibold">({previsto.label})</span>
       </p>

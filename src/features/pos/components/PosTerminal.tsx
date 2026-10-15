@@ -2,7 +2,15 @@
 
 import { useCallback, useMemo, useRef, useState, useTransition } from 'react'
 import { InventoryScannerModal } from '@/components/inventory/InventoryScannerModal'
+import { QuantityInput } from '@/components/ui/quantity-input'
 import { getStockStatusView } from '@/lib/stock-status'
+import {
+  formatQuantity,
+  isBulkUnit,
+  redondear,
+  stepsFor,
+  unitLabel,
+} from '@/lib/quantity'
 import { lookupForPos, registerSale, searchForPos, type PosProduct } from '../actions'
 
 interface LineaCarrito {
@@ -23,6 +31,7 @@ const METODOS = [
 
 type Metodo = (typeof METODOS)[number]['value']
 
+/** Dinero: siempre 2 decimales. Las CANTIDADES usan `redondear` (4). */
 const cent = (n: number) => Math.round(n * 100) / 100
 const money = (n: number) => `S/ ${n.toFixed(2)}`
 
@@ -73,13 +82,17 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
       const i = prev.findIndex((l) => l.producto.productId === p.productId)
       if (i >= 0) {
         const copia = [...prev]
-        copia[i] = { ...copia[i]!, quantity: copia[i]!.quantity + 1 }
+        copia[i] = { ...copia[i]!, quantity: redondear(copia[i]!.quantity + 1) }
         return copia
       }
+      // Arranca en 1 incluso a granel: el cajero pesa y teclea la cifra
+      // exacta, y 1 kg es un punto de partida más útil que 0.
       return [...prev, { key: `${p.productId}-${Date.now()}`, producto: p, quantity: 1, discount: 0 }]
     })
     if (p.trackStock && p.stock <= 0) {
       setAviso(`"${p.name}" está sin stock. Podrás cobrar solo si tu política lo permite.`)
+    } else if (isBulkUnit(p.unitType)) {
+      setAviso(`"${p.name}" se vende por ${unitLabel(p.unitType)}: escribe la cantidad pesada o medida.`)
     }
   }, [])
 
@@ -106,13 +119,21 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
     })
   }, [])
 
-  const cambiarCantidad = (key: string, delta: number) =>
+  const fijarCantidad = (key: string, q: number) =>
     setCarrito((prev) =>
       prev.flatMap((l) => {
         if (l.key !== key) return [l]
-        const q = cent(l.quantity + delta)
-        // Bajar de 1 saca la línea: es lo que el cajero espera al pulsar «−»
-        // en una línea de uno, en vez de dejarla en cero.
+        // Llegar a cero saca la línea: es lo que el cajero espera, en vez de
+        // dejar una línea de cero que no se puede cobrar.
+        return q <= 0 ? [] : [{ ...l, quantity: redondear(q) }]
+      }),
+    )
+
+  const sumarCantidad = (key: string, delta: number) =>
+    setCarrito((prev) =>
+      prev.flatMap((l) => {
+        if (l.key !== key) return [l]
+        const q = redondear(l.quantity + delta)
         return q <= 0 ? [] : [{ ...l, quantity: q }]
       }),
     )
@@ -207,7 +228,7 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-semibold text-ink">{p.name}</span>
                       <span className="block text-xs text-ink-muted">
-                        {p.sku} · stock {p.stock}
+                        {p.sku} · stock {formatQuantity(p.stock, p.unitType)} {unitLabel(p.unitType)}
                       </span>
                     </span>
                     <span className="shrink-0 font-bold text-ink">{money(p.salePrice)}</span>
@@ -252,36 +273,43 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
                     <div className="min-w-0">
                       <p className="truncate font-semibold text-ink">{l.producto.name}</p>
                       <p className="text-xs text-ink-muted">
-                        {money(l.producto.salePrice)} / {l.producto.unitType.toLowerCase()}
-                        {sinStock && ` · solo ${l.producto.stock} en stock`}
+                        {formatQuantity(l.quantity, l.producto.unitType)}{' '}
+                        {unitLabel(l.producto.unitType)} × {money(l.producto.salePrice)}
+                        {sinStock && (
+                          <> · solo {formatQuantity(l.producto.stock, l.producto.unitType)} en stock</>
+                        )}
                       </p>
                     </div>
                     <p className="shrink-0 text-lg font-bold text-ink">{money(neto)}</p>
                   </div>
 
-                  <div className="mt-2 flex items-center gap-2">
-                    <button type="button" aria-label="Quitar uno"
-                      onClick={() => cambiarCantidad(l.key, -1)}
-                      className="size-touch shrink-0 rounded-xl bg-surface-sunken text-2xl font-bold text-ink active:scale-95">
-                      −
-                    </button>
-                    <input
-                      type="number" inputMode="decimal" min={0} value={l.quantity}
-                      onChange={(e) => {
-                        const q = Number(e.target.value)
-                        setCarrito((prev) => prev.map((x) => x.key === l.key ? { ...x, quantity: Math.max(q, 0) } : x))
-                      }}
-                      aria-label={`Cantidad de ${l.producto.name}`}
-                      className="h-touch w-20 rounded-xl border border-hairline bg-surface text-center text-lg font-bold text-ink"
-                    />
-                    <button type="button" aria-label="Añadir uno"
-                      onClick={() => cambiarCantidad(l.key, 1)}
-                      className="size-touch shrink-0 rounded-xl bg-surface-sunken text-2xl font-bold text-ink active:scale-95">
-                      +
-                    </button>
-                    <button type="button"
+                  <QuantityInput
+                    value={l.quantity}
+                    onChange={(q) => fijarCantidad(l.key, q)}
+                    unitType={l.producto.unitType}
+                    min={0}
+                    ariaLabel={`Cantidad de ${l.producto.name}`}
+                    className="mt-2"
+                  />
+
+                  {/* Atajos adaptados a la unidad: para clavos al peso,
+                      +25 no sirve de nada; +0.25 kg sí. */}
+                  <div className="mt-2 flex items-center gap-1.5">
+                    {stepsFor(l.producto.unitType).map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => sumarCantidad(l.key, n)}
+                        className="h-touch flex-1 rounded-lg border border-hairline bg-surface text-xs font-bold text-ink active:scale-95"
+                      >
+                        +{formatQuantity(n, l.producto.unitType)}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
                       onClick={() => setCarrito((p) => p.filter((x) => x.key !== l.key))}
-                      className="ml-auto h-touch rounded-xl px-3 text-sm font-semibold text-stock-out">
+                      className="h-touch shrink-0 rounded-lg px-3 text-xs font-semibold text-stock-out"
+                    >
                       Quitar
                     </button>
                   </div>
