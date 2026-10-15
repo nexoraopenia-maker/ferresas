@@ -17,6 +17,12 @@ import {
 } from './schemas'
 import { createStockMovement as runCreateStockMovement } from './stock-service'
 import { createProductExpress as runCreateProductExpress } from './product-service'
+import {
+  analyzeImport as runAnalyze,
+  commitImport as runCommit,
+  MAX_FILAS,
+  type AnalisisImport,
+} from './import-service'
 
 /**
  * Server Actions de inventario (§5.1, §6).
@@ -307,5 +313,65 @@ export async function getDefaultWarehouse(): Promise<
       }
     }
     return { ok: true, data: w }
+  })
+}
+
+// ---------------------------------------------------------------------------
+//  IMPORTACIÓN MASIVA DE CATÁLOGO
+// ---------------------------------------------------------------------------
+
+/** Tope del contenido que se acepta, para no agotar la memoria del servidor. */
+const MAX_BYTES = 4 * 1024 * 1024
+
+/**
+ * Analiza el archivo SIN escribir nada y devuelve el resultado fila por fila.
+ *
+ * El contenido llega como texto y no como `File`: el navegador ya lo leyó,
+ * así que la Server Action recibe una cadena y no hay que montar un endpoint
+ * de subida con `multipart`. Para catálogos de unos pocos megas es lo más
+ * simple que funciona.
+ */
+export async function analyzeCatalogImport(
+  contenido: string,
+): Promise<ActionResult<AnalisisImport>> {
+  if (typeof contenido !== 'string' || contenido.trim() === '') {
+    return { ok: false, code: 'VALIDATION', message: 'El archivo está vacío.' }
+  }
+  if (contenido.length > MAX_BYTES) {
+    return {
+      ok: false,
+      code: 'VALIDATION',
+      message: `El archivo pasa de 4 MB. Párte el catálogo en varios de hasta ${MAX_FILAS} filas.`,
+    }
+  }
+
+  return withTenant('analyzeCatalogImport', async (db, ctx) => {
+    const analisis = await runAnalyze(db, ctx, contenido)
+    return { ok: true, data: analisis }
+  })
+}
+
+/**
+ * Escribe lo analizado.
+ *
+ * Recibe el ANÁLISIS y no el archivo porque es lo que la persona revisó y
+ * aprobó. Volver a parsear aquí abriría la puerta a que se escribiera algo
+ * distinto de lo que se vio en la vista previa.
+ *
+ * Aun así se revalida el rol y los bloqueos en el servicio: el análisis llega
+ * del cliente y podría venir manipulado.
+ */
+export async function commitCatalogImport(
+  analisis: AnalisisImport,
+  warehouseId: string,
+): Promise<ActionResult<{ creados: number; actualizados: number; omitidos: number }>> {
+  if (!analisis || !Array.isArray(analisis.filas)) {
+    return { ok: false, code: 'VALIDATION', message: 'Análisis no válido.' }
+  }
+
+  return withTenant('commitCatalogImport', async (db, ctx) => {
+    const r = await runCommit(db, ctx, analisis, warehouseId)
+    revalidatePath('/inventario')
+    return { ok: true, data: r }
   })
 }

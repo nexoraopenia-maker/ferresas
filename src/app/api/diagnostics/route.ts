@@ -1,4 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import { readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 
@@ -87,10 +89,36 @@ export async function GET(req: NextRequest) {
       prisma.tenant.count({ where: { deletedAt: null } }),
     ])
 
+    const aplicadas = migraciones.map((m) => m.migration_name)
+
+    /**
+     * Migraciones PENDIENTES: las que vienen en el repositorio y no están
+     * en la base.
+     *
+     * Existe porque un `migrate deploy` que no se ejecuta es invisible: el
+     * código se despliega, la columna no se crea, y el fallo aparece más
+     * tarde como un error de runtime sin relación aparente. Compararlo a
+     * mano cada vez no es un proceso, es un descuido esperando a ocurrir.
+     */
+    let pendientes: string[] = []
+    try {
+      const dir = join(process.cwd(), 'prisma', 'migrations')
+      const enRepo = readdirSync(dir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name)
+        .sort()
+      pendientes = enRepo.filter((m) => !aplicadas.includes(m))
+    } catch {
+      // En el bundle serverless el directorio puede no viajar. No es un
+      // fallo: simplemente no se puede comparar.
+      pendientes = []
+    }
+
     baseDatos = {
       alcanzable: true,
       latenciaMs: Date.now() - t0,
-      migracionesAplicadas: migraciones.map((m) => m.migration_name),
+      migracionesAplicadas: aplicadas,
+      migracionesPendientes: pendientes,
       planesActivos: planes,
       superadminsActivos: superadmins,
       tenants,
@@ -116,6 +144,14 @@ export async function GET(req: NextRequest) {
   }
   if (baseDatos.alcanzable === false) {
     problemas.push('La base de datos no responde: todo login fallará como si la contraseña fuera incorrecta.')
+  }
+  const pend = baseDatos.migracionesPendientes
+  if (Array.isArray(pend) && pend.length > 0) {
+    problemas.push(
+      `${pend.length} migración(es) SIN APLICAR: ${pend.join(', ')}. ` +
+        'El código está desplegado pero el esquema no se movió. Revisa el log ' +
+        'del build en Vercel: `prisma migrate deploy` no se ejecutó o falló.',
+    )
   }
   if (baseDatos.superadminsActivos === 0) {
     problemas.push('No hay ningún SUPERADMIN activo: corre `npm run db:seed`.')
