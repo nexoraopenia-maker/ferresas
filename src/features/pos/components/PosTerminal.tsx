@@ -176,25 +176,42 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
   const vuelto = Number(recibido) > 0 ? cent(Number(recibido) - totales.total) : 0
 
   return (
-    <div className="flex flex-col gap-4 pb-40">
-      {recibo && (
-        <ReciboEmitido
-          recibo={recibo}
-          onCerrar={() => setRecibo(null)}
-        />
+    /**
+     * Una columna en móvil, dos en escritorio.
+     *
+     * `items-start` en la rejilla es lo que permite que la columna del
+     * carrito se quede pegada arriba (`sticky`) mientras la izquierda crece:
+     * con el `stretch` por defecto, ambas tendrían la altura de la más alta
+     * y el `sticky` no tendría contra qué pegarse.
+     *
+     * El `pb-40` solo en móvil: ahí el bloque de cobro va fijo al fondo y
+     * taparía las últimas líneas del carrito sin ese hueco. En escritorio
+     * vive en su columna y no tapa nada.
+     */
+    <div className="pb-40 lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-6 lg:pb-0">
+      {/* Avisos a ANCHO COMPLETO sobre las dos columnas.
+          Sin `col-span-2` cada uno ocuparía una celda de la rejilla y
+          desplazaría el carrito a una tercera fila. */}
+      {(recibo || aviso || error) && (
+        <div className="flex flex-col gap-3 lg:col-span-2">
+          {recibo && (
+            <ReciboEmitido recibo={recibo} onCerrar={() => setRecibo(null)} />
+          )}
+          {aviso && (
+            <p role="status" className="rounded-xl border border-stock-low/40 bg-stock-low-soft px-4 py-3 text-sm font-semibold text-stock-low">
+              {aviso}
+            </p>
+          )}
+          {error && (
+            <p role="alert" className="rounded-xl border border-stock-out/40 bg-stock-out-soft px-4 py-3 text-sm font-semibold text-stock-out">
+              {error}
+            </p>
+          )}
+        </div>
       )}
 
-      {aviso && (
-        <p role="status" className="rounded-xl border border-stock-low/40 bg-stock-low-soft px-4 py-3 text-sm font-semibold text-stock-low">
-          {aviso}
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="rounded-xl border border-stock-out/40 bg-stock-out-soft px-4 py-3 text-sm font-semibold text-stock-out">
-          {error}
-        </p>
-      )}
-
+      {/* ══════════ COLUMNA IZQUIERDA: entrada de productos ══════════ */}
+      <div className="flex min-w-0 flex-col gap-4">
       {/* --- Entrada: escáner + búsqueda --------------------------------- */}
       <div className="flex gap-2">
         <button
@@ -249,6 +266,12 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
         hint={`Almacén: ${warehouseName}`}
       />
 
+      </div>
+
+      {/* ══════════ COLUMNA DERECHA: carrito, totales y cobro ══════════
+          En escritorio se queda pegada arriba mientras la izquierda crece:
+          el cajero no pierde de vista el total al bajar por la lista. */}
+      <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-4">
       {/* --- Carrito ----------------------------------------------------- */}
       <section>
         <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted">
@@ -322,8 +345,19 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
 
       {/* --- Cobro: fijo abajo, al alcance del pulgar -------------------- */}
       {carrito.length > 0 && (
-        <div className="safe-bottom fixed inset-x-0 bottom-0 border-t border-hairline bg-surface px-4 pt-3 shadow-[0_-8px_24px_rgba(2,6,23,0.12)]">
-          <div className="mx-auto max-w-lg">
+        <div
+          /**
+           * El MISMO bloque en los dos modos, posicionado por breakpoint en
+           * vez de duplicado. Duplicarlo habría significado dos copias de la
+           * lógica de cobro, y la segunda se queda sin arreglar siempre.
+           *
+           * Móvil: fijo al fondo, al alcance del pulgar.
+           * Escritorio: estático dentro de la columna derecha, que ya es
+           * sticky, así que acompaña igual sin flotar sobre el contenido.
+           */
+          className="safe-bottom fixed inset-x-0 bottom-0 z-20 border-t border-hairline bg-surface px-4 pt-3 shadow-[0_-8px_24px_rgba(2,6,23,0.12)] lg:static lg:inset-auto lg:rounded-2xl lg:border lg:p-4 lg:pb-4 lg:shadow-none"
+        >
+          <div className="mx-auto max-w-lg lg:max-w-none">
             <dl className="flex flex-col gap-0.5 text-sm">
               <Linea label="Base imponible" value={money(totales.base)} />
               <Linea label="IGV (incluido)" value={money(totales.igv)} />
@@ -377,6 +411,7 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 }
