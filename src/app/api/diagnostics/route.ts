@@ -80,7 +80,10 @@ export async function GET(req: NextRequest) {
   let baseDatos: Record<string, unknown>
   const t0 = Date.now()
   try {
-    const [migraciones, planes, superadmins, tenants] = await Promise.all([
+    const [
+      migraciones, planes, superadmins, tenants,
+      tenantsSinSucursal, usuariosSinSucursal,
+    ] = await Promise.all([
       /**
        * Se distingue ÉXITO de simple presencia.
        *
@@ -105,6 +108,23 @@ export async function GET(req: NextRequest) {
       prisma.plan.count({ where: { isActive: true } }),
       prisma.user.count({ where: { role: 'SUPERADMIN', isActive: true } }),
       prisma.tenant.count({ where: { deletedAt: null } }),
+      /*
+       * Invariantes de multi-sucursal que una migración exitosa NO prueba.
+       *
+       * El backfill de `branches` y de `warehouses.branchId` está protegido
+       * por el SET NOT NULL: si hubiera dejado un hueco, la migración habría
+       * abortado. Pero el INSERT en `user_branches` no tiene nada que lo
+       * respalde — si insertara cero filas, la migración se reportaría
+       * aplicada y correcta, y el dueño del negocio simplemente no podría
+       * vender, porque `requireBranch` lo rechazaría.
+       *
+       * Son dos cuentas baratas y responden la única pregunta que importa
+       * tras desplegar esto: ¿puede operar la gente?
+       */
+      prisma.tenant.count({ where: { deletedAt: null, branches: { none: {} } } }),
+      prisma.user.count({
+        where: { deletedAt: null, isActive: true, tenantId: { not: null }, branches: { none: {} } },
+      }),
     ])
 
     const aplicadas = migraciones.filter((m) => m.ok).map((m) => m.migration_name)
@@ -143,6 +163,8 @@ export async function GET(req: NextRequest) {
       planesActivos: planes,
       superadminsActivos: superadmins,
       tenants,
+      tenantsSinSucursal,
+      usuariosSinSucursal,
     }
   } catch (e) {
     baseDatos = {
@@ -181,6 +203,20 @@ export async function GET(req: NextRequest) {
       `${pend.length} migración(es) SIN APLICAR: ${pend.join(', ')}. ` +
         'El código está desplegado pero el esquema no se movió. Revisa el log ' +
         'del build en Vercel: `prisma migrate deploy` no se ejecutó o falló.',
+    )
+  }
+  if (typeof baseDatos.tenantsSinSucursal === 'number' && baseDatos.tenantsSinSucursal > 0) {
+    problemas.push(
+      `${baseDatos.tenantsSinSucursal} negocio(s) SIN NINGUNA SUCURSAL. ` +
+        'No pueden emitir nada: la serie de los comprobantes sale de la ' +
+        'sucursal. Revisa el backfill de la migración de sucursales.',
+    )
+  }
+  if (typeof baseDatos.usuariosSinSucursal === 'number' && baseDatos.usuariosSinSucursal > 0) {
+    problemas.push(
+      `${baseDatos.usuariosSinSucursal} usuario(s) activo(s) sin sucursal asignada. ` +
+        'No podrán vender ni mover stock hasta que un administrador se la asigne ' +
+        'en /sucursales.',
     )
   }
   if (baseDatos.superadminsActivos === 0) {
