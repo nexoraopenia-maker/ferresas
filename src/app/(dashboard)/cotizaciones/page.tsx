@@ -1,9 +1,13 @@
 import { listQuotes } from '@/features/pos/actions'
 import { QuoteList } from '@/features/pos/components/QuoteList'
+import { requireTenantContext } from '@/lib/session'
+import { getTenantPrisma } from '@/lib/tenant-prisma'
 
 export const dynamic = 'force-dynamic'
 
 export default async function CotizacionesPage() {
+  const ctx = await requireTenantContext()
+  const tenant = await getTenantPrisma(ctx).tenant.findFirst({ select: { timezone: true } })
   const res = await listQuotes()
   const quotes = res.ok ? res.data : []
 
@@ -33,7 +37,7 @@ export default async function CotizacionesPage() {
         <Contador label="Vendidas" value={vendidas} tono="ok" />
       </section>
 
-      <QuoteList quotes={quotes} />
+      <QuoteList quotes={quotes} zonaHoraria={tenant?.timezone ?? 'America/Lima'} />
     </main>
   )
 }

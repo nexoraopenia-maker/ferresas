@@ -1,4 +1,5 @@
 import './guard'
+import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from '@/generated/prisma/client'
@@ -33,10 +34,11 @@ async function main() {
   const owner = await prisma.user.create({
     data: { email: `o-${M}@x.com`, name: 'Dueño', role: 'OWNER', tenantId: t.id },
   })
-  const w = await prisma.warehouse.create({
-    data: { tenantId: t.id, code: 'PRIN', name: 'Principal', isDefault: true },
-  })
-  const ctx: TenantContext = { tenantId: t.id, userId: owner.id, role: 'OWNER', access: 'FULL' }
+  const { branch, warehouse: w } = await crearSucursalConAlmacen(t.id)
+  await asignarSucursal(t.id, owner.id, branch.id)
+  const ctx: TenantContext = {
+    tenantId: t.id, userId: owner.id, role: 'OWNER', access: 'FULL', branchId: branch.id,
+  }
   const db = getTenantPrisma(ctx)
   const parse = (i: unknown) => registerSaleSchema.parse(i)
 
@@ -232,7 +234,7 @@ async function main() {
   await prismaMulti.$disconnect()
 
   console.log('\n11) El contador no quema números si la operación falla')
-  await ensureCounter(db, t.id, 'TAX_PRUEBA', 'Z001', '')
+  await ensureCounter(db, t.id, branch.id, 'TAX_PRUEBA', 'Z001', '')
   const antes = (await db.documentCounter.findFirstOrThrow({ where: { scope: 'TAX_PRUEBA' } })).next
   await db.$transaction(async (tx) => {
     await claimNextNumber(tx as any, t.id, 'TAX_PRUEBA', 'Z001')

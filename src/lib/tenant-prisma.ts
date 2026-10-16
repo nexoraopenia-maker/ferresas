@@ -47,6 +47,11 @@ import type { TenantContext } from './tenant-context'
 const TENANT_SCOPED = new Set([
   'Subscription',
   'User',
+  'Branch',
+  'UserBranch',
+  'CashSession',
+  'BranchTransfer',
+  'BranchTransferItem',
   'Warehouse',
   'Category',
   'Supplier',

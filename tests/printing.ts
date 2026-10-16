@@ -1,4 +1,5 @@
 import './guard'
+import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
@@ -98,10 +99,11 @@ async function main() {
   const owner = await prisma.user.create({
     data: { email: `p-${M}@x.com`, name: 'Rosa Quispe', role: 'OWNER', tenantId: t.id },
   })
-  const w = await prisma.warehouse.create({
-    data: { tenantId: t.id, code: 'PRIN', name: 'Tienda', isDefault: true },
-  })
-  const ctx: TenantContext = { tenantId: t.id, userId: owner.id, role: 'OWNER', access: 'FULL' }
+  const { branch, warehouse: w } = await crearSucursalConAlmacen(t.id, { almacenName: 'Tienda' })
+  await asignarSucursal(t.id, owner.id, branch.id)
+  const ctx: TenantContext = {
+    tenantId: t.id, userId: owner.id, role: 'OWNER', access: 'FULL', branchId: branch.id,
+  }
   const db = getTenantPrisma(ctx)
 
   // Afecto al 18%, a granel (para probar cantidades decimales).
@@ -149,6 +151,28 @@ async function main() {
   check('receptor con etiqueta de documento', tk.cliente?.docEtiqueta === 'DNI')
   check('receptor con número', tk.cliente?.docNumero === '41235678')
   check('cajero por nombre, no por id', tk.cajero === 'Rosa Quispe')
+
+  // Las claves de DOC_ETIQUETA deben coincidir con el enum CustomerDocType.
+  // Una mal escrita no revienta: silencia la línea del documento, que en una
+  // factura es un defecto legal. Se comprueban TODOS los valores del enum.
+  for (const [tipo, esperado] of [
+    ['DNI', 'DNI'], ['RUC', 'RUC'], ['CE', 'C.E.'], ['PASAPORTE', 'Pasaporte'],
+  ] as const) {
+    const c = await db.customer.create({
+      data: {
+        tenantId: t.id, name: `Cliente ${tipo}`, docType: tipo,
+        docNumber: `DOC-${tipo}-${M}`,
+      },
+    })
+    const v = await registerSale(db, ctx, registerSaleSchema.parse({
+      warehouseId: w.id, customerId: c.id,
+      items: [{ productId: libro.id, quantity: 1 }],
+      payments: [{ method: 'EFECTIVO', amount: 25 }],
+    }))
+    const d = await getDocumentoImprimible(db, 'venta', v.saleId)
+    check(`etiqueta de ${tipo} se imprime como "${esperado}"`,
+      d.cliente?.docEtiqueta === esperado, String(d.cliente?.docEtiqueta))
+  }
   check('dos líneas de detalle', tk.lineas.length === 2, String(tk.lineas.length))
 
   const lCable = tk.lineas.find((l) => l.nombre.includes('Cable'))!

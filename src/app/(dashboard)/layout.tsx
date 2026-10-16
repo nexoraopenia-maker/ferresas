@@ -5,6 +5,7 @@ import { logoutAction } from '../(auth)/actions'
 import { AccountBannerBar } from '@/features/billing/components/AccountBannerBar'
 import { ImpersonationBanner } from '@/features/superadmin/components/ImpersonationBanner'
 import { NavLinks } from '@/features/shell/components/NavLinks'
+import { BranchSwitcher } from '@/features/branches/components/BranchSwitcher'
 
 /**
  * Armazón del área de cliente.
@@ -33,7 +34,23 @@ export default async function DashboardLayout({
 }) {
   const ctx = await requireTenantContext()
   const db = getTenantPrisma(ctx)
-  const tenant = await db.tenant.findFirst({ select: { name: true } })
+  const [tenant, asignadas] = await Promise.all([
+    db.tenant.findFirst({ select: { name: true } }),
+    /*
+     * Sucursales que el usuario puede operar. Se consultan aquí, en el
+     * armazón, para que el selector esté en todas las pantallas: equivocarse
+     * de local al emitir es un error que solo se detecta cuando el
+     * comprobante ya salió impreso con la serie de otro establecimiento.
+     */
+    db.userBranch.findMany({
+      where: { userId: ctx.userId, branch: { isActive: true, deletedAt: null } },
+      select: {
+        branch: { select: { id: true, code: true, name: true, seriesNumber: true } },
+      },
+      orderBy: { branch: { code: 'asc' } },
+    }),
+  ])
+  const sucursales = asignadas.map((a) => a.branch)
 
   return (
     <div className="min-h-dvh lg:flex">
@@ -44,6 +61,10 @@ export default async function DashboardLayout({
             {tenant?.name ?? 'Mi ferretería'}
           </p>
           <p className="truncate text-xs text-ink-muted">{ctx.role.toLowerCase()}</p>
+        </div>
+
+        <div className="border-b border-hairline px-4 py-3">
+          <BranchSwitcher sucursales={sucursales} activa={ctx.branchId} />
         </div>
 
         <nav aria-label="Navegación principal" className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
@@ -73,13 +94,21 @@ export default async function DashboardLayout({
 
         {/* Cabecera solo en móvil: en escritorio esa información ya está en
             el sidebar y repetirla gasta altura. */}
-        <header className="flex items-center justify-between gap-3 border-b border-hairline bg-surface px-4 py-3 lg:hidden">
-          <p className="truncate text-sm font-bold text-ink">
-            {tenant?.name ?? 'Mi ferretería'}
-          </p>
-          <Link href="/facturacion" className="shrink-0 text-xs font-semibold text-ink-muted">
-            {ctx.role.toLowerCase()}
-          </Link>
+        <header className="border-b border-hairline bg-surface px-4 py-3 lg:hidden">
+          <div className="flex items-center justify-between gap-3">
+            <p className="truncate text-sm font-bold text-ink">
+              {tenant?.name ?? 'Mi ferretería'}
+            </p>
+            <Link href="/facturacion" className="shrink-0 text-xs font-semibold text-ink-muted">
+              {ctx.role.toLowerCase()}
+            </Link>
+          </div>
+          {/* El selector también en móvil: el almacenero que recorre dos
+              locales necesita saber —y cambiar— en cuál está operando, y en
+              móvil el sidebar que lo contiene no existe. */}
+          <div className="mt-2">
+            <BranchSwitcher sucursales={sucursales} activa={ctx.branchId} />
+          </div>
         </header>
 
         <main className="min-w-0 flex-1">{children}</main>

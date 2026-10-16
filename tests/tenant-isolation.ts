@@ -1,4 +1,5 @@
 import './guard'
+import { crearSucursalConAlmacen } from './fixtures'
 import { prisma } from '@/lib/prisma'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { computeAccessLevel } from '@/lib/tenant-context'
@@ -91,11 +92,12 @@ async function main() {
   console.log('\n6) FK compuesta: la BD rechaza el cruce aunque el código falle')
   // Venta real de A, para que la FK que reviente sea la del PRODUCTO y no la
   // de la venta: es esa la que garantiza el aislamiento entre catálogos.
-  const almacenA = await prisma.warehouse.create({
-    data: { tenantId: A.id, code: 'PRIN', name: 'Principal' },
-  })
+  const { branch: sucursalA, warehouse: almacenA } = await crearSucursalConAlmacen(A.id)
   const ventaA = await prisma.sale.create({
-    data: { tenantId: A.id, warehouseId: almacenA.id, userId: userA.id, number: 'V-001' },
+    data: {
+      tenantId: A.id, branchId: sucursalA.id, warehouseId: almacenA.id,
+      userId: userA.id, number: 'V-001',
+    },
   })
   const cruce = await prisma.$executeRawUnsafe(
     `INSERT INTO sale_items (id,"tenantId","saleId","productId","nameSnapshot","skuSnapshot",quantity,"unitPrice","lineTotal")

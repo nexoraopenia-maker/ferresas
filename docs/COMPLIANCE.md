@@ -1,0 +1,103 @@
+# Cumplimiento normativo
+
+Este documento recoge **todo lo que depende de una norma externa** (SUNAT,
+INEI) y marca con ⚠️ lo que el código **asume sin verificar** contra la fuente
+oficial. Nada de lo marcado se ha inventado como dato normativo: o se teclea,
+o se deja sin validar a propósito y aquí se dice por qué.
+
+> Regla de este proyecto: **no inventar datos normativos**. Si una norma exige
+> un catálogo, un formato o un cálculo que no tenemos verificado, se marca
+> aquí en lugar de escribir una aproximación plausible en el código.
+
+---
+
+## 1. Comprobantes de pago
+
+### Lo que SÍ está implementado y verificado
+
+| Requisito | Dónde | Estado |
+|---|---|---|
+| IGV **extraído** del precio, no sumado | `src/features/pos/sale-service.ts` | ✅ Verificado con pruebas. En Perú el precio de etiqueta incluye IGV: `base = neto / (1 + tasa)` |
+| Correlativo **sin huecos** por serie | `claimNextNumber` en `sale-service.ts` | ✅ Verificado con 12 emisiones concurrentes (`tests/pos-invoicing.ts`) |
+| Serie por tipo de documento (B boletas, F facturas) | `src/features/branches/series.ts` | ✅ |
+| Serie **independiente por establecimiento** | `Branch.seriesNumber` + único `(tenantId, scope, series)` | ✅ Verificado: dos sucursales no pueden emitir ambas `B001` |
+| Factura exige RUC del receptor | `src/features/invoicing/service.ts` | ✅ |
+| Importe total **en letras** | `src/lib/numero-a-letras.ts` | ✅ Exigido por el Reglamento de Comprobantes de Pago |
+| Operación gravada / exonerada separadas | `src/features/printing/queries.ts` | ✅ Una línea con tasa 0 no se declara como gravada |
+| Datos del emisor **congelados** al emitir | `TaxDocument.issuerTaxId` / `issuerLegalName` | ✅ Corregir la razón social hoy no altera lo ya emitido |
+| Representación impresa (ticket 80 mm) | `src/features/printing/` | ✅ |
+
+### ⚠️ Lo que FALTA y es obligatorio para operar legalmente
+
+| Falta | Impacto | Por qué no está |
+|---|---|---|
+| ⚠️ **XML UBL 2.1** | Sin esto los comprobantes **no existen** para SUNAT | No implementado. El `TaxDocument` guarda todo lo necesario para generarlo |
+| ⚠️ **Firma digital XAdES** con certificado del contribuyente | Un XML sin firmar se rechaza | Requiere gestión de certificados por tenant, cifrados en reposo |
+| ⚠️ **Envío a SUNAT u OSE** | Nadie recibe el comprobante | `TaxDocumentStatus` ya modela el ciclo (`PENDIENTE → ENVIADO → ACEPTADO/RECHAZADO`), hoy se actualiza a mano |
+| ⚠️ **Código QR en la representación impresa** | Es obligatorio en el comprobante electrónico | **Deliberadamente NO generado.** El QR codifica `RUC\|tipo\|serie\|número\|IGV\|total\|fecha\|tipoDocReceptor\|nroDocReceptor\|hash`. Sin firma no hay `hash`, y un QR con hash inventado es **peor que ninguno**: parece legítimo y no valida |
+| ⚠️ **Resumen diario de boletas** | Las boletas se declaran en lote, no una a una | No implementado |
+| ⚠️ **Comunicación de baja** | Es el mecanismo para anular una factura no entregada | No implementado |
+| ⚠️ **Nota de crédito** | Es la ÚNICA forma de anular un comprobante ya emitido en Perú | No implementado. `TaxDocumentStatus.ANULADO` existe pero no hay documento que lo sustente |
+| ⚠️ **Plazos de envío** | SUNAT fija plazos máximos desde la emisión | No se controlan ni se avisa al vencerlos |
+
+### ⚠️ Supuestos sobre formatos
+
+- **Correlativo de 8 dígitos** (`B001-00000123`): es lo habitual y lo que
+  acepta SUNAT, pero **no se ha verificado** contra la resolución vigente que
+  8 sea el máximo ni el mínimo exigido. `CORRELATIVO_DIGITOS` está en un solo
+  sitio (`src/features/invoicing/schemas.ts`) para poder cambiarlo.
+- **Serie de 4 caracteres** (letra + 3 dígitos): mismo caso.
+- **Tasa de IGV 18 %**: es la vigente, pero vive en `Tenant.taxRate` y
+  `Product.taxRate` (no hardcodeada), así que un cambio de tasa no exige
+  tocar código. Las operaciones ya emitidas conservan su tasa congelada.
+
+---
+
+## 2. Establecimientos anexos
+
+| Punto | Estado |
+|---|---|
+| Código de establecimiento de 4 dígitos | Validado por formato (`/^\d{4}$/`) |
+| `0000` = casa matriz | Asumido como convención |
+| ⚠️ **No se verifica contra el RUC real** | El código se **teclea**. Si el usuario pone `0003` y SUNAT le asignó `0002`, los comprobantes saldrán con un establecimiento que no es suyo. No hay forma de comprobarlo sin consultar el padrón de SUNAT |
+| Un código no se reutiliza tras dar de baja la sucursal | ✅ Único `(tenantId, establishmentCode)` **sin** índice parcial, a propósito |
+
+---
+
+## 3. Ubigeo (INEI)
+
+| Punto | Estado |
+|---|---|
+| Formato de 6 dígitos (dep. 2 + prov. 2 + dist. 2) | Validado |
+| ⚠️ **No se valida contra el catálogo del INEI** | Embarcar las ~1 870 entradas del catálogo por un dato que **no bloquea ninguna operación** no se justifica hoy. Un ubigeo mal tecleado pasa |
+
+---
+
+## 4. Lo que está FUERA de alcance por decisión explícita
+
+Decidido con el dueño del producto; no son olvidos:
+
+- **Trazabilidad de lotes y fechas de vencimiento** (y por tanto FEFO y el
+  parseo GS1-128 de los AI `10`/`17`). Una ferretería los necesita para
+  selladores, pinturas y adhesivos; se dejó fuera de este ciclo.
+- **Todo lo farmacéutico y veterinario**: recetas, DIGEMID, DCI/principio
+  activo, carnet de mascota, roles `VETERINARIO` y `QUIMICO_FARMACEUTICO`.
+  Pertenecen a otro producto, no a FerreSaaS.
+- **Facturación electrónica multi-país**: solo Perú.
+- **Modo offline completo del POS**: pospuesto, no descartado.
+
+---
+
+## 5. Protección de datos
+
+- Contraseñas con `bcrypt`, nunca en claro ni en logs.
+- El correo del usuario **no** se envía a servicios externos salvo a la
+  pasarela de pagos que él mismo contrata.
+- Ningún secreto en el código: todo en `.env` / `.env.local`, con
+  `.env.example` documentado y `.gitignore` cubriéndolos.
+- Borrado **lógico** (`deletedAt`) en clientes, ventas, productos y
+  sucursales: nunca `DELETE` de algo con historial.
+- ⚠️ **Sin cifrado en reposo a nivel de aplicación.** Lo que hay es el
+  cifrado del disco de Neon. Cuando entren los certificados digitales para
+  firmar XML, esos **sí** tendrán que ir cifrados por tenant: una clave
+  privada en claro en la base es una fuga de identidad tributaria.

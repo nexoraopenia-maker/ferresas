@@ -19,6 +19,7 @@ import {
   type RegisterQuoteInput,
   type RegisterSaleInput,
 } from './schemas'
+import { filtroAlmacen } from '@/features/branches/queries'
 import { registerSale as runRegisterSale } from './sale-service'
 import {
   convertQuoteToSale as runConvertQuote,
@@ -97,13 +98,11 @@ export async function lookupForPos(
   const parsed = posLookupSchema.safeParse(raw)
   if (!parsed.success) return validationFailure(parsed.error)
 
-  return withTenant('lookupForPos', async (db) => {
+  return withTenant('lookupForPos', async (db, ctx) => {
     const code = parsed.data.code.trim()
 
     const warehouse = await db.warehouse.findFirst({
-      where: parsed.data.warehouseId
-        ? { id: parsed.data.warehouseId, isActive: true, deletedAt: null }
-        : { isActive: true, deletedAt: null },
+      where: filtroAlmacen(ctx.branchId, parsed.data.warehouseId),
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
       select: { id: true, name: true },
     })
@@ -172,9 +171,9 @@ export async function searchForPos(
   const parsed = z.string().trim().min(2).max(80).safeParse(texto)
   if (!parsed.success) return { ok: true, data: [] }
 
-  return withTenant('searchForPos', async (db) => {
+  return withTenant('searchForPos', async (db, ctx) => {
     const warehouse = await db.warehouse.findFirst({
-      where: { isActive: true, deletedAt: null },
+      where: filtroAlmacen(ctx.branchId),
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
       select: { id: true, name: true },
     })

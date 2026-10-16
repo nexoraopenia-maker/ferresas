@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import { formatearFechaLocal } from '@/lib/fecha-local'
 
 export interface TaxDocRow {
   id: string
@@ -39,9 +40,12 @@ const SIGUIENTES: Record<string, string[]> = {
 export function TaxDocumentList({
   docs,
   canManage,
+  zonaHoraria,
 }: {
   docs: TaxDocRow[]
   canManage: boolean
+  /** Zona del negocio: ver la nota en CashPanel. */
+  zonaHoraria: string
 }) {
   const router = useRouter()
   const [editando, setEditando] = useState<TaxDocRow | null>(null)
@@ -110,7 +114,7 @@ export function TaxDocumentList({
                         {d.documentType === 'FACTURA' ? 'Factura' : 'Boleta'} · venta {d.saleNumber}
                       </p>
                       <p className="text-xs text-ink-muted">
-                        {new Date(d.issuedAt).toLocaleString('es-PE')}
+                        {formatearFechaLocal(d.issuedAt, zonaHoraria)}
                       </p>
                     </td>
                     <td className="px-3 py-3">

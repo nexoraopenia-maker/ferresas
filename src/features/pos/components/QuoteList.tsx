@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import { formatearFechaLocal } from '@/lib/fecha-local'
 import { convertQuote, type QuoteListRow } from '../actions'
 
 const ESTADO: Record<string, { texto: string; cls: string }> = {
@@ -20,7 +21,14 @@ const ESTADO: Record<string, { texto: string; cls: string }> = {
  * POS pertenece al cliente que está en el mostrador AHORA, y cargarle encima
  * una cotización de la semana pasada mezclaría las dos ventas.
  */
-export function QuoteList({ quotes }: { quotes: QuoteListRow[] }) {
+export function QuoteList({
+  quotes,
+  zonaHoraria,
+}: {
+  quotes: QuoteListRow[]
+  /** Zona del negocio: ver la nota en CashPanel. */
+  zonaHoraria: string
+}) {
   const router = useRouter()
   const [cobrando, setCobrando] = useState<QuoteListRow | null>(null)
   const [metodo, setMetodo] = useState('EFECTIVO')
@@ -84,9 +92,12 @@ export function QuoteList({ quotes }: { quotes: QuoteListRow[] }) {
                   </p>
                   <p className="text-xs text-ink-muted">
                     {q.lineas} línea{q.lineas === 1 ? '' : 's'} ·{' '}
-                    {new Date(q.createdAt).toLocaleDateString('es-PE')}
+                    {formatearFechaLocal(q.createdAt, zonaHoraria, 'es-PE', { conHora: false })}
                     {q.validUntil && (
-                      <> · válida hasta {new Date(q.validUntil).toLocaleDateString('es-PE')}</>
+                      <>
+                        {' '}· válida hasta{' '}
+                        {formatearFechaLocal(q.validUntil, zonaHoraria, 'es-PE', { conHora: false })}
+                      </>
                     )}
                   </p>
                   {q.saleNumber && (

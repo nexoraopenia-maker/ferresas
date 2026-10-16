@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { filtroAlmacen } from '@/features/branches/queries'
 import { z } from 'zod'
 import { getTenantPrisma, type TenantPrismaClient } from '@/lib/tenant-prisma'
 import { requireTenantContext } from '@/lib/session'
@@ -124,13 +125,11 @@ export async function findProductByCode(
   const parsed = findProductByCodeSchema.safeParse(raw)
   if (!parsed.success) return validationFailure(parsed.error)
 
-  return withTenant('findProductByCode', async (db) => {
+  return withTenant('findProductByCode', async (db, ctx) => {
     const code = parsed.data.code.trim()
 
     const warehouse = await db.warehouse.findFirst({
-      where: parsed.data.warehouseId
-        ? { id: parsed.data.warehouseId, isActive: true, deletedAt: null }
-        : { isActive: true, deletedAt: null },
+      where: filtroAlmacen(ctx.branchId, parsed.data.warehouseId),
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
       select: { id: true, name: true },
     })
@@ -299,9 +298,9 @@ export async function createProductExpress(
 export async function getDefaultWarehouse(): Promise<
   ActionResult<{ id: string; name: string }>
 > {
-  return withTenant('getDefaultWarehouse', async (db) => {
+  return withTenant('getDefaultWarehouse', async (db, ctx) => {
     const w = await db.warehouse.findFirst({
-      where: { isActive: true, deletedAt: null },
+      where: filtroAlmacen(ctx.branchId),
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
       select: { id: true, name: true },
     })

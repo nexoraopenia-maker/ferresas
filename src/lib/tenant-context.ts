@@ -1,4 +1,5 @@
 import type { Role, SubscriptionStatus } from '@/generated/prisma/enums'
+import { BusinessError } from './errors'
 
 /**
  * Nivel de acceso efectivo del tenant (§5.2 — bloqueo progresivo).
@@ -12,6 +13,20 @@ export interface TenantContext {
   userId: string
   role: Role
   access: AccessLevel
+  /**
+   * Sucursal en la que está operando el usuario.
+   *
+   * Se resuelve en el servidor a partir de las sucursales que tiene
+   * asignadas, nunca desde el cliente: si viniera en el cuerpo de la
+   * petición, un cajero podría emitir con la serie de otro local y
+   * contaminar los correlativos de un establecimiento al que no pertenece.
+   *
+   * Opcional en el tipo porque el SUPERADMIN y los flujos que no operan
+   * sobre una sucursal concreta (facturación de la cuenta, catálogo global)
+   * no la necesitan. Los servicios que SÍ la necesitan la exigen con
+   * `requireBranch()` y fallan claro si falta, en vez de inventar una.
+   */
+  branchId?: string
   /** Presente solo si un SUPERADMIN está impersonando (§5.3). */
   impersonationId?: string
 }
@@ -80,8 +95,15 @@ export function computeAccessLevel(
   }
 }
 
-/** Jerarquía de roles para las comprobaciones de autorización (§6.4). */
-const ROLE_RANK: Record<Role, number> = {
+/**
+ * Jerarquía de roles para las comprobaciones de autorización (§6.4).
+ *
+ * EXPORTADA a propósito: `nav-items.ts` tenía su propia copia, y una copia
+ * de esta tabla es una bomba de relojería — el día que se añade un rol, el
+ * menú le asigna rango 0 en silencio y el usuario nuevo no ve ninguna
+ * sección sin que nada falle.
+ */
+export const ROLE_RANK: Record<Role, number> = {
   SUPERADMIN: 100,
   OWNER: 80,
   ADMIN: 60,
@@ -91,4 +113,22 @@ const ROLE_RANK: Record<Role, number> = {
 
 export function hasRole(actual: Role, minimum: Role): boolean {
   return ROLE_RANK[actual] >= ROLE_RANK[minimum]
+}
+
+/**
+ * Exige que el contexto traiga una sucursal activa.
+ *
+ * Existe para que ningún servicio tenga que decidir qué hacer cuando falta:
+ * sin sucursal no se puede elegir la serie del documento, y elegir una "por
+ * defecto" en silencio es exactamente cómo se emiten comprobantes con la
+ * serie del local equivocado.
+ */
+export function requireBranch(ctx: TenantContext): string {
+  if (!ctx.branchId) {
+    throw new BusinessError(
+      'FORBIDDEN_ROLE',
+      'No tienes una sucursal asignada. Pide a un administrador que te asigne una.',
+    )
+  }
+  return ctx.branchId
 }

@@ -3,6 +3,7 @@ import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
 import { hasRole, type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
+import { camposDeColision, esColisionUnica } from '@/lib/prisma-errors'
 import type { CreateProductExpressInput } from './schemas'
 
 const P2002_UNIQUE = 'P2002'
@@ -180,8 +181,15 @@ export async function createProductExpress(
       }
     })
   } catch (e) {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === P2002_UNIQUE) {
-      const campos = (e.meta?.target as string[] | undefined)?.join(', ') ?? ''
+    if (esColisionUnica(e)) {
+      /*
+       * `e.meta.target` NO lo rellena el driver adapter de pg, así que esta
+       * discriminación llevaba tiempo sin funcionar: toda colisión caía en el
+       * mensaje del SKU, incluso cuando el duplicado era el código de barras,
+       * y se pedía corregir un campo que estaba bien. Lo detectó la depuración
+       * del alta de sucursales. Ver src/lib/prisma-errors.ts.
+       */
+      const campos = camposDeColision(e)
       // Carrera con otro dispositivo entre el chequeo y el insert.
       if (campos.includes('barcode')) {
         throw new BusinessError(

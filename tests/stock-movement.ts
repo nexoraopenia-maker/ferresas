@@ -1,4 +1,5 @@
 import './guard'
+import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { prisma } from '@/lib/prisma'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { createStockMovement } from '@/features/inventory/stock-service'
@@ -23,9 +24,8 @@ async function main() {
   const almacenero = await prisma.user.create({
     data: { email: `a-${randomUUID()}@x.com`, name: 'Almacenero', role: 'ALMACENERO', tenantId: t.id },
   })
-  const w = await prisma.warehouse.create({
-    data: { tenantId: t.id, code: 'PRIN', name: 'Principal', isDefault: true },
-  })
+  const { branch, warehouse: w } = await crearSucursalConAlmacen(t.id)
+  await asignarSucursal(t.id, owner.id, branch.id)
   const mkProd = (sku: string, min = 5) =>
     prisma.product.create({ data: { tenantId: t.id, sku, name: sku, minStock: min } })
 

@@ -30,6 +30,8 @@ export default async function ComprobantesPage() {
     db.taxDocument.groupBy({ by: ['status'], _count: { _all: true } }),
   ])
 
+  const tenant = await db.tenant.findFirst({ select: { timezone: true } })
+
   const porEstado = Object.fromEntries(resumen.map((r) => [r.status, r._count._all]))
 
   return (
@@ -50,6 +52,7 @@ export default async function ComprobantesPage() {
 
       <TaxDocumentList
         canManage={ctx.role === 'OWNER' || ctx.role === 'ADMIN'}
+        zonaHoraria={tenant?.timezone ?? 'America/Lima'}
         docs={docs.map((d) => ({
           id: d.id,
           fullNumber: d.fullNumber,

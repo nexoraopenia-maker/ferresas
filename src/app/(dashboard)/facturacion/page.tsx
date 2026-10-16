@@ -1,4 +1,5 @@
 import { getTenantPrisma } from '@/lib/tenant-prisma'
+import { formatearFechaLocal } from '@/lib/fecha-local'
 import { requireTenantContext } from '@/lib/session'
 import { GatewayButtons } from '@/features/billing/components/GatewayButtons'
 import { PortalButton } from '@/features/billing/components/PortalButton'
@@ -16,6 +17,9 @@ export default async function FacturacionPage({
   const { checkout } = await searchParams
   const ctx = await requireTenantContext()
   const db = getTenantPrisma(ctx)
+
+  const tenant = await db.tenant.findFirst({ select: { timezone: true } })
+  const zonaHoraria = tenant?.timezone ?? 'America/Lima'
 
   const [sub, planes, gateways] = await Promise.all([
     db.subscription.findFirst({
@@ -62,10 +66,16 @@ export default async function FacturacionPage({
           <Fila label="Estado" value={sub?.status ?? '—'} />
           <Fila label="Acceso" value={ctx.access} />
           {sub?.trialEndsAt && (
-            <Fila label="Prueba hasta" value={sub.trialEndsAt.toLocaleDateString('es-PE')} />
+            <Fila
+              label="Prueba hasta"
+              value={formatearFechaLocal(sub.trialEndsAt, zonaHoraria, 'es-PE', { conHora: false })}
+            />
           )}
           {sub?.currentPeriodEnd && (
-            <Fila label="Renueva el" value={sub.currentPeriodEnd.toLocaleDateString('es-PE')} />
+            <Fila
+              label="Renueva el"
+              value={formatearFechaLocal(sub.currentPeriodEnd, zonaHoraria, 'es-PE', { conHora: false })}
+            />
           )}
         </dl>
 

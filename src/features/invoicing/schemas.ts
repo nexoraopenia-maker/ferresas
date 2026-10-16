@@ -23,6 +23,10 @@ export const issueTaxDocumentSchema = z.object({
   documentType: z.enum(['BOLETA', 'FACTURA'], {
     error: 'Solo se emiten boletas y facturas.',
   }),
+  /**
+   * Compatibilidad: la serie la determina la sucursal de la venta. Si se
+   * manda y no coincide, el servicio lo rechaza en vez de ignorarlo.
+   */
   series: serie.optional(),
   /** Datos del receptor. En factura son obligatorios; en boleta, opcionales. */
   receiverDocType: z.enum(['DNI', 'RUC', 'CE', 'PASAPORTE', 'SIN_DOCUMENTO']).optional(),
@@ -47,7 +51,15 @@ export const updateTaxStatusSchema = z.object({
 
 export type UpdateTaxStatusInput = z.infer<typeof updateTaxStatusSchema>
 
-/** Series por defecto. Cada tipo lleva la suya, como exige la norma. */
+/**
+ * Series de la PRIMERA sucursal (seriesNumber = 1). Cada tipo lleva la suya,
+ * como exige la norma.
+ *
+ * Ya no es "la serie por defecto" en el sentido de elegible: desde que hay
+ * multi-sucursal la serie la deriva `serieDeSucursal()` del número de la
+ * sucursal, y estos valores son lo que esa función devuelve para la número 1.
+ * Se conservan como referencia y para las pruebas.
+ */
 export const SERIE_POR_DEFECTO: Record<'BOLETA' | 'FACTURA', string> = {
   BOLETA: 'B001',
   FACTURA: 'F001',

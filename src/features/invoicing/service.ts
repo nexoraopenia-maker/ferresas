@@ -3,9 +3,10 @@ import { BusinessError } from '@/lib/errors'
 import { hasRole, type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { claimNextNumber, ensureCounter } from '@/features/pos/sale-service'
+import { cargarSucursalOperativa, serieDe } from '@/features/branches/queries'
+import { scopeTributario } from '@/features/branches/series'
 import {
   formatFullNumber,
-  SERIE_POR_DEFECTO,
   type IssueTaxDocumentInput,
   type UpdateTaxStatusInput,
 } from './schemas'
@@ -58,14 +59,14 @@ export async function issueTaxDocument(
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para emitir comprobantes.')
   }
 
-  const series = input.series ?? SERIE_POR_DEFECTO[input.documentType]
-  const scope = `TAX_${input.documentType}`
+  const scope = scopeTributario(input.documentType)
 
   const sale = await db.sale.findFirst({
     where: { id: input.saleId },
     select: {
       id: true,
       number: true,
+      branchId: true,
       status: true,
       subtotal: true,
       taxTotal: true,
@@ -102,6 +103,32 @@ export async function issueTaxDocument(
       total: num(d.total),
       alreadyIssued: true,
     }
+  }
+
+  /*
+   * La serie sale de la sucursal DE LA VENTA, no de la del usuario.
+   *
+   * Si un supervisor de la sucursal 2 emite la boleta de una venta hecha en
+   * la sucursal 1, el comprobante tiene que llevar la serie del
+   * establecimiento que vendió. Tomar la del usuario pondría ingresos de un
+   * local en la numeración de otro.
+   */
+  const sucursal = await cargarSucursalOperativa(db, sale.branchId)
+  const { series } = serieDe(sucursal, scope)
+
+  /*
+   * `input.series` ya no elige nada: la serie la determina la sucursal. Se
+   * sigue aceptando en el esquema por compatibilidad, pero si no coincide se
+   * RECHAZA en vez de ignorarse en silencio — ignorar una petición explícita
+   * del cliente es cómo se emiten comprobantes con la serie equivocada sin
+   * que nadie se entere.
+   */
+  if (input.series && input.series !== series) {
+    throw new BusinessError(
+      'INVALID_DOCUMENT',
+      `La serie de esta venta es ${series}, la de su sucursal. No se puede emitir con ${input.series}.`,
+      { esperada: series, recibida: input.series },
+    )
   }
 
   if (sale.status !== 'COMPLETADA') {
@@ -147,7 +174,7 @@ export async function issueTaxDocument(
     select: { taxId: true, legalName: true, name: true },
   })
 
-  await ensureCounter(db, ctx.tenantId, scope, series, '')
+  await ensureCounter(db, ctx.tenantId, sale.branchId, scope, series, '')
 
   try {
     return await db.$transaction(async (tx) => {

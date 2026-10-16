@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useMemo, useRef, useState, useTransition } from 'react'
+import { formatearFechaLocal } from '@/lib/fecha-local'
 import { InventoryScannerModal } from '@/components/inventory/InventoryScannerModal'
 import { QuantityInput } from '@/components/ui/quantity-input'
 import { getStockStatusView } from '@/lib/stock-status'
@@ -52,7 +53,14 @@ const money = (n: number) => `S/ ${n.toFixed(2)}`
  * del escáner, encadenado a la búsqueda en el servidor, es lo que evita que
  * un código delante de la cámara añada veinte unidades.
  */
-export function PosTerminal({ warehouseName }: { warehouseName: string }) {
+export function PosTerminal({
+  warehouseName,
+  zonaHoraria,
+}: {
+  warehouseName: string
+  /** Zona del negocio: ver la nota en CashPanel. */
+  zonaHoraria: string
+}) {
   const [carrito, setCarrito] = useState<LineaCarrito[]>([])
   const [escaneando, setEscaneando] = useState(false)
   const [busqueda, setBusqueda] = useState('')
@@ -270,7 +278,10 @@ export function PosTerminal({ warehouseName }: { warehouseName: string }) {
               </p>
               <p className="mt-1 text-sm text-ink">
                 <span className="font-mono font-semibold">{cotizacion.number}</span> · válida
-                hasta {new Date(cotizacion.validUntil).toLocaleDateString('es-PE')}
+                hasta{' '}
+                {formatearFechaLocal(cotizacion.validUntil, zonaHoraria, 'es-PE', {
+                  conHora: false,
+                })}
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <a

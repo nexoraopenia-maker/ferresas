@@ -1,3 +1,5 @@
+import { ROLE_RANK } from '@/lib/tenant-context'
+
 /**
  * Elementos de navegación, en UN solo sitio.
  *
@@ -47,6 +49,29 @@ export const NAV_ITEMS: NavItem[] = [
     icon: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Zm0 0v5h5M9 13h6M9 17h4',
   },
   {
+    href: '/caja',
+    label: 'Caja',
+    short: 'Caja',
+    // Billetes
+    icon: 'M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Zm9 7a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z',
+  },
+  {
+    href: '/transferencias',
+    label: 'Transferencias',
+    short: 'Traslad.',
+    // Flechas entre locales
+    icon: 'M4 7h12m0 0-3-3m3 3-3 3M20 17H8m0 0 3 3m-3-3 3-3',
+    minRole: 'ADMIN',
+  },
+  {
+    href: '/sucursales',
+    label: 'Sucursales',
+    short: 'Local.',
+    // Tiendas
+    icon: 'M3 21h18M5 21V9l7-5 7 5v12M9 21v-6h6v6',
+    minRole: 'ADMIN',
+  },
+  {
     href: '/facturacion',
     label: 'Mi plan',
     short: 'Plan',
@@ -58,14 +83,9 @@ export const NAV_ITEMS: NavItem[] = [
   },
 ]
 
-const RANGO: Record<string, number> = {
-  SUPERADMIN: 100, OWNER: 80, ADMIN: 60, ALMACENERO: 40, VENDEDOR: 20,
-}
-
 export function visibleItems(role: string): NavItem[] {
-  return NAV_ITEMS.filter(
-    (i) => !i.minRole || (RANGO[role] ?? 0) >= (RANGO[i.minRole] ?? 0),
-  )
+  const rango = (r: string) => ROLE_RANK[r as keyof typeof ROLE_RANK] ?? 0
+  return NAV_ITEMS.filter((i) => !i.minRole || rango(role) >= rango(i.minRole))
 }
 
 /**

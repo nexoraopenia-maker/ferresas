@@ -1,6 +1,7 @@
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
-import { hasRole, type TenantContext } from '@/lib/tenant-context'
+import { hasRole, requireBranch, type TenantContext } from '@/lib/tenant-context'
+import { cargarSucursalOperativa, serieDe } from '@/features/branches/queries'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import {
   claimNextNumber, ensureCounter, overrideKey, registerSale,
@@ -48,13 +49,18 @@ export async function registerQuote(
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para cotizar.')
   }
 
-  await ensureCounter(db, ctx.tenantId, 'QUOTE', '001', 'C')
+  const branchId = requireBranch(ctx)
+  const sucursal = await cargarSucursalOperativa(db, branchId)
+  const serie = serieDe(sucursal, 'QUOTE')
+
+  await ensureCounter(db, ctx.tenantId, branchId, 'QUOTE', serie.series, serie.prefix)
 
   return db.$transaction(async (tx) => {
     const t = tx as unknown as TenantPrismaClient
 
+    // Mismo motivo que en registerSale: el almacén debe ser de esta sucursal.
     const warehouse = await t.warehouse.findFirst({
-      where: { id: input.warehouseId, isActive: true, deletedAt: null },
+      where: { id: input.warehouseId, branchId, isActive: true, deletedAt: null },
       select: { id: true },
     })
     if (!warehouse) {
@@ -113,7 +119,7 @@ export async function registerQuote(
 
     const total = cent(subtotal + taxTotal)
     const { correlativo, prefix, series } = await claimNextNumber(
-      t, ctx.tenantId, 'QUOTE', '001',
+      t, ctx.tenantId, 'QUOTE', serie.series,
     )
     const number = `${prefix}${series}-${String(correlativo).padStart(8, '0')}`
     const validUntil = new Date(now.getTime() + input.validDays * 86_400_000)
@@ -121,6 +127,7 @@ export async function registerQuote(
     const quote = await t.quote.create({
       data: {
         tenantId: ctx.tenantId,
+        branchId,
         warehouseId: input.warehouseId,
         customerId: input.customerId ?? null,
         userId: ctx.userId,

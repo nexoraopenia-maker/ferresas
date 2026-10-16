@@ -7,6 +7,7 @@ import {
   type ActiveImpersonation,
 } from './impersonation'
 import { computeAccessLevel, type TenantContext } from './tenant-context'
+import { BRANCH_COOKIE, resolverSucursalActiva } from './branch-selection'
 import { BusinessError, TenantIsolationError } from './errors'
 import type { RouteSession } from './route-access'
 
@@ -30,6 +31,19 @@ const USER_SELECT = {
   deletedAt: true,
   tenantId: true,
   passwordChangedAt: true,
+  /*
+   * Sucursales asignadas. Van en la MISMA consulta que ya resolvía la sesión
+   * en lugar de en una aparte: el proxy corre antes de cada petición y Neon
+   * suspende el cómputo por inactividad, así que una segunda consulta aquí
+   * se paga en latencia en el camino crítico de cada navegación.
+   *
+   * Solo las vigentes: una sucursal dada de baja no se puede operar aunque
+   * la asignación siga en la tabla puente.
+   */
+  branches: {
+    where: { branch: { deletedAt: null, isActive: true } },
+    select: { branch: { select: { id: true, code: true, isDefault: true } } },
+  },
   tenant: {
     select: {
       isActive: true,
@@ -123,26 +137,49 @@ export async function getRouteSession(
 async function cargarContextoSuplantado(
   imp: ActiveImpersonation,
   now: Date,
-): Promise<{ userId: string; role: TenantContext['role'] } | null> {
+): Promise<
+  { userId: string; role: TenantContext['role']; branchId?: string } | null
+> {
+  /*
+   * Se traen también las sucursales del suplantado. El soporte tiene que ver
+   * lo MISMO que el cliente: sin sucursal, el POS y el inventario saldrían
+   * vacíos y el técnico diagnosticaría un problema que no existe.
+   */
+  const select = {
+    id: true,
+    role: true,
+    branches: {
+      where: { branch: { deletedAt: null, isActive: true } },
+      select: { branch: { select: { id: true, code: true, isDefault: true } } },
+    },
+  } as const
+
   const objetivo = imp.targetUserId
     ? await prisma.user.findFirst({
         where: { id: imp.targetUserId, tenantId: imp.tenantId, isActive: true, deletedAt: null },
-        select: { id: true, role: true },
+        select,
       })
     : await prisma.user.findFirst({
         where: { tenantId: imp.tenantId, role: 'OWNER', isActive: true, deletedAt: null },
-        select: { id: true, role: true },
+        select,
         orderBy: { createdAt: 'asc' },
       })
 
   void now
-  return objetivo ? { userId: objetivo.id, role: objetivo.role } : null
+  if (!objetivo) return null
+  return {
+    userId: objetivo.id,
+    role: objetivo.role,
+    branchId: resolverSucursalActiva(objetivo.branches.map((ub) => ub.branch)),
+  }
 }
 
 export async function resolveTenantContext(
   userId: string,
   now: Date = new Date(),
   issuedAt?: number,
+  /** Sucursal pedida por el selector. Es una sugerencia: se valida contra lo asignado. */
+  branchPedida?: string,
 ): Promise<TenantContext> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -170,6 +207,10 @@ export async function resolveTenantContext(
     userId: user.id,
     role: user.role,
     access: computeAccessLevel(user.tenant, user.tenant.subscription, now),
+    branchId: resolverSucursalActiva(
+      user.branches.map((ub) => ub.branch),
+      branchPedida,
+    ),
   }
 }
 
@@ -195,13 +236,19 @@ export async function requireTenantContext(): Promise<TenantContext> {
           userId: suplantado.userId,
           role: suplantado.role,
           access: 'READ_ONLY',
+          branchId: suplantado.branchId,
           impersonationId: imp.id,
         }
       }
     }
   }
 
-  return resolveTenantContext(session.user.id, new Date(), session.issuedAt)
+  return resolveTenantContext(
+    session.user.id,
+    new Date(),
+    session.issuedAt,
+    (await cookies()).get(BRANCH_COOKIE)?.value,
+  )
 }
 
 /** Sesión de SUPERADMIN real, ignorando cualquier impersonation en curso. */

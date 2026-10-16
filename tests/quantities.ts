@@ -1,4 +1,5 @@
 import './guard'
+import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -73,10 +74,11 @@ async function main() {
   const owner = await prisma.user.create({
     data: { email: `o-${M}@x.com`, name: 'Dueño', role: 'OWNER', tenantId: t.id },
   })
-  const w = await prisma.warehouse.create({
-    data: { tenantId: t.id, code: 'PRIN', name: 'Principal', isDefault: true },
-  })
-  const ctx: TenantContext = { tenantId: t.id, userId: owner.id, role: 'OWNER', access: 'FULL' }
+  const { branch, warehouse: w } = await crearSucursalConAlmacen(t.id)
+  await asignarSucursal(t.id, owner.id, branch.id)
+  const ctx: TenantContext = {
+    tenantId: t.id, userId: owner.id, role: 'OWNER', access: 'FULL', branchId: branch.id,
+  }
   const db = getTenantPrisma(ctx)
   const parse = (i: unknown) => registerSaleSchema.parse(i)
 

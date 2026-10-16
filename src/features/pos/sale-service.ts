@@ -1,6 +1,9 @@
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
-import { hasRole, type TenantContext } from '@/lib/tenant-context'
+import { hasRole, requireBranch, type TenantContext } from '@/lib/tenant-context'
+import {
+  cargarSucursalOperativa, serieDe, turnoAbiertoId,
+} from '@/features/branches/queries'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { applyStockMovement } from '@/features/inventory/stock-service'
 import type { RegisterSaleInput } from './schemas'
@@ -75,6 +78,7 @@ export async function claimNextNumber(
 export async function ensureCounter(
   db: TenantPrismaClient,
   tenantId: string,
+  branchId: string,
   scope: string,
   series: string,
   prefix: string,
@@ -84,7 +88,7 @@ export async function ensureCounter(
 
   try {
     await db.documentCounter.create({
-      data: { tenantId, scope, series, prefix, next: 1 },
+      data: { tenantId, branchId, scope, series, prefix, next: 1 },
     })
   } catch (e) {
     // Otro cajero lo creó en el mismo instante: perder esa carrera es normal.
@@ -137,17 +141,30 @@ export async function registerSale(
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para registrar ventas.')
   }
 
-  await ensureCounter(db, ctx.tenantId, 'SALE', '001', 'V')
+  const branchId = requireBranch(ctx)
+  const sucursal = await cargarSucursalOperativa(db, branchId)
+  const serie = serieDe(sucursal, 'SALE')
+
+  await ensureCounter(db, ctx.tenantId, branchId, 'SALE', serie.series, serie.prefix)
 
   return db.$transaction(async (tx) => {
       const t = tx as unknown as TenantPrismaClient
 
+      /*
+       * El almacén tiene que ser DE ESTA SUCURSAL. El aislamiento por tenant
+       * no basta: los almacenes de todas las sucursales pertenecen al mismo
+       * negocio, así que sin esta comprobación un cajero podría descontar
+       * stock del local de al lado pasando su id.
+       */
       const warehouse = await t.warehouse.findFirst({
-        where: { id: input.warehouseId, isActive: true, deletedAt: null },
+        where: { id: input.warehouseId, branchId, isActive: true, deletedAt: null },
         select: { id: true },
       })
       if (!warehouse) {
-        throw new BusinessError('TENANT_MISMATCH', 'El almacén no está disponible.')
+        throw new BusinessError(
+          'TENANT_MISMATCH',
+          'El almacén no pertenece a tu sucursal o no está disponible.',
+        )
       }
 
       if (input.customerId) {
@@ -232,7 +249,7 @@ export async function registerSale(
 
       // --- 3. Numeración sin huecos --------------------------------------
       const { correlativo, prefix, series } = await claimNextNumber(
-        t, ctx.tenantId, 'SALE', '001',
+        t, ctx.tenantId, 'SALE', serie.series,
       )
       const number = `${prefix}${series}-${String(correlativo).padStart(8, '0')}`
 
@@ -240,7 +257,10 @@ export async function registerSale(
       const sale = await t.sale.create({
         data: {
           tenantId: ctx.tenantId,
+          branchId,
           warehouseId: input.warehouseId,
+          // Si hay turno de caja abierto, la venta entra en su arqueo.
+          cashSessionId: await turnoAbiertoId(t, branchId),
           customerId: input.customerId ?? null,
           userId: ctx.userId,
           number,

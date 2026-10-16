@@ -156,6 +156,31 @@ enum CustomerDocType {
   SIN_DOCUMENTO
 }
 
+/// Estado del turno de caja de una sucursal.
+enum CashSessionStatus {
+  ABIERTA
+  CERRADA
+}
+
+/**
+ * Ciclo de vida de una transferencia entre sucursales.
+ * Los estados intermedios no son burocracia: el stock sale del origen cuando
+ * se despacha y entra al destino cuando se recibe. Entre ambos momentos la
+ * mercadería está EN_TRANSITO y no pertenece a ningún almacén — la fila de la
+ * transferencia es su único registro. Sin ese estado, o el origen sigue
+ * contando lo que ya salió, o el destino cuenta lo que todavía no llegó.
+ */
+enum TransferStatus {
+  BORRADOR
+  SOLICITADA
+  APROBADA
+  EN_TRANSITO
+  RECIBIDA
+  /// El destino la rechaza al recibirla: el stock vuelve al origen.
+  RECHAZADA
+  CANCELADA
+}
+
 /// Política del tenant cuando una venta excede el stock disponible (§5.4).
 enum StockPolicy {
   BLOQUEAR
@@ -212,6 +237,7 @@ model Plan {
   // Límites del plan. NULL = ilimitado. Se aplican al CREAR el recurso
   // (Server Action), no solo en la UI (§5.2).
   maxUsers               Int?
+  maxBranches            Int?
   maxWarehouses          Int?
   maxProducts            Int?
   maxMonthlyTransactions Int?
@@ -282,6 +308,11 @@ model Tenant {
 
   subscription   Subscription?
   users          User[]
+  branches       Branch[]
+  userBranches   UserBranch[]
+  cashSessions   CashSession[]
+  transfers      BranchTransfer[]
+  transferItems  BranchTransferItem[]
   warehouses     Warehouse[]
   categories     Category[]
   products       Product[]
@@ -418,16 +449,23 @@ model User {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  accounts       Account[]
-  sessions       Session[]
-  movements      StockMovement[]
-  sales          Sale[]
-  payments       Payment[]
-  quotes         Quote[]
-  purchases      Purchase[]
-  auditLogs      AuditLog[]             @relation("AuditActor")
-  impersonations ImpersonationSession[] @relation("Impersonator")
-  impersonated   ImpersonationSession[] @relation("Impersonated")
+  accounts        Account[]
+  sessions        Session[]
+  branches        UserBranch[]
+  managedBranches Branch[]               @relation("BranchManager")
+  cashOpened      CashSession[]          @relation("CashOpenedBy")
+  cashClosed      CashSession[]          @relation("CashClosedBy")
+  transfersAsked  BranchTransfer[]       @relation("TransferRequestedBy")
+  transfersOked   BranchTransfer[]       @relation("TransferApprovedBy")
+  transfersGot    BranchTransfer[]       @relation("TransferReceivedBy")
+  movements       StockMovement[]
+  sales           Sale[]
+  payments        Payment[]
+  quotes          Quote[]
+  purchases       Purchase[]
+  auditLogs       AuditLog[]             @relation("AuditActor")
+  impersonations  ImpersonationSession[] @relation("Impersonator")
+  impersonated    ImpersonationSession[] @relation("Impersonated")
 
   @@unique([tenantId, id])
   @@index([tenantId, role])
@@ -486,6 +524,16 @@ model Warehouse {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  /**
+   * Sucursal a la que pertenece. Una sucursal puede tener varios almacenes
+   * (sala de ventas y depósito), pero un almacén está en una sola sucursal:
+   * de otro modo no se sabría a qué establecimiento declarar su inventario.
+   * `Restrict` y no `Cascade`: borrar una sucursal con inventario dentro
+   * debe fallar, no evaporar el stock.
+   */
+  branchId String
+  branch   Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
   code      String
   name      String
   address   String?
@@ -505,6 +553,7 @@ model Warehouse {
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
+  @@index([tenantId, branchId, isActive])
   @@index([tenantId, isActive])
   @@map("warehouses")
 }
@@ -652,6 +701,7 @@ model Product {
   saleItems     SaleItem[]
   quoteItems    QuoteItem[]
   purchaseItems PurchaseItem[]
+  transferItems BranchTransferItem[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, sku])
@@ -694,6 +744,7 @@ model ProductVariant {
   saleItems     SaleItem[]
   quoteItems    QuoteItem[]
   purchaseItems PurchaseItem[]
+  transferItems BranchTransferItem[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, sku])
@@ -817,8 +868,22 @@ model Sale {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  /**
+   * Sucursal que emitió la venta. Se guarda aunque sea derivable del
+   * almacén: la serie del comprobante depende de la sucursal, y si mañana el
+   * almacén se reasigna a otra sucursal, la venta ya emitida tiene que
+   * seguir diciendo desde dónde se emitió.
+   */
+  branchId String
+  branch   Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
   warehouseId String
   warehouse   Warehouse @relation(fields: [tenantId, warehouseId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  /// Turno de caja en el que se cobró. NULL en ventas registradas sin caja
+  /// abierta (o anteriores a que existiera el arqueo).
+  cashSessionId String?
+  cashSession   CashSession? @relation(fields: [tenantId, cashSessionId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
 
   customerId String?
   customer   Customer? @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
@@ -863,6 +928,8 @@ model Sale {
   @@index([tenantId, status, createdAt])
   @@index([tenantId, customerId])
   @@index([tenantId, warehouseId, createdAt])
+  @@index([tenantId, branchId, status, createdAt])
+  @@index([tenantId, cashSessionId])
   @@map("sales")
 }
 
@@ -937,6 +1004,9 @@ model Quote {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  branchId String
+  branch   Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
   warehouseId String
   warehouse   Warehouse @relation(fields: [tenantId, warehouseId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
 
@@ -969,6 +1039,7 @@ model Quote {
   @@unique([tenantId, number])
   @@index([tenantId, status, createdAt])
   @@index([tenantId, customerId])
+  @@index([tenantId, branchId, status, createdAt])
   @@map("quotes")
 }
 
@@ -1082,7 +1153,22 @@ model DocumentCounter {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  scope  String // "SALE" | "QUOTE" | "PURCHASE"
+  /**
+   * Sucursal dueña de esta serie.
+   * NO forma parte de la clave de búsqueda, y eso es deliberado: el único
+   * `(tenantId, scope, series)` de abajo garantiza que una serie pertenezca
+   * a UNA sola sucursal, así que la serie ya identifica el contador por sí
+   * sola. Gracias a eso `claimNextNumber` no cambió de firma y la lógica de
+   * numeración sin huecos —la más delicada del proyecto— quedó intacta.
+   * Si la serie formara parte de la clave junto con branchId, dos sucursales
+   * podrían abrir series "B001" independientes y ambas emitirían
+   * B001-00000001: correlativos solapados para un mismo RUC, que es una
+   * contingencia tributaria.
+   */
+  branchId String
+  branch   Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  scope  String // "SALE" | "QUOTE" | "PURCHASE" | "TRANSFER" | "TAX_BOLETA" | "TAX_FACTURA"
   series String @default("001")
   prefix String @default("")
   next   Int    @default(1)
@@ -1090,6 +1176,7 @@ model DocumentCounter {
   updatedAt DateTime @updatedAt
 
   @@unique([tenantId, scope, series])
+  @@index([tenantId, branchId, scope])
   @@map("document_counters")
 }
 
@@ -1260,4 +1347,253 @@ model TaxDocument {
   @@index([tenantId, status, issuedAt])
   @@index([tenantId, documentType, series])
   @@map("tax_documents")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SUCURSALES
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Sucursal: un establecimiento del negocio.
+ * Es una entidad distinta del almacén a propósito. SUNAT numera por
+ * ESTABLECIMIENTO, no por depósito: una tienda con sala de ventas y almacén
+ * trasero es un solo establecimiento con dos almacenes, y emite una sola
+ * serie de comprobantes. Si la sucursal fuese el almacén, esa tienda
+ * declararía dos establecimientos inexistentes.
+ */
+model Branch {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Código interno, el que usa el personal: "LIMA01", "SJL".
+  code String
+  name String
+
+  /**
+   * Código de establecimiento anexo ante SUNAT: cuatro dígitos, "0000" para
+   * la casa matriz. Único dentro del tenant y SIN índice parcial: una
+   * sucursal dada de baja conserva el suyo a propósito, porque los
+   * comprobantes que emitió siguen apuntando a ese establecimiento y SUNAT no
+   * admite reutilizar el código con otro local.
+   */
+  establishmentCode String
+
+  /**
+   * Número de serie de esta sucursal, de 1 a 999.
+   * De aquí sale la serie de TODOS sus documentos: la sucursal 1 emite V001,
+   * C001, B001 y F001; la sucursal 2 emite V002, C002, B002 y F002. Al ser
+   * único por tenant, dos sucursales no pueden colisionar en una serie, que
+   * es justo lo que produciría correlativos duplicados bajo un mismo RUC.
+   * Es también lo que hace la migración retrocompatible: los datos que ya
+   * existían usan la serie "001", así que la sucursal creada en el backfill
+   * recibe seriesNumber = 1 y ni un solo número cambia.
+   */
+  seriesNumber Int
+
+  address String?
+  /// Ubigeo INEI: 6 dígitos (departamento + provincia + distrito).
+  ubigeo  String?
+  phone   String?
+  email   String?
+
+  /// Responsable del local. SetNull: si el encargado se va, la sucursal sigue.
+  managerId String?
+  manager   User?   @relation("BranchManager", fields: [managerId], references: [id], onDelete: SetNull)
+
+  /// Casa matriz / sucursal por defecto del POS. Exactamente una por tenant.
+  isDefault Boolean @default(false)
+  isActive  Boolean @default(true)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  /// Soft delete: nunca se borra una sucursal con historial (Frente 1).
+  deletedAt DateTime?
+
+  warehouses   Warehouse[]
+  users        UserBranch[]
+  counters     DocumentCounter[]
+  sales        Sale[]
+  quotes       Quote[]
+  cashSessions CashSession[]
+  transfersOut BranchTransfer[]  @relation("TransferFrom")
+  transfersIn  BranchTransfer[]  @relation("TransferTo")
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, code])
+  @@unique([tenantId, establishmentCode])
+  @@unique([tenantId, seriesNumber])
+  @@index([tenantId, isActive])
+  @@index([tenantId, deletedAt])
+  @@map("branches")
+}
+
+/**
+ * A qué sucursales puede entrar cada usuario.
+ * Tabla puente y no una columna en User porque el pliego pide que un usuario
+ * pueda estar asignado a UNA O VARIAS: el contador entra a todas, el cajero
+ * solo a la suya.
+ * Importante: esto es permiso de acceso, no aislamiento de datos. El
+ * aislamiento sigue viniendo de `tenantId` y de las FK compuestas; esta tabla
+ * decide qué sucursal puede operar un usuario DENTRO de su tenant.
+ */
+model UserBranch {
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [tenantId, userId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  branchId String
+  branch   Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  createdAt DateTime @default(now())
+
+  @@id([tenantId, userId, branchId])
+  @@index([tenantId, branchId])
+  @@map("user_branches")
+}
+
+/**
+ * Turno de caja: apertura, cierre y arqueo.
+ * El descuadre se guarda CALCULADO y congelado, no derivado al leer. Si se
+ * recalculara, una venta anulada al día siguiente alteraría el arqueo de un
+ * turno ya cerrado y firmado por el cajero, y entonces el arqueo dejaría de
+ * ser prueba de nada.
+ */
+model CashSession {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  branchId String
+  branch   Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  openedById String
+  openedBy   User    @relation("CashOpenedBy", fields: [openedById], references: [id], onDelete: Restrict)
+  closedById String?
+  closedBy   User?   @relation("CashClosedBy", fields: [closedById], references: [id], onDelete: SetNull)
+
+  status CashSessionStatus @default(ABIERTA)
+
+  /// Fondo de cambio con el que arranca el turno.
+  openingAmount Decimal @db.Decimal(14, 2)
+
+  /// Efectivo físico contado al cerrar. NULL mientras el turno está abierto.
+  countedAmount  Decimal? @db.Decimal(14, 2)
+  /// Lo que el sistema esperaba: fondo + cobros en efectivo - vueltos.
+  expectedAmount Decimal? @db.Decimal(14, 2)
+  /// contado - esperado. Negativo es faltante; positivo, sobrante.
+  difference     Decimal? @db.Decimal(14, 2)
+
+  /// Totales congelados al cerrar, para el reporte del turno.
+  salesCount  Int     @default(0)
+  salesTotal  Decimal @default(0) @db.Decimal(14, 2)
+  cashTotal   Decimal @default(0) @db.Decimal(14, 2)
+  changeTotal Decimal @default(0) @db.Decimal(14, 2)
+
+  openingNotes String?
+  closingNotes String?
+
+  openedAt DateTime  @default(now())
+  closedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales Sale[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, branchId, status])
+  @@index([tenantId, branchId, openedAt])
+  @@map("cash_sessions")
+}
+
+/**
+ * Transferencia de mercadería entre sucursales.
+ * El stock se mueve en DOS pasos atómicos y no en uno: sale del origen al
+ * despachar y entra al destino al recibir. Un único movimiento instantáneo
+ * mentiría durante todo el tiempo que la mercadería va en la camioneta, y es
+ * precisamente ahí donde se pierde.
+ */
+model BranchTransfer {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Correlativo propio (scope TRANSFER), con la serie de la sucursal origen.
+  number String
+
+  fromBranchId    String
+  fromBranch      Branch @relation("TransferFrom", fields: [tenantId, fromBranchId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+  /// Almacén concreto del que sale la mercadería.
+  fromWarehouseId String
+
+  toBranchId    String
+  toBranch      Branch @relation("TransferTo", fields: [tenantId, toBranchId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+  /// Almacén concreto al que entra. Se fija al crear y se usa al recibir.
+  toWarehouseId String
+
+  status TransferStatus @default(BORRADOR)
+
+  requestedById String
+  requestedBy   User    @relation("TransferRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  approvedById  String?
+  approvedBy    User?   @relation("TransferApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  receivedById  String?
+  receivedBy    User?   @relation("TransferReceivedBy", fields: [receivedById], references: [id], onDelete: SetNull)
+
+  requestedAt DateTime  @default(now())
+  approvedAt  DateTime?
+  shippedAt   DateTime?
+  receivedAt  DateTime?
+
+  notes        String?
+  rejectReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items BranchTransferItem[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, number])
+  @@index([tenantId, status, requestedAt])
+  @@index([tenantId, fromBranchId, status])
+  @@index([tenantId, toBranchId, status])
+  @@map("branch_transfers")
+}
+
+model BranchTransferItem {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  transferId String
+  transfer   BranchTransfer @relation(fields: [tenantId, transferId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  productId String
+  product   Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  variantId String?
+  variant   ProductVariant? @relation(fields: [tenantId, variantId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  nameSnapshot String
+  skuSnapshot  String
+  unitType     UnitType @default(UNIDAD)
+
+  quantitySent     Decimal  @db.Decimal(14, 4)
+  /**
+   * Lo que el destino dice haber recibido. Puede ser MENOR que lo enviado:
+   * ahí está el valor del arqueo de transferencias. La diferencia no se
+   * reparte en silencio — queda registrada y el faltante se asienta como
+   * merma en el origen.
+   */
+  quantityReceived Decimal? @db.Decimal(14, 4)
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, transferId])
+  @@index([tenantId, productId])
+  @@map("branch_transfer_items")
 }

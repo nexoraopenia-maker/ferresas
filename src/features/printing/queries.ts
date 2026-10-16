@@ -95,10 +95,15 @@ const num = (v: unknown): number => Number(v ?? 0)
  */
 const cent = redondearCentimos
 
+/**
+ * Etiquetas de CustomerDocType. Las claves tienen que coincidir EXACTAMENTE
+ * con el enum de Prisma: una clave mal escrita no falla, simplemente deja de
+ * imprimir la línea del documento, y eso en una factura es un defecto legal.
+ */
 const DOC_ETIQUETA: Record<string, string> = {
   DNI: 'DNI',
   RUC: 'RUC',
-  CARNET_EXTRANJERIA: 'C.E.',
+  CE: 'C.E.',
   PASAPORTE: 'Pasaporte',
   SIN_DOCUMENTO: '',
 }

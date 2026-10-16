@@ -140,9 +140,38 @@ export async function registerTenant(
         select: { id: true },
       })
 
+      /*
+       * Casa matriz. Se crea ANTES del almacén porque el almacén cuelga de
+       * ella, y dentro de la misma transacción que el tenant: un negocio sin
+       * sucursal no puede vender —no habría de dónde sacar la serie— así que
+       * dejarlo a medias sería dejar una cuenta inservible.
+       *
+       * establishmentCode "0000" y seriesNumber 1 son los de la casa matriz
+       * ante SUNAT, y de ahí salen las series V001 / C001 / B001 / F001.
+       */
+      const branch = await tx.branch.create({
+        data: {
+          tenantId: tenant.id,
+          code: 'PRINCIPAL',
+          name: 'Casa matriz',
+          establishmentCode: '0000',
+          seriesNumber: 1,
+          phone: input.phone ?? null,
+          isDefault: true,
+        },
+        select: { id: true },
+      })
+
+      // El OWNER opera su propia casa matriz. Sin esta asignación no podría
+      // registrar ni una venta: `requireBranch` lo rechazaría.
+      await tx.userBranch.create({
+        data: { tenantId: tenant.id, userId: user.id, branchId: branch.id },
+      })
+
       await tx.warehouse.create({
         data: {
           tenantId: tenant.id,
+          branchId: branch.id,
           code: 'PRIN',
           name: 'Almacén principal',
           isDefault: true,

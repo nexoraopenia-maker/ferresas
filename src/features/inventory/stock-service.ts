@@ -1,5 +1,5 @@
 import { Prisma } from '@/generated/prisma/client'
-import type { MovementSource } from '@/generated/prisma/enums'
+import type { MovementSource, MovementType } from '@/generated/prisma/enums'
 import { BusinessError } from '@/lib/errors'
 import { hasRole, type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
@@ -96,6 +96,18 @@ export async function applyStockMovement(
    * el tenant tenga que aflojar su política global.
    */
   allowNegative?: boolean,
+  /**
+   * Etiqueta el movimiento con un tipo distinto del que trae el input.
+   *
+   * Existe por las transferencias entre sucursales: el efecto sobre el stock
+   * es el de una SALIDA o una ENTRADA —y por tanto debe pasar por el MISMO
+   * guard atómico de concurrencia que todo lo demás— pero en el kardex tiene
+   * que leerse como TRANSFERENCIA_SALIDA / TRANSFERENCIA_ENTRADA. Sin esto,
+   * el servicio de transferencias tendría que reimplementar el
+   * `updateManyAndReturn` condicional, que es justo el código que no conviene
+   * tener duplicado.
+   */
+  typeOverride?: MovementType,
 ): Promise<StockMovementResult> {
   const variantId = input.variantId ?? null
 
@@ -219,7 +231,7 @@ export async function applyStockMovement(
       variantId,
       warehouseId: input.warehouseId,
       userId: ctx.userId,
-      type: input.type,
+      type: typeOverride ?? input.type,
       source: sourceOverride ?? input.source,
       quantity: delta,
       balanceAfter,

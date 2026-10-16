@@ -1,4 +1,5 @@
 import './guard'
+import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
@@ -21,10 +22,11 @@ async function nuevoTenant(planCode: string) {
   const u = await prisma.user.create({
     data: { email: `u-${randomUUID()}@x.com`, name: 'U', role: 'ALMACENERO', tenantId: t.id },
   })
-  const w = await prisma.warehouse.create({
-    data: { tenantId: t.id, code: 'PRIN', name: 'Principal', isDefault: true },
-  })
-  const ctx: TenantContext = { tenantId: t.id, userId: u.id, role: 'ALMACENERO', access: 'FULL' }
+  const { branch, warehouse: w } = await crearSucursalConAlmacen(t.id)
+  await asignarSucursal(t.id, u.id, branch.id)
+  const ctx: TenantContext = {
+    tenantId: t.id, userId: u.id, role: 'ALMACENERO', access: 'FULL', branchId: branch.id,
+  }
   return { t, u, w, ctx, db: getTenantPrisma(ctx), plan }
 }
 
