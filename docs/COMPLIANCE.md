@@ -59,7 +59,7 @@ o se deja sin validar a propósito y aquí se dice por qué.
 |---|---|
 | Código de establecimiento de 4 dígitos | Validado por formato (`/^\d{4}$/`) |
 | `0000` = casa matriz | Asumido como convención |
-| ⚠️ **No se verifica contra el RUC real** | El código se **teclea**. Si el usuario pone `0003` y SUNAT le asignó `0002`, los comprobantes saldrán con un establecimiento que no es suyo. No hay forma de comprobarlo sin consultar el padrón de SUNAT |
+| ⚠️ **No se verifica contra el RUC real** | El código se **teclea**, y la UI lo advierte explícitamente (`avisoEstablecimiento`). Investigado: SUNAT expone los establecimientos anexos **solo detrás de la Clave SOL** del contribuyente; la ficha RUC pública no los trae. Las únicas vías serían la Clave SOL del cliente (la llave de su buzón tributario) o un scraper de terceros, de pago y no oficial. `verificarEstablecimiento` queda como punto de enganche |
 | Un código no se reutiliza tras dar de baja la sucursal | ✅ Único `(tenantId, establishmentCode)` **sin** índice parcial, a propósito |
 
 ---
@@ -69,7 +69,8 @@ o se deja sin validar a propósito y aquí se dice por qué.
 | Punto | Estado |
 |---|---|
 | Formato de 6 dígitos (dep. 2 + prov. 2 + dist. 2) | Validado |
-| ⚠️ **No se valida contra el catálogo del INEI** | Embarcar las ~1 870 entradas del catálogo por un dato que **no bloquea ninguna operación** no se justifica hoy. Un ubigeo mal tecleado pasa |
+| ⚠️ **No se valida contra el catálogo del INEI** | Un ubigeo mal tecleado pasa |
+| ⚠️ **Catálogo NO embarcado, y es deliberado** | Se revisaron los datasets públicos disponibles. El más citado trae **24 departamentos** cuando el ubigeo del INEI tiene **25 códigos de primer nivel** (falta Callao), y su propia documentación advierte que se basa en datos antiguos. Cargarlo haría **imposible** seleccionar una dirección del Callao: una regresión funcional peor que el campo de texto actual. Además hay **dos sistemas de codificación incompatibles** (INEI y RENIEC) y usar el equivocado pondría el ubigeo erróneo en los comprobantes. Pendiente del fichero oficial del INEI |
 
 ---
 
