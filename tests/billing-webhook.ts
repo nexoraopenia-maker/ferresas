@@ -1,4 +1,5 @@
 import './guard'
+import { correr } from './teardown'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { normalizeStripeEvent, mapStripeStatus } from '@/features/billing/webhook-events'
@@ -141,8 +142,7 @@ async function main() {
     (await prisma.webhookEvent.findFirstOrThrow({ where: { externalEventId: pago.id } })).payload !== null)
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
-  await prisma.$disconnect()
-  process.exit(fail === 0 ? 0 : 1)
+  return fail
 }
 
-main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1) })
+correr(main)

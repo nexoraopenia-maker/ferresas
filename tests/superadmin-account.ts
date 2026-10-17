@@ -1,4 +1,5 @@
 import './guard'
+import { correr } from './teardown'
 import { randomUUID } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
@@ -154,8 +155,7 @@ async function main() {
     (await prisma.user.count({ where: { id: { in: [sa.id, owner.id] } } })) === 0)
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
-  await prisma.$disconnect()
-  process.exit(fail === 0 ? 0 : 1)
+  return fail
 }
 
-main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1) })
+correr(main)

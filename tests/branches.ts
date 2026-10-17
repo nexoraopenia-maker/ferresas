@@ -1,10 +1,14 @@
 import './guard'
+import { correr } from './teardown'
 import { randomUUID } from 'node:crypto'
 import { crearSucursal, asignarSucursal } from './fixtures'
 import { prisma } from '@/lib/prisma'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { serieDeSucursal, siguienteSeriesNumber, scopeTributario } from '@/features/branches/series'
 import { resolverSucursalActiva } from '@/lib/branch-selection'
+import {
+  avisoEstablecimiento, esCasaMatriz, verificarEstablecimiento,
+} from '@/features/branches/establecimiento'
 import { createBranch, updateBranch, deleteBranch, assignBranches } from '@/features/branches/branch-service'
 import { createBranchSchema, deleteBranchSchema, assignBranchesSchema, updateBranchSchema } from '@/features/branches/schemas'
 import { openCashSession, closeCashSession, currentCashSession } from '@/features/branches/cash-service'
@@ -55,6 +59,20 @@ async function main() {
   check('tras 1 y 2 viene el 3', siguienteSeriesNumber([1, 2]) === 3)
   check('>>> reutiliza el hueco que dejó una baja', siguienteSeriesNumber([1, 3]) === 2)
   check('no se marea con el desorden', siguienteSeriesNumber([3, 1, 2]) === 4)
+
+  console.log('\n1b) Código de establecimiento: aviso de NO verificado')
+  check('la casa matriz (0000) NO lleva aviso: siempre es correcta',
+    avisoEstablecimiento('0000') === null)
+  check('>>> un anexo SÍ avisa de que no se puede verificar contra el RUC',
+    (avisoEstablecimiento('0001') ?? '').includes('Clave SOL'))
+  check('esCasaMatriz solo con 0000',
+    esCasaMatriz('0000') && !esCasaMatriz('0001'))
+  check('la casa matriz se reporta VERIFICADA sin consultar nada',
+    (await verificarEstablecimiento('20123456789', '0000')).estado === 'VERIFICADO')
+  check('>>> un anexo queda SIN_VERIFICAR, no se finge comprobado',
+    (await verificarEstablecimiento('20123456789', '0001')).estado === 'SIN_VERIFICAR')
+  check('sin RUC declarado, pide el RUC antes',
+    (await verificarEstablecimiento(null, '0001')).mensaje.includes('RUC'))
 
   console.log('\n2) Elección de sucursal activa (función pura)')
   const S = (id: string, isDefault = false, c = id) => ({ id, isDefault, code: c })
@@ -482,8 +500,7 @@ async function main() {
     (await prisma.tenant.count({ where: { id: { in: [t.id, tTope.id] } } })) === 0)
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
-  await prisma.$disconnect()
-  process.exit(fail === 0 ? 0 : 1)
+  return fail
 }
 
-main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1) })
+correr(main)

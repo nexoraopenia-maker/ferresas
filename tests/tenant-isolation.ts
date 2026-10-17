@@ -1,4 +1,5 @@
 import './guard'
+import { correr } from './teardown'
 import { crearSucursalConAlmacen } from './fixtures'
 import { prisma } from '@/lib/prisma'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
@@ -127,8 +128,7 @@ async function main() {
     computeAccessLevel({ isActive: true }, { ...base, status: 'CANCELED' }, now) === 'READ_ONLY')
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
-  await prisma.$disconnect()
-  process.exit(fail === 0 ? 0 : 1)
+  return fail
 }
 
-main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1) })
+correr(main)

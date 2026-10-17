@@ -1,0 +1,82 @@
+══════════════════════════════════════════════════════════════════════════
+  REPORTE: endurecer el redondeo a céntimos
+══════════════════════════════════════════════════════════════════════════
+
+  HOY         Math.round(n * 100) / 100
+  ENDURECIDO  Math.round(Number((|n| * 100).toFixed(4))) / 100  ·  con signo
+
+  La diferencia aparece cuando el valor exacto cae en medio céntimo y la
+  representación binaria lo deja justo por debajo. Por ejemplo:
+
+    0.145 * 100  =  14.499999999999998   →  hoy redondea a 14
+    1.005 * 100  =  100.49999999999999   →  hoy redondea a 100
+    2.675 * 100  =  267.5   →  hoy redondea a 268
+
+──────────────────────────────────────────────────────────────────────────
+  1) LÍNEA ÚNICA — 3,950 combinaciones
+──────────────────────────────────────────────────────────────────────────
+
+  Ningún importe cambia.
+
+──────────────────────────────────────────────────────────────────────────
+  2) CARRITOS DE 3 LÍNEAS — 518 combinaciones
+──────────────────────────────────────────────────────────────────────────
+
+  Ningún importe cambia.
+
+──────────────────────────────────────────────────────────────────────────
+  3) INVARIANTE DEL UBL: suma de líneas = totales del documento
+──────────────────────────────────────────────────────────────────────────
+
+  Con el redondeo de HOY:        0 incumplimientos
+  Con el redondeo ENDURECIDO:    0 incumplimientos
+
+══════════════════════════════════════════════════════════════════════════
+──────────────────────────────────────────────────────────────────────────
+  4) BÚSQUEDA ADVERSARIA: ¿existen esos casos con datos realistas?
+──────────────────────────────────────────────────────────────────────────
+
+  4a) En el producto precio x cantidad: SÍ existen
+      · 7.5 x S/0.03 = 0.22499999999999998 → hoy 0.22, endurecido 0.23
+      · 2.5 x S/0.09 = 0.22499999999999998 → hoy 0.22, endurecido 0.23
+      · 1.5 x S/0.15 = 0.22499999999999998 → hoy 0.22, endurecido 0.23
+      · 0.5 x S/0.29 = 0.145 → hoy 0.14, endurecido 0.15
+      · 1.5 x S/0.29 = 0.43499999999999994 → hoy 0.43, endurecido 0.44
+      · 3.5 x S/0.29 = 1.015 → hoy 1.01, endurecido 1.02
+      · 7.5 x S/0.29 = 2.175 → hoy 2.17, endurecido 2.18
+      · 12.5 x S/0.29 = 3.6249999999999996 → hoy 3.62, endurecido 3.63
+
+  4b) Al extraer la base imponible (neto / 1.18): no se encontró ninguno en 50 000 netos
+
+  4c) Impacto en el documento con el primer caso encontrado:
+      7.5 x S/0.03 al 18%
+      campo       hoy   endurecido   delta
+      subtotal     0.19        0.19 +0.00
+      taxTotal     0.03        0.04 +0.01
+      total        0.22        0.23 +0.01
+
+══════════════════════════════════════════════════════════════════════════
+──────────────────────────────────────────────────────────────────────────
+  5) LOS IMPORTES QUE LA SUITE AFIRMA HOY
+──────────────────────────────────────────────────────────────────────────
+
+  precio   cant.  IGV   total hoy  endurecido  ¿cambia?  origen
+   11.80     10   18%     118.00      118.00  no        pos-invoicing: tubo PVC
+   11.80      1   18%      11.80       11.80  no        pos-invoicing
+    4.20    2.5   18%      10.50       10.50  no        printing: cable THW
+    4.20     10   18%      42.00       42.00  no        printing: cotización
+    4.20   12.5   18%      52.50       52.50  no        smoke: cable a granel
+   25.00      1    0%      25.00       25.00  no        printing: libro exonerado
+   32.90      1   18%      32.90       32.90  no        branches: cemento
+   32.90      2   18%      65.80       65.80  no        branches: caja
+   32.90      3   18%      98.70       98.70  no        smoke: cemento
+   32.90      4   18%     131.60      131.60  no        smoke: cemento
+   32.90     50   18%    1645.00     1645.00  no        branches: cotización
+   25.00      1   18%      25.00       25.00  no        branches: fierro
+    6.50   12.5    0%      81.25       81.25  no        branches: clavos a granel
+    0.25      4   18%       1.00        1.00  no        quantities: a granel
+    1.50    0.5   18%       0.75        0.75  no        quantities: media unidad
+
+  0 de 15 importes de la suite cambiarían.
+
+══════════════════════════════════════════════════════════════════════════

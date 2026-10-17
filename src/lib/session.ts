@@ -1,3 +1,4 @@
+import { cache } from 'react'
 import { cookies } from 'next/headers'
 import { auth } from '@/auth'
 import { prisma } from './prisma'
@@ -215,11 +216,39 @@ export async function resolveTenantContext(
 }
 
 /**
- * Contexto de tenant de la petición en curso. Lo usan las Server Actions.
- * Lanza si no hay sesión: una Server Action nunca debe continuar "por si
- * acaso" sin saber quién la invoca.
+ * Contexto de tenant de la petición en curso, MEMOIZADO por render.
+ *
+ * Lo usan las Server Actions y las páginas. Lanza si no hay sesión: una
+ * Server Action nunca debe continuar "por si acaso" sin saber quién la
+ * invoca.
+ *
+ * ─── POR QUÉ ────────────────────────────────────────────────────────────
+ *
+ * La sesión se resolvía TRES veces por navegación: una en el proxy, una en
+ * el layout del dashboard y una en la página. Son tres consultas idénticas
+ * —`USER_SELECT` con el join de sucursales— y cada una cuesta una ida y
+ * vuelta completa a la base.
+ *
+ * Medido: 605 ms por ida y vuelta desde un portátil a Neon en us-east-2, y
+ * 21-60 ms desde Vercel. O sea entre 120 ms y 1,8 s de latencia puramente
+ * redundante en cada clic del menú, antes de que la página consulte NADA de
+ * lo suyo.
+ *
+ * `cache()` de React deduplica dentro del mismo pase de render, así que
+ * layout y página comparten una sola consulta. El proxy corre en otro
+ * contexto —antes del render— y no entra en esa caché: ahí siguen siendo
+ * dos, no tres. Compartirlo con el proxy exigiría pasar la sesión por una
+ * cabecera, y eso introduce una frontera de confianza que no compensa por
+ * una consulta.
+ *
+ * La memoización NO relaja la seguridad: el alcance es UNA petición. Un
+ * cambio de rol sigue surtiendo efecto en la navegación siguiente, que es
+ * exactamente la garantía que se buscaba al leer el rol de la base en vez
+ * del JWT.
  */
-export async function requireTenantContext(): Promise<TenantContext> {
+export const requireTenantContext = cache(requireTenantContextSinCache)
+
+async function requireTenantContextSinCache(): Promise<TenantContext> {
   const session = await auth()
   if (!session?.user?.id) {
     throw new BusinessError('UNAUTHENTICATED', 'Tu sesión expiró. Vuelve a iniciar sesión.')

@@ -147,6 +147,26 @@ export async function registerSale(
 
   await ensureCounter(db, ctx.tenantId, branchId, 'SALE', serie.series, serie.prefix)
 
+  /*
+   * El turno de caja se busca FUERA de la transacción, y es deliberado.
+   *
+   * La numeración sin huecos serializa las transacciones de la misma serie,
+   * así que cada consulta que viva dentro de ese bloque se paga una vez por
+   * venta EN FILA. Tenerla dentro costó un timeout de 30 s en la prueba de 12
+   * comprobantes simultáneos: la sección serializada no aguanta ni una ida y
+   * vuelta extra a Neon.
+   *
+   * La carrera que esto abre es benigna y acotada: si el turno se cierra
+   * entre esta consulta y el INSERT, la venta queda sellada con un turno ya
+   * cerrado cuyos totales están congelados. No corrompe nada —el arqueo sigue
+   * siendo la foto de lo que había al cerrar— y queda detectable, porque la
+   * suma de ventas del turno dejaría de cuadrar con su `salesTotal`.
+   *
+   * La alternativa (dentro de la transacción) cambiaría ese desajuste
+   * detectable por ventas que fallan en hora punta. No es un buen canje.
+   */
+  const cashSessionId = await turnoAbiertoId(db, branchId)
+
   return db.$transaction(async (tx) => {
       const t = tx as unknown as TenantPrismaClient
 
@@ -259,8 +279,8 @@ export async function registerSale(
           tenantId: ctx.tenantId,
           branchId,
           warehouseId: input.warehouseId,
-          // Si hay turno de caja abierto, la venta entra en su arqueo.
-          cashSessionId: await turnoAbiertoId(t, branchId),
+          // Resuelto antes de abrir la transacción: ver la nota de arriba.
+          cashSessionId,
           customerId: input.customerId ?? null,
           userId: ctx.userId,
           number,

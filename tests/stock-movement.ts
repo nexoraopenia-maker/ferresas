@@ -1,4 +1,5 @@
 import './guard'
+import { correr } from './teardown'
 import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { prisma } from '@/lib/prisma'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
@@ -96,8 +97,31 @@ async function main() {
   const movs = await db.stockMovement.count({ where: { productId: p2.id, type: 'SALIDA' } })
 
   check('exactamente 5 salidas tuvieron éxito', ok === 5, `fueron ${ok}`)
-  check('las otras 5 fallaron por stock insuficiente',
-    ko.length === 5 && ko.every((r: any) => r.reason?.code === 'INSUFFICIENT_STOCK'))
+  /*
+   * Se comprueban el NÚMERO y el MOTIVO por separado, y no en una sola
+   * aserción, porque son dos cosas distintas:
+   *
+   *   · Que fallen exactamente 5 es la garantía del guard de concurrencia.
+   *   · Que todas fallen por INSUFFICIENT_STOCK dependía además de la
+   *     INFRAESTRUCTURA: contra una base remota lenta —605 ms de ida y vuelta
+   *     desde un portátil— una de las transacciones puede agotar su tiempo
+   *     (P2028) antes de llegar a comprobar el stock. Entonces falla igual,
+   *     pero por otro motivo, y la aserción conjunta se caía sin que hubiera
+   *     ningún problema de corrección.
+   *
+   * Lo que NO se relaja es el invariante: ni stock negativo, ni lecturas
+   * sucias, ni movimientos de más. Eso se comprueba justo debajo.
+   */
+  const motivos = ko.map((r: any) => r.reason?.code ?? `?:${r.reason?.message?.slice(0, 40)}`)
+  const porStock = motivos.filter((c) => c === 'INSUFFICIENT_STOCK').length
+  const porTimeout = motivos.filter((c) => c === 'P2028').length
+  check('exactamente 5 fallaron', ko.length === 5, `fallaron ${ko.length}`)
+  check('y ninguna falló por un motivo inesperado',
+    porStock + porTimeout === ko.length,
+    `${porStock} por stock, ${porTimeout} por timeout de transacción, motivos: ${motivos.join(', ')}`)
+  if (porTimeout > 0) {
+    console.log(`     ℹ ${porTimeout} agotaron el tiempo de transacción: latencia de la base, no un fallo del guard`)
+  }
   check('el stock quedó en 0, NUNCA negativo', finalQty === 0, `quedó en ${finalQty}`)
   check('el ledger tiene 5 salidas, no 10', movs === 5, `tiene ${movs}`)
   const balances = (await db.stockMovement.findMany({
@@ -174,8 +198,7 @@ async function main() {
   check('cuenta los movimientos del mes', (usage?.movementsCount ?? 0) > 0, `${usage?.movementsCount}`)
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
-  await prisma.$disconnect()
-  process.exit(fail === 0 ? 0 : 1)
+  return fail
 }
 
-main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1) })
+correr(main)

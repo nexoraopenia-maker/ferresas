@@ -1,4 +1,5 @@
 import './guard'
+import { correr } from './teardown'
 import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
@@ -135,8 +136,7 @@ async function main() {
   check('no creó nada en el tenant vecino', (await D.db.product.count()) === 0)
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
-  await prisma.$disconnect()
-  process.exit(fail === 0 ? 0 : 1)
+  return fail
 }
 
-main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1) })
+correr(main)

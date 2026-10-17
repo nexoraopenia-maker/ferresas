@@ -1,4 +1,5 @@
 import './guard'
+import { correr } from './teardown'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
@@ -218,8 +219,7 @@ async function main() {
     fFinal.externalCustomerId === 'cus_tardio', String(fFinal.externalCustomerId))
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
-  await prisma.$disconnect()
-  process.exit(fail === 0 ? 0 : 1)
+  return fail
 }
 
-main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1) })
+correr(main)

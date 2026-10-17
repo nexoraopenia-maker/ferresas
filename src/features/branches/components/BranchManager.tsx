@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import { avisoEstablecimiento } from '../establecimiento'
 import { assignBranches, createBranch, deleteBranch, updateBranch } from '../actions'
 
 export interface BranchRow {
@@ -317,6 +318,19 @@ function FormCrear({
       <Campo label="Código de establecimiento SUNAT" valor={establishmentCode} onCambio={setEst}
         placeholder="0001" inputMode="numeric"
         ayuda="Cuatro dígitos. Lo asigna SUNAT al dar de alta el anexo en tu RUC; 0000 es la casa matriz." />
+
+      {/*
+        * Aviso explícito de que el código NO se verifica contra el RUC.
+        * SUNAT solo expone los anexos detrás de la Clave SOL, así que esto se
+        * teclea — y un código equivocado atribuye los comprobantes de esta
+        * sucursal a un establecimiento que no es tuyo. Callarlo sería dejar
+        * que el usuario lo descubra cuando ya haya emitido.
+        */}
+      {/^\d{4}$/.test(establishmentCode) && avisoEstablecimiento(establishmentCode) && (
+        <p className="rounded-xl border border-stock-low/40 bg-stock-low-soft px-3 py-2 text-xs font-semibold text-stock-low">
+          ⚠ {avisoEstablecimiento(establishmentCode)}
+        </p>
+      )}
       <Campo label="Dirección" valor={address} onCambio={setAddress} />
       <Campo label="Ubigeo" valor={ubigeo} onCambio={setUbigeo}
         placeholder="150132" inputMode="numeric" ayuda="Seis dígitos del INEI. Opcional." />
