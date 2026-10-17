@@ -1,6 +1,9 @@
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { requireTenantContext } from '@/lib/session'
 import { TaxDocumentList } from '@/features/invoicing/components/TaxDocumentList'
+import { SeriesPanel } from '@/features/invoicing/components/SeriesPanel'
+import { listarSeriesConfigurables } from '@/features/invoicing/counter-service'
+import { hasRole } from '@/lib/tenant-context'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,6 +37,19 @@ export default async function ComprobantesPage() {
 
   const tenant = await db.tenant.findFirst({ select: { timezone: true } })
 
+  /*
+   * Series configurables de la sucursal activa. Solo para quien puede
+   * gestionarlas: a un cajero no le sirve de nada y el panel invita a tocar
+   * algo irreversible.
+   */
+  const puedeSeries = hasRole(ctx.role, 'ADMIN')
+  const [series, sucursal] = ctx.branchId && puedeSeries
+    ? await Promise.all([
+        listarSeriesConfigurables(db, ctx, ctx.branchId),
+        db.branch.findFirst({ where: { id: ctx.branchId }, select: { name: true } }),
+      ])
+    : [null, null]
+
   const porEstado = Object.fromEntries(resumen.map((r) => [r.status, r._count._all]))
 
   return (
@@ -51,6 +67,23 @@ export default async function ComprobantesPage() {
         <Contador label="Aceptados" value={porEstado.ACEPTADO ?? 0} tono="ok" />
         <Contador label="Rechazados" value={porEstado.RECHAZADO ?? 0} tono="stop" />
       </section>
+
+      {series && ctx.branchId && (
+        <SeriesPanel
+          series={series.map((s) => ({
+            scope: s.scope as 'TAX_BOLETA' | 'TAX_FACTURA',
+            series: s.series,
+            next: s.next,
+            startNumber: s.startNumber,
+            emitidos: s.emitidos,
+            editable: s.editable,
+            ultimoEmitido: s.ultimoEmitido,
+          }))}
+          branchId={ctx.branchId}
+          sucursal={sucursal?.name ?? 'esta sucursal'}
+          puedeGestionar={ctx.access === 'FULL' || ctx.access === 'WARN'}
+        />
+      )}
 
       <TaxDocumentList
         canManage={ctx.role === 'OWNER' || ctx.role === 'ADMIN'}

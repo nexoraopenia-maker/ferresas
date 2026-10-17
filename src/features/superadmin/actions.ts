@@ -9,7 +9,8 @@ import { requireSuperAdmin } from '@/lib/session'
 import { isBusinessError, type ActionResult } from '@/lib/errors'
 import { clientIp } from '@/lib/rate-limit'
 import { ROUTES } from '@/lib/route-access'
-import { IMPERSONATION_COOKIE, IMPERSONATION_MAX_MINUTES } from '@/lib/impersonation'
+import { IMPERSONATION_MAX_MINUTES } from '@/lib/impersonation'
+import { SUPPORT_COOKIE, emitirSupportToken, verificarSupportToken } from '@/lib/support-token'
 import {
   reactivateTenantSchema,
   resetOwnerPasswordSchema,
@@ -273,8 +274,22 @@ export async function startImpersonation(
       },
     })
 
+    /*
+     * La cookie pasa a llevar un token FIRMADO con su propia caducidad, no el
+     * id suelto. Así el proxy puede cortar una sesión de soporte vencida sin
+     * consultar la base — y esa consulta costaba 120-140 ms en cada
+     * navegación, porque el proxy corre lejos de la base.
+     *
+     * Al RENDERIZAR se sigue validando contra la base: la firma prueba que el
+     * token es nuestro y que no caducó, pero no que la sesión siga abierta.
+     * Cerrarla deja `endedAt`, y eso solo se ve consultando.
+     */
     const jar = await cookies()
-    jar.set(IMPERSONATION_COOKIE, sesion.id, {
+    const token = emitirSupportToken(
+      { id: sesion.id, tenantId: tenant.id, superAdminId: admin.id },
+      IMPERSONATION_MAX_MINUTES,
+    )
+    jar.set(SUPPORT_COOKIE, token, {
       httpOnly: true,
       sameSite: 'lax',
       secure: process.env.NODE_ENV === 'production',
@@ -294,12 +309,12 @@ export async function startImpersonation(
  */
 export async function endImpersonation() {
   const jar = await cookies()
-  const id = jar.get(IMPERSONATION_COOKIE)?.value
+  const id = verificarSupportToken(jar.get(SUPPORT_COOKIE)?.value)?.id
 
   // La cookie se borra SIEMPRE, incluso si la fila ya no existe o el usuario
   // perdió la sesión. Dejar la cookie puesta tras un fallo dejaría al
   // superadmin encerrado en la vista del cliente.
-  jar.delete(IMPERSONATION_COOKIE)
+  jar.delete(SUPPORT_COOKIE)
 
   if (id) {
     const sesion = await prisma.impersonationSession.findUnique({

@@ -1189,6 +1189,20 @@ model DocumentCounter {
   prefix String @default("")
   next   Int    @default(1)
 
+  /**
+   * Número con el que ARRANCÓ esta serie en este sistema.
+   * Existe para poder responder una pregunta que `next` solo no responde:
+   * ¿se emitió algo ya con esta serie? La respuesta es `next > startNumber`.
+   * Hace falta porque un negocio que YA facturaba con otro sistema llega con
+   * su serie avanzada —B001 en el 4 532, por ejemplo— y si aquí empezáramos
+   * en 1 emitiríamos números YA USADOS bajo su RUC. Eso es una contingencia
+   * tributaria, no un detalle de configuración.
+   * Y con `next` a secas no se puede distinguir "arrancó en 1 y emitió 4 531"
+   * de "arrancó en 4 532 y no ha emitido nada", que es exactamente lo que
+   * decide si el arranque se puede seguir tocando.
+   */
+  startNumber Int @default(1)
+
   updatedAt DateTime @updatedAt
 
   @@unique([tenantId, scope, series])

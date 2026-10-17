@@ -150,6 +150,58 @@ export function requiresSessionLookup(pathname: string): boolean {
   return !startsWithAny(pathname, SKIP_SESSION_PREFIXES)
 }
 
+/**
+ * Puerta de CUENTA: lo que se decide con la sesión ya resuelta contra la base,
+ * sin mirar la ruta.
+ *
+ * Se extrajo de `resolveRouteAccess` para que el layout del panel la aplique
+ * tal cual. El layout no conoce el pathname —envuelve todas las rutas del
+ * grupo— y sin esta separación habría tenido que reimplementar las mismas
+ * reglas, dejando dos sitios que mantener sincronizados.
+ *
+ * `null` significa «adelante, sin aviso».
+ */
+export type AccountGate =
+  | { kind: 'suspended' }
+  | { kind: 'superadmin-sin-soporte' }
+  | { kind: 'notice'; notice: AccountNotice }
+  | null
+
+export function resolveAccountGate(session: {
+  role: Role
+  tenantId: string | null
+  access: AccessLevel
+  impersonatorId?: string
+}): AccountGate {
+  // Suspensión por el Super Admin: manda sobre todo. Pagar no lo arregla, así
+  // que ni siquiera se le manda a facturación.
+  if (session.access === 'BLOCKED') return { kind: 'suspended' }
+
+  // Un SUPERADMIN sin modo soporte no tiene nada que hacer en el panel de
+  // cliente: para entrar necesita suplantar, y eso le da un tenantId.
+  if (session.role === 'SUPERADMIN' && !session.impersonatorId) {
+    return { kind: 'superadmin-sin-soporte' }
+  }
+  if (!session.tenantId) return { kind: 'superadmin-sin-soporte' }
+
+  // Mora o cancelación: se puede seguir consultando y, sobre todo, pagando.
+  // Las escrituras las corta getTenantPrisma(), no el enrutado.
+  if (session.access === 'READ_ONLY') return { kind: 'notice', notice: 'READ_ONLY' }
+  if (session.access === 'WARN') return { kind: 'notice', notice: 'WARN' }
+
+  return null
+}
+
+/**
+ * Política COMPLETA con la sesión resuelta contra la base.
+ *
+ * ⚠️ Ya NO la usa el proxy: el proxy decide solo con el token
+ * (`resolveRouteAccessFromToken`) porque corre lejos de la base. Esta función
+ * sigue viva como especificación completa de la política y es la que prueban
+ * `tests/route-access.ts` y `tests/auth-session.ts`; su parte sin pathname
+ * —`resolveAccountGate`— es la que aplica el layout del panel en cada
+ * navegación real.
+ */
 export function resolveRouteAccess(input: {
   pathname: string
   session: RouteSession | null
@@ -201,7 +253,7 @@ export function resolveRouteAccess(input: {
   // 4. Un SUPERADMIN sin tenant no tiene nada que hacer en el dashboard de
   //    cliente. Para entrar necesita impersonar (§5.3), y eso le asigna un
   //    tenantId de verdad.
-  if (!session.tenantId) {
+  if (resolveAccountGate(session)?.kind === 'superadmin-sin-soporte') {
     return {
       kind: 'redirect',
       to: ROUTES.superadmin,
@@ -209,9 +261,10 @@ export function resolveRouteAccess(input: {
     }
   }
 
-  // 5. Suspensión por el Super Admin: nada excepto la pantalla informativa.
-  //    Pagar no lo arregla, así que ni siquiera se le manda a facturación.
-  if (session.access === 'BLOCKED') {
+  // 5-6. El resto lo decide la puerta de cuenta, compartida con el layout.
+  const gate = resolveAccountGate(session)
+
+  if (gate?.kind === 'suspended') {
     if (pathname === ROUTES.suspended) return { kind: 'allow' }
     return { kind: 'redirect', to: ROUTES.suspended, reason: 'Cuenta suspendida.' }
   }
@@ -221,16 +274,129 @@ export function resolveRouteAccess(input: {
     return { kind: 'redirect', to: ROUTES.dashboard, reason: 'La cuenta ya no está suspendida.' }
   }
 
-  // 6. Mora o cancelación: se puede seguir consultando y, sobre todo, pagando.
-  //    Las escrituras las corta getTenantPrisma(), no el enrutado.
-  if (session.access === 'READ_ONLY') {
-    if (startsWithAny(pathname, ALWAYS_OPEN_FOR_TENANT)) return { kind: 'allow' }
-    return { kind: 'allow', notice: 'READ_ONLY' }
+  if (gate?.kind === 'notice') {
+    // En mora se sigue pudiendo llegar a pagar: sin esto, el moroso no podría
+    // entrar justo a la pantalla que le conviene.
+    if (gate.notice === 'READ_ONLY' && startsWithAny(pathname, ALWAYS_OPEN_FOR_TENANT)) {
+      return { kind: 'allow' }
+    }
+    return { kind: 'allow', notice: gate.notice }
   }
 
-  if (session.access === 'WARN') {
-    return { kind: 'allow', notice: 'WARN' }
+  return { kind: 'allow' }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  DECISIÓN SIN BASE DE DATOS (la que usa el proxy)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Lo que el proxy sabe SIN consultar la base: lo que viene firmado.
+ *
+ * `role` es el del momento del login y puede estar obsoleto. Solo se usa
+ * para enrutar. `soporte` viene de un token firmado con su propia caducidad.
+ */
+export interface TokenSession {
+  userId: string
+  /** Rol del JWT. Puede discrepar de la base; manda la base al renderizar. */
+  role: Role
+  /** Modo soporte vigente según el token firmado, ya verificado. */
+  soporte?: { tenantId: string }
+}
+
+/**
+ * Decisión de enrutado a partir SOLO del token.
+ *
+ * ─── POR QUÉ EL PROXY YA NO CONSULTA LA BASE ─────────────────────────────
+ *
+ * El proxy se despliega distribuido: corre cerca del USUARIO, no de la base.
+ * Medido en producción, el proxy corría en `gru1` (São Paulo) mientras la
+ * base está en `us-east-2` (Ohio), y `vercel.json → regions` NO lo cambia
+ * (eso solo mueve las Vercel Functions). Resultado: su consulta de sesión
+ * costaba ~120-140 ms en CADA navegación, y era el gasto mayor de la app.
+ *
+ * ─── QUÉ SE PIERDE, Y POR QUÉ ES ACEPTABLE ───────────────────────────────
+ *
+ * El proxy ya NO puede saber si el usuario fue desactivado, si el tenant está
+ * suspendido o si la sesión quedó revocada por un cambio de contraseña: todo
+ * eso vive en la base. Así que deja de poder redirigir por esos motivos.
+ *
+ * Es aceptable porque el proxy NUNCA fue la frontera de seguridad —lo dice la
+ * cabecera de este archivo— y porque esas comprobaciones NO desaparecen: se
+ * hacen al RENDERIZAR, en el layout y en cada página y Server Action, que
+ * corren pegados a la base y ya resuelven la sesión (memoizada, una consulta).
+ *
+ * El cambio es DÓNDE se bloquea, no SI se bloquea. Un usuario desactivado ya
+ * no recibe un 307 del proxy: recibe el redirect del layout. Llega un paso más
+ * lejos y no ve nada que no deba ver.
+ *
+ * `tests/proxy-sin-bd.ts` comprueba los cuatro casos que deben seguir
+ * bloqueados, y que ninguna ruta ni Server Action se salte la verificación.
+ */
+export function resolveRouteAccessFromToken(input: {
+  pathname: string
+  token: TokenSession | null
+}): RouteDecision {
+  const { pathname, token } = input
+
+  // 1. Público: siempre pasa. Con sesión, el login manda a su sitio.
+  if (startsWithAny(pathname, PUBLIC_PREFIXES)) {
+    if (token && pathname === ROUTES.login) {
+      return {
+        kind: 'redirect',
+        to: token.soporte || token.role !== 'SUPERADMIN' ? ROUTES.dashboard : ROUTES.superadmin,
+        reason: 'Ya tiene sesión iniciada.',
+      }
+    }
+    return { kind: 'allow' }
   }
 
+  // 2. Sin token: al login, conservando el destino.
+  if (!token) {
+    return {
+      kind: 'redirect',
+      to: `${ROUTES.login}?callbackUrl=${encodeURIComponent(pathname)}`,
+      reason: 'Sin sesión.',
+    }
+  }
+
+  /*
+   * 3. Panel Super Admin: 404 para quien el TOKEN no acredita como superadmin.
+   *
+   * Un token obsoleto por ascenso deja fuera a un superadmin recién nombrado
+   * hasta que vuelva a entrar; molesto pero seguro. Al revés —un degradado
+   * cuyo token aún dice SUPERADMIN— el proxy le deja pasar y es el layout de
+   * /superadmin el que responde notFound() leyendo la base. El 404 se
+   * conserva en los dos casos, que es lo que evita confirmar que la ruta
+   * existe.
+   */
+  if (startsWithAny(pathname, [ROUTES.superadmin])) {
+    const acreditado = token.role === 'SUPERADMIN' || token.soporte != null
+    return acreditado ? { kind: 'allow' } : { kind: 'not-found', reason: 'El token no acredita superadmin.' }
+  }
+
+  // 3b. Salir del modo soporte: solo mientras haya uno vigente.
+  if (pathname === '/salir-de-soporte') {
+    return token.soporte
+      ? { kind: 'allow' }
+      : { kind: 'not-found', reason: 'No hay modo soporte activo.' }
+  }
+
+  /*
+   * 4. Un SUPERADMIN sin modo soporte no tiene nada que hacer en el panel de
+   *    cliente. Esto SÍ se puede decidir con el token: no depende de la base.
+   */
+  if (token.role === 'SUPERADMIN' && !token.soporte) {
+    return {
+      kind: 'redirect',
+      to: ROUTES.superadmin,
+      reason: 'Superadmin sin modo soporte.',
+    }
+  }
+
+  /*
+   * 5. Lo que queda —suspensión, mora, revocación por cambio de contraseña—
+   *    depende de la base y lo resuelve el layout del panel. El proxy pasa.
+   */
   return { kind: 'allow' }
 }

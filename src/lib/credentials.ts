@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import { prisma } from './prisma'
+import type { Role } from '@/generated/prisma/enums'
 
 /**
  * Verificación de credenciales. Vive fuera de la config de NextAuth para
@@ -16,6 +17,8 @@ export interface VerifiedUser {
   id: string
   email: string
   name: string
+  /** Rol en el momento del login. Viaja al JWT solo para enrutar. */
+  role: Role
 }
 
 /**
@@ -73,6 +76,7 @@ export async function verifyCredentialsDetailed(
     id: string
     email: string
     name: string
+    role: Role
     passwordHash: string | null
     isActive: boolean
     deletedAt: Date | null
@@ -85,6 +89,7 @@ export async function verifyCredentialsDetailed(
         id: true,
         email: true,
         name: true,
+        role: true,
         passwordHash: true,
         isActive: true,
         deletedAt: true,
@@ -123,7 +128,16 @@ export async function verifyCredentialsDetailed(
   // bcrypt para no reintroducir la diferencia de tiempos.
   if (!user.isActive || user.deletedAt) return { ok: false, reason: 'USER_DISABLED' }
 
-  return { ok: true, user: { id: user.id, email: user.email, name: user.name } }
+  /*
+   * El ROL viaja al JWT para que el proxy pueda enrutar sin consultar la
+   * base. Es identidad-en-el-momento-del-login, no autorización: cada página
+   * y cada Server Action lo revalidan contra la base. Ver la nota de
+   * src/proxy.ts sobre qué garantiza y qué no.
+   */
+  return {
+    ok: true,
+    user: { id: user.id, email: user.email, name: user.name, role: user.role },
+  }
 }
 
 /**

@@ -1,0 +1,21 @@
+-- ═══════════════════════════════════════════════════════════════════════════
+--  CORRELATIVO INICIAL CONFIGURABLE POR SERIE
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+--  Un negocio que ya facturaba con otro sistema llega con su serie avanzada
+--  (B001 en el 4 532). Si aquí arrancáramos en 1, emitiríamos números YA
+--  USADOS bajo su RUC: contingencia tributaria, no detalle de configuración.
+--
+--  `startNumber` guarda con qué número arrancó la serie EN ESTE SISTEMA, y es
+--  lo que permite responder si ya emitió algo: `next > startNumber`.
+--  Con `next` a secas no se distingue "arrancó en 1 y emitió 4 531" de
+--  "arrancó en 4 532 y no emitió nada" — y de eso depende si el arranque se
+--  puede seguir tocando.
+--
+--  BACKFILL: a los contadores que ya existen se les pone startNumber = 1,
+--  que es con lo que arrancaron de verdad. Así los que ya emitieron quedan
+--  correctamente marcados como NO editables (next > 1), y los que no han
+--  emitido nada (next = 1) siguen siendo configurables.
+-- ───────────────────────────────────────────────────────────────────────────
+
+ALTER TABLE "document_counters" ADD COLUMN "startNumber" INTEGER NOT NULL DEFAULT 1;

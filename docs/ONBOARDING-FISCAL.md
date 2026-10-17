@@ -87,13 +87,42 @@ producto** — el ferretero no debería tratar con un PSE.
 |---|---|
 | Series de factura (F001…) | Hoy se derivan de `Branch.seriesNumber` ✅ |
 | Series de boleta (B001…) | ídem ✅ |
-| Correlativo inicial | ⚠️ **si el cliente ya emitía antes** |
+| Correlativo inicial por serie | ✅ **PREGÚNTALO SIEMPRE** si ya emitía antes |
 
-⚠️ **El caso que puede doler:** un cliente que YA facturaba con otro sistema
-llega con la serie B001 en el correlativo 4 532. Si FerreSaaS arranca en 1,
-emitirá números **ya usados** bajo su RUC. `DocumentCounter.next` permite
-fijar el arranque, pero **no hay UI para hacerlo** y nadie lo recordará en el
-alta. Hace falta un campo «correlativo inicial» en el onboarding.
+### 🔴 La pregunta que hay que hacerle a cada cliente
+
+> **«¿Cuál fue el último número que emitiste en cada serie?»**
+>
+> Por ejemplo: «la última boleta fue B001-00004532 y la última factura
+> F001-00000871».
+
+Y hay que hacerla **ANTES de su primera venta**, no después.
+
+**Por qué.** Un negocio que ya facturaba con otro sistema llega con sus series
+avanzadas. Si FerreSaaS arranca en 1, emitirá números **ya usados** bajo su
+RUC: comprobantes duplicados ante SUNAT, que solo se arreglan con notas de
+crédito (que todavía no tenemos).
+
+**Dónde se configura.** `/comprobantes` → panel «Series de \<sucursal\>» →
+*Fijar inicio*. Se escribe el **primer número que emitirá**: si el último fue
+el 4 532, aquí va **4533**.
+
+**La restricción, y por qué es así.** El arranque solo se puede fijar
+**mientras esa serie no haya emitido nada**. En cuanto sale el primer
+comprobante queda bloqueado, porque moverlo después:
+
+- **subirlo** deja un hueco en la numeración, y la norma exige correlativos
+  sin huecos;
+- **bajarlo** produce un número duplicado.
+
+Ninguna de las dos se puede deshacer: el comprobante ya salió impreso y
+declarado. La UI lo dice con el número concreto delante y exige marcar una
+casilla de confirmación; el servidor lo vuelve a comprobar dentro de la
+transacción y lo deja auditado (quién, cuándo, valor anterior y nuevo).
+
+**Si el cliente no sabe su último número:** que lo mire en su sistema anterior
+o en el portal de SUNAT antes de vender. Arrancar en 1 «por ahora» no es una
+opción recuperable.
 
 ---
 
@@ -105,7 +134,8 @@ alta. Hace falta un campo «correlativo inicial» en el onboarding.
 3. Certificado digital + su clave
 4. Usuario SOL **secundario** + clave
 5. Por sucursal: código de establecimiento, dirección y ubigeo
-6. Correlativo inicial por serie, si ya facturaba antes
+6. **Correlativo inicial por serie**, si ya facturaba antes — y antes de su
+   primera venta, porque después queda bloqueado
 
 **Lo que FerreSaaS debe hacer con eso:**
 - Cifrar en reposo: certificado, su clave, la Clave SOL y las del proveedor.
@@ -116,6 +146,6 @@ alta. Hace falta un campo «correlativo inicial» en el onboarding.
   producción cuando salga un comprobante aceptado.
 
 **Lo que falta en el esquema** (una migración, no urgente hasta contratar):
-- `Tenant.ubigeo`
-- Tabla de credenciales fiscales por tenant, cifradas
-- `Branch` o `DocumentCounter`: correlativo inicial configurable en el alta
+- ~~`Tenant.ubigeo`~~ ✅ añadido
+- Tabla de credenciales fiscales por tenant, **cifradas**
+- ~~correlativo inicial configurable~~ ✅ `DocumentCounter.startNumber`

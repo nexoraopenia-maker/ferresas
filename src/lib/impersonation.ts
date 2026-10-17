@@ -5,11 +5,18 @@ import { prisma } from './prisma'
  *
  * ─── CÓMO SE SOSTIENE LA SEGURIDAD ───────────────────────────────────────
  *
- * La cookie guarda SOLO el id de la fila `ImpersonationSession`. No va
- * firmada, y no hace falta: para que sirva de algo, quien la presente tiene
- * que ser además el SUPERADMIN que la abrió — se comprueba que
- * `superAdminId` coincide con el usuario de la sesión de NextAuth. Robar la
- * cookie sin robar la sesión no da nada.
+ * La cookie lleva un token FIRMADO (src/lib/support-token.ts) con el id de la
+ * fila `ImpersonationSession`, el tenant y su propia CADUCIDAD. La firma
+ * permite al proxy cortar una sesión vencida sin consultar la base — y esa
+ * consulta costaba 120-140 ms en cada navegación.
+ *
+ * La firma no es la única defensa: quien presente el token tiene que ser
+ * además el SUPERADMIN que lo abrió, y eso se comprueba contra la sesión de
+ * NextAuth. Robar la cookie sin robar la sesión no da nada.
+ *
+ * Y la firma NO sustituye a esta función: prueba que el token es nuestro y
+ * que no caducó, pero no que la sesión siga abierta. Cerrarla deja `endedAt`
+ * en la base, y eso solo se ve consultando.
  *
  * Toda impersonation:
  *   · exige un motivo escrito (§6.6)
@@ -32,10 +39,12 @@ import { prisma } from './prisma'
  * resto sin una línea de código nueva.
  */
 
-export const IMPERSONATION_COOKIE = 'ferresaas.support'
-
-/** Ventana corta: una sesión de soporte olvidada es una puerta abierta. */
-export const IMPERSONATION_MAX_MINUTES = 60
+/**
+ * El nombre de la cookie y la ventana viven en src/lib/support-token.ts
+ * desde que la cookie lleva un token FIRMADO en lugar del id suelto. Se
+ * reexporta la ventana para no romper los sitios que ya la importaban.
+ */
+export { SUPPORT_MAX_MINUTES as IMPERSONATION_MAX_MINUTES } from './support-token'
 
 export interface ActiveImpersonation {
   id: string

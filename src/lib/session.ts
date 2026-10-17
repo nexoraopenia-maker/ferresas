@@ -3,12 +3,12 @@ import { cookies } from 'next/headers'
 import { auth } from '@/auth'
 import { prisma } from './prisma'
 import {
-  IMPERSONATION_COOKIE,
   resolveImpersonation,
   type ActiveImpersonation,
 } from './impersonation'
 import { computeAccessLevel, type TenantContext } from './tenant-context'
 import { BRANCH_COOKIE, resolverSucursalActiva } from './branch-selection'
+import { SUPPORT_COOKIE, verificarSupportToken } from './support-token'
 import { BusinessError, TenantIsolationError } from './errors'
 import type { RouteSession } from './route-access'
 
@@ -276,7 +276,15 @@ async function requireTenantContextSinCache(): Promise<TenantContext> {
     throw new BusinessError('UNAUTHENTICATED', 'Tu sesión expiró. Vuelve a iniciar sesión.')
   }
 
-  const impersonationId = (await cookies()).get(IMPERSONATION_COOKIE)?.value
+  /*
+   * Se verifica la FIRMA y la caducidad antes de molestar a la base. Un token
+   * manipulado o vencido se descarta aquí; que la sesión siga abierta lo
+   * comprueba `resolveImpersonation` contra la base, porque eso la firma no
+   * lo puede saber.
+   */
+  const impersonationId = verificarSupportToken(
+    (await cookies()).get(SUPPORT_COOKIE)?.value,
+  )?.id
   if (impersonationId) {
     const imp = await resolveImpersonation(session.user.id, impersonationId)
     if (imp) {

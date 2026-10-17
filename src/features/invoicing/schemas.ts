@@ -71,3 +71,29 @@ export const CORRELATIVO_DIGITOS = 8
 export function formatFullNumber(series: string, correlativo: number): string {
   return `${series}-${String(correlativo).padStart(CORRELATIVO_DIGITOS, '0')}`
 }
+
+/**
+ * Correlativo inicial de una serie.
+ *
+ * `confirmado` NO es decoración ni se puede marcar por defecto: fijar el
+ * arranque es irreversible en cuanto la serie emite, así que la petición
+ * tiene que declarar que alguien lo entendió. Sin este campo, un formulario
+ * mal cableado podría enviar un arranque por accidente.
+ */
+export const fijarArranqueSchema = z.object({
+  branchId: z.string().min(1).max(64),
+  scope: z.enum(['TAX_BOLETA', 'TAX_FACTURA'], {
+    error: 'Solo se configura el arranque de boletas y facturas.',
+  }),
+  startNumber: z
+    .number({ error: 'Escribe el número con el que arrancará la serie.' })
+    .int('El correlativo es un número entero.')
+    .min(1, 'El correlativo arranca en 1 como mínimo.')
+    // 8 dígitos es lo que cabe en la representación impresa (B001-00000123).
+    .max(99_999_999, 'El correlativo no puede pasar de 8 dígitos.'),
+  confirmado: z.literal(true, {
+    error: 'Hay que confirmar que entiendes que esto no se puede cambiar después.',
+  }),
+})
+
+export type FijarArranqueInputDTO = z.infer<typeof fijarArranqueSchema>

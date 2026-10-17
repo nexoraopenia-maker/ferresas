@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireTenantContext } from '@/lib/session'
+import { guardDashboard } from '@/lib/dashboard-guard'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { logoutAction } from '../(auth)/actions'
 import { AccountBannerBar } from '@/features/billing/components/AccountBannerBar'
@@ -32,7 +32,16 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
-  const ctx = await requireTenantContext()
+  /*
+   * La guarda contra la BASE vive aquí desde que el proxy dejó de consultar.
+   * Bloquea lo que solo la base sabe: usuario desactivado, sesión revocada
+   * por cambio de contraseña y tenant suspendido. Ver src/proxy.ts y
+   * src/lib/dashboard-guard.ts.
+   *
+   * Corre UNA vez por render y la comparte con todas las páginas, porque
+   * `requireTenantContext` está memoizado con `cache()`.
+   */
+  const { ctx } = await guardDashboard()
   const db = getTenantPrisma(ctx)
   const [tenant, asignadas] = await Promise.all([
     db.tenant.findFirst({ select: { name: true } }),

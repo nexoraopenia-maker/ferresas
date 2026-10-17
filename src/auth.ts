@@ -153,6 +153,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   callbacks: {
     jwt({ token, user }) {
       if (user?.id) token.sub = user.id
+      /*
+       * El rol se fija AL ENTRAR y no se refresca. Solo lo usa el proxy para
+       * enrutar; la autorización la resuelve la base en cada petición.
+       */
+      const rol = (user as { role?: string } | undefined)?.role
+      if (rol) token.role = rol as NonNullable<typeof token.role>
       if (!token.sub) {
         // Sin `sub` no hay sesión utilizable: todo lo que dependa de la
         // identidad fallará después sin decir por qué.
@@ -170,6 +176,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         })
       }
       if (token.sub) session.user.id = token.sub
+      if (token.role) session.user.role = token.role as NonNullable<typeof session.user.role>
       // `iat` lo pone Auth.js al firmar. Viaja a la sesión para que
       // resolveTenantContext pueda descartar tokens emitidos antes del
       // último cambio de contraseña.

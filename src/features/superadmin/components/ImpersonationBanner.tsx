@@ -1,7 +1,8 @@
 import { cookies } from 'next/headers'
 import { auth } from '@/auth'
 import { prisma } from '@/lib/prisma'
-import { IMPERSONATION_COOKIE, resolveImpersonation } from '@/lib/impersonation'
+import { resolveImpersonation } from '@/lib/impersonation'
+import { SUPPORT_COOKIE, verificarSupportToken } from '@/lib/support-token'
 
 /**
  * Aviso de impersonation (§5.3: "estás viendo como Ferretería X").
@@ -15,7 +16,9 @@ export async function ImpersonationBanner() {
   const session = await auth()
   if (!session?.user?.id) return null
 
-  const id = (await cookies()).get(IMPERSONATION_COOKIE)?.value
+  // El token firmado lleva la caducidad dentro; si ya venció, no hay banner
+  // que pintar y tampoco hace falta consultar la base.
+  const id = verificarSupportToken((await cookies()).get(SUPPORT_COOKIE)?.value)?.id
   const imp = await resolveImpersonation(session.user.id, id)
   if (!imp) return null
 
