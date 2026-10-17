@@ -120,6 +120,10 @@ Apunta tu `.env.local` a una **rama de staging** de Neon. Ver `STAGING.md`.
 | `docs/ARCHITECTURE.md` | Por qué el sistema está construido así, y las trampas ya pisadas |
 | `docs/COMPLIANCE.md` | Lo que depende de SUNAT/INEI, con ⚠️ en lo que se asume sin verificar |
 | `docs/SUNAT-OPCIONES.md` | Los dos caminos para emitir de verdad (PSE/OSE o envío propio), con esfuerzo, riesgo y costo |
+| `docs/ONBOARDING-FISCAL.md` | Qué pedirle a cada cliente para que pueda facturar |
+| `docs/REGIONES.md` | Por qué las funciones corren en `cle1`, y el hallazgo de que el proxy no lo respeta |
+| `docs/NEON-ARRANQUE-FRIO.md` | Las tres opciones contra el scale-to-zero, con costos |
+| `docs/MEDIR-DESDE-LIMA.md` | Cómo medir tú el TTFB real, con tu sesión y tu red |
 | `docs/REPORTE-REDONDEO.txt` | Qué importes cambiarían al endurecer el redondeo a céntimos |
 | `STAGING.md` | Cómo levantar un entorno de staging aislado |
 | `.env.example` | Todas las variables, documentadas una por una |

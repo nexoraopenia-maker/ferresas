@@ -59,3 +59,55 @@ elegir `cle1` no sale del par de regiones mejor conectadas entre sí.
   tabla de regiones (`cle1` → `us-east-2`), el papel de los PoP y la
   recomendación explícita de ejecutar las funciones en la misma región que la
   base de datos.
+
+---
+
+## ⚠️ HALLAZGO: el proxy NO respeta `regions`
+
+Medido sobre el **mismo despliegue**, con la región que cada capa reporta de
+sí misma:
+
+```
+proxy   (cabecera Server-Timing) : gru1   ← São Paulo
+función (Route Handler)          : cle1   ← Cleveland, us-east-2
+```
+
+Tres muestras seguidas: `gru1` las tres veces. No es variación.
+
+**Qué significa.** `vercel.json → regions` fija dónde corren las *Vercel
+Functions*, pero el proxy de Next 16 se despliega **distribuido** y se ejecuta
+en la región más cercana al usuario. Para una petición desde Perú, eso es
+`gru1`.
+
+**Por qué importa.** El proxy **consulta la base** en cada navegación
+(`getRouteSession`, para resolver rol y estado de suscripción). Así que esa
+consulta —la más repetida de toda la aplicación— sale de São Paulo hacia Ohio:
+
+| Capa | Dónde corre | Distancia a Neon (us-east-2) |
+|---|---|---|
+| Proxy | `gru1` São Paulo | ⚠️ **~120-140 ms** |
+| Páginas y handlers | `cle1` Cleveland | **2-6 ms** medidos |
+
+Mover las funciones a `cle1` arregló las páginas (4,3x más rápidas, medido) y
+**no tocó el gasto del proxy**, que ahora es el mayor de todos.
+
+## Lo que haría falta para cerrarlo
+
+Quitarle la consulta a la base al proxy, y dejarle solo lo que puede decidir
+con el JWT: ¿hay token o no hay? Si no hay, al login. Las decisiones que SÍ
+necesitan la base —estado de suscripción, rol, el 404 de `/superadmin`— se
+resolverían en el layout y las páginas, que corren en `cle1` pegadas a la base
+y ya resuelven la sesión una vez (memoizada).
+
+Es defendible porque el propio `route-access.ts` lo dice en su cabecera:
+
+> ⚠️ ESTO NO ES LA FRONTERA DE SEGURIDAD. Es UX: evita que alguien vea una
+> pantalla que no le sirve. El enforcement real vive en getTenantPrisma().
+
+Mover una comprobación de UX de una capa a otra no debilita nada; el
+enforcement no se mueve. Pero **cambia el enrutado de toda la aplicación**, así
+que no lo hice sin consultar: es un cambio para su propio commit, con sus
+pruebas de `route-access` adaptadas.
+
+**Ahorro estimado:** ~120-140 ms por navegación, que es el componente más
+grande que queda después de los arreglos de hoy.
