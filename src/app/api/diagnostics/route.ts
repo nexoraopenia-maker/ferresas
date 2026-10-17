@@ -51,6 +51,14 @@ export async function GET(req: NextRequest) {
 
   const entorno = {
     vercelEnv: process.env.VERCEL_ENV ?? null,
+    /**
+     * Región donde Vercel ejecuta la función.
+     *
+     * Importa porque cada consulta cruza la distancia entre esta región y la
+     * de Neon, y una página hace varias. Si no coinciden, cada ida y vuelta
+     * paga ese trayecto de más, multiplicado por el número de consultas.
+     */
+    vercelRegion: process.env.VERCEL_REGION ?? null,
     nodeEnv: process.env.NODE_ENV,
     AUTH_SECRET: variable('AUTH_SECRET'),
     NEXTAUTH_SECRET: variable('NEXTAUTH_SECRET'),
