@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState, useTransition } from 'react'
 import { formatearFechaLocal } from '@/lib/fecha-local'
+import { redondearCentimos } from '@/lib/dinero'
 import { InventoryScannerModal } from '@/components/inventory/InventoryScannerModal'
 import { QuantityInput } from '@/components/ui/quantity-input'
 import { getStockStatusView } from '@/lib/stock-status'
@@ -38,7 +39,15 @@ const METODOS = [
 type Metodo = (typeof METODOS)[number]['value']
 
 /** Dinero: siempre 2 decimales. Las CANTIDADES usan `redondear` (4). */
-const cent = (n: number) => Math.round(n * 100) / 100
+/**
+ * Mismo redondeo que el servidor, y eso es el punto.
+ *
+ * El total que ve el cajero en pantalla lo calcula ESTE código; el que se
+ * cobra lo calcula `registerSale`. Si cada uno redondeara distinto, el POS
+ * mostraría 63.30 y la boleta saldría con 63.31 — un céntimo que nadie
+ * sabría explicar y que aparecería solo en ciertos precios.
+ */
+const cent = redondearCentimos
 const money = (n: number) => `S/ ${n.toFixed(2)}`
 
 /**

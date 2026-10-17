@@ -26,6 +26,8 @@ export default async function ComprobantesPage() {
         issuedAt: true,
         sale: { select: { number: true } },
       },
+      // Una sentencia en vez de dos: ver la nota en src/lib/session.ts.
+      relationLoadStrategy: 'join',
     }),
     db.taxDocument.groupBy({ by: ['status'], _count: { _all: true } }),
   ])

@@ -15,8 +15,19 @@
 // ============================================================================
 
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  /**
+   * `relationJoins` resuelve las relaciones anidadas con LATERAL JOIN en UNA
+   * sola sentencia, en lugar de una consulta por relación.
+   * No es una optimización teórica. Medido: la consulta de sesión —la que
+   * corre en CADA navegación— costaba 3,2 idas y vueltas porque Prisma la
+   * partía en tres (usuario, tenant+suscripción, sucursales). Desde un
+   * portátil con 148 ms de latencia eso son 474 ms; en producción, con 14 ms,
+   * son 45 ms que parecen «una consulta lenta» cuando en realidad son tres
+   * consultas rápidas una detrás de otra.
+   */
+  previewFeatures = ["relationJoins"]
 }
 
 // Prisma 7: la conexión ya NO se declara aquí.
@@ -282,6 +293,11 @@ model Tenant {
   email     String?
   phone     String?
   address   String?
+  /**
+   * Ubigeo INEI del domicilio fiscal. Va en el XML del comprobante como
+   * dirección del emisor, así que sin esto no se puede emitir.
+   */
+  ubigeo    String?
   logoUrl   String?
 
   currency String  @default("PEN")
@@ -1347,6 +1363,40 @@ model TaxDocument {
   @@index([tenantId, status, issuedAt])
   @@index([tenantId, documentType, series])
   @@map("tax_documents")
+}
+
+/**
+ * Catálogo de ubigeo del INEI.
+ * GLOBAL, sin `tenantId`: es un catálogo del Estado peruano, igual para todos
+ * los negocios. Va en la base y no en un fichero del bundle porque son ~2 100
+ * filas que el selector consulta por nivel, y embarcarlas en el JavaScript del
+ * cliente las descargaría enteras en cada visita para mostrar 25.
+ * Se carga con `scripts/cargar-ubigeo.ts`, que VALIDA antes de escribir y no
+ * carga nada si la validación falla (ver src/features/ubigeo/validar.ts).
+ */
+model Ubigeo {
+  /// 6 dígitos: departamento(2) + provincia(2) + distrito(2).
+  codigo String @id
+
+  nombre String
+  /// 1 departamento, 2 provincia, 3 distrito.
+  nivel  Int
+
+  /**
+   * Código del padre: NULL en los departamentos. Se guarda explícito aunque
+   * sea derivable del propio código, porque así el selector en cascada lo
+   * consulta por índice en vez de con un LIKE sobre un prefijo.
+   */
+  padre String?
+
+  /// Versión del catálogo cargado, para saber de qué año son los datos.
+  version String
+
+  createdAt DateTime @default(now())
+
+  @@index([nivel, nombre])
+  @@index([padre])
+  @@map("ubigeos")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

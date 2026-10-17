@@ -36,17 +36,41 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next()
   }
 
+  /*
+   * Se cronometra la resolución de sesión del proxy.
+   *
+   * Sale en la cabecera `Server-Timing` de CADA navegación, así que se puede
+   * leer desde la pestaña de red del navegador —en Lima, en producción, con
+   * una sesión real— sin desplegar nada ni dar acceso a los logs. Medir esto
+   * desde un portátil no servía: la latencia a la base cambia de 18 ms a
+   * 605 ms según desde dónde se mida.
+   *
+   * `region` viaja también: es el dato que dice si la función corre lejos de
+   * la base, y ese trayecto se paga una vez por consulta.
+   */
+  const t0 = performance.now()
   const token = await auth()
+  const tAuth = performance.now()
   const impersonationId = req.cookies.get(IMPERSONATION_COOKIE)?.value
   const session = token?.user?.id
     ? await getRouteSession(token.user.id, impersonationId, new Date(), token.issuedAt)
     : null
+  const tSesion = performance.now()
 
   const decision = resolveRouteAccess({ pathname, session })
 
+  const timing = [
+    `jwt;dur=${Math.round(tAuth - t0)}`,
+    `sesion_bd;dur=${Math.round(tSesion - tAuth)}`,
+    `proxy_total;dur=${Math.round(performance.now() - t0)}`,
+    `region;desc="${process.env.VERCEL_REGION ?? 'local'}"`,
+  ].join(', ')
+
   if (decision.kind === 'redirect') {
     const url = new URL(decision.to, req.url)
-    return NextResponse.redirect(url)
+    const redir = NextResponse.redirect(url)
+    redir.headers.set('Server-Timing', timing)
+    return redir
   }
 
   /**
@@ -64,6 +88,7 @@ export async function proxy(req: NextRequest) {
   // propia consulta, porque necesita días restantes y nombre de plan. La
   // cabecera se mantiene únicamente como señal de depuración.
   const res = NextResponse.next()
+  res.headers.set('Server-Timing', timing)
   if (decision.notice) {
     res.headers.set('x-account-notice', decision.notice)
   }

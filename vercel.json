@@ -1,4 +1,6 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["cle1"],
   "crons": [
     {
       "path": "/api/cron/expire-trials",

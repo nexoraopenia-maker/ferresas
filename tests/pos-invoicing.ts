@@ -75,6 +75,68 @@ async function main() {
   check('IGV = 18.00', v1.taxTotal === 18, String(v1.taxTotal))
   check('base + IGV = total', v1.subtotal + v1.taxTotal === v1.total)
 
+  console.log('\n2b) INVARIANTE DEL UBL: la suma de líneas cuadra con los totales')
+  // SUNAT rechaza un comprobante cuyos totales no cuadren con sus líneas.
+  // Se comprueba sobre una venta de VARIAS líneas con tasas MEZCLADAS, que es
+  // donde un IGV calculado sobre el total se rompería.
+  /*
+   * Productos PROPIOS de esta sección, no el compartido: si consumiera el
+   * stock de `prod`, las aserciones de la sección 3 —que comprueban que el
+   * stock bajó de 100 a 90— medirían otra cosa y fallarían sin que hubiera
+   * ningún problema real. Es el tipo de acoplamiento entre secciones que
+   * convierte una suite en algo que nadie se atreve a tocar.
+   */
+  const afecto = await db.product.create({
+    data: {
+      tenantId: t.id, sku: `UBL-A-${M}`, name: 'Afecto A', salePrice: 11.8,
+      taxRate: 0.18, unitType: 'UNIDAD',
+    },
+  })
+  const afecto2 = await db.product.create({
+    data: {
+      tenantId: t.id, sku: `UBL-B-${M}`, name: 'Afecto B', salePrice: 11.8,
+      taxRate: 0.18, unitType: 'KILOGRAMO',
+    },
+  })
+  for (const id of [afecto.id, afecto2.id]) {
+    await db.stock.create({
+      data: { tenantId: t.id, productId: id, warehouseId: w.id, quantity: 100 },
+    })
+  }
+  const exonerado = await db.product.create({
+    data: {
+      tenantId: t.id, sku: `EXO-${M}`, name: 'Manual exonerado',
+      salePrice: 25, taxRate: 0, unitType: 'UNIDAD',
+    },
+  })
+  await db.stock.create({
+    data: { tenantId: t.id, productId: exonerado.id, warehouseId: w.id, quantity: 100 },
+  })
+  const mixta = await registerSale(db, ctx, parse({
+    warehouseId: w.id,
+    items: [
+      { productId: afecto.id, quantity: 3 },      // 35.40 al 18 %
+      { productId: exonerado.id, quantity: 2 },   // 50.00 exonerado
+      { productId: afecto2.id, quantity: 0.5 },   // 5.90 al 18 %, fraccionada
+    ],
+    payments: [{ method: 'EFECTIVO', amount: 200 }],
+  }))
+  const lineasMixta = await db.saleItem.findMany({
+    where: { saleId: mixta.saleId },
+    select: { lineTotal: true, taxRate: true },
+  })
+  const sumaLineas = lineasMixta.reduce((a, l) => a + Number(l.lineTotal), 0)
+  check('>>> Σ lineTotal == total del documento, EXACTO',
+    Math.abs(sumaLineas - mixta.total) < 1e-9, `${sumaLineas} vs ${mixta.total}`)
+  check('>>> subtotal + IGV == total, EXACTO',
+    Math.abs(mixta.subtotal + mixta.taxTotal - mixta.total) < 1e-9,
+    `${mixta.subtotal} + ${mixta.taxTotal} = ${mixta.subtotal + mixta.taxTotal} vs ${mixta.total}`)
+  check('convive una línea exonerada con dos afectas',
+    new Set(lineasMixta.map((l) => Number(l.taxRate))).size === 2)
+  check('el IGV NO se cobra sobre la línea exonerada: es menor que el 18 % del total',
+    mixta.taxTotal < mixta.total * 0.18 / 1.18,
+    `IGV ${mixta.taxTotal} de un total ${mixta.total}`)
+
   console.log('\n3) La venta descuenta stock en la MISMA transacción')
   const stock = await db.stock.findFirstOrThrow({ where: { productId: prod.productId } })
   check('stock bajó de 100 a 90', stock.quantity.toNumber() === 90, String(stock.quantity))

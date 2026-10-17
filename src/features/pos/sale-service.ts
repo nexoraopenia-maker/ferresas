@@ -1,5 +1,6 @@
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
+import { redondearCentimos } from '@/lib/dinero'
 import { hasRole, requireBranch, type TenantContext } from '@/lib/tenant-context'
 import {
   cargarSucursalOperativa, serieDe, turnoAbiertoId,
@@ -29,7 +30,12 @@ function num(d: Prisma.Decimal | number | null | undefined): number {
 }
 
 /** Redondeo a céntimos. Sin esto, 0.1 + 0.2 acaba en el total de la boleta. */
-const cent = (n: number) => Math.round(n * 100) / 100
+/**
+ * Redondeo a céntimos, half-up. Único en todo el proyecto.
+ *
+ * Ver src/lib/dinero.ts para el porqué del `toFixed(4)` intermedio.
+ */
+const cent = redondearCentimos
 
 /**
  * Reserva el siguiente número de un contador, de forma atómica y sin huecos.
@@ -237,6 +243,38 @@ export async function registerSale(
 
         const neto = cent(bruto - item.discount)
         const tasa = num(p.taxRate)
+        /*
+         * ─── EL IGV SE CALCULA POR LÍNEA, NO SOBRE EL TOTAL ─────────────
+         *
+         * Decisión explícita, porque las dos formas dan resultados distintos
+         * y solo una cumple lo que exige el UBL de SUNAT.
+         *
+         * POR LÍNEA (lo que se hace aquí):
+         *   base_i = redondear(neto_i / (1 + tasa_i))
+         *   igv_i  = neto_i - base_i
+         *   subtotal = Σ base_i      taxTotal = Σ igv_i
+         *
+         * SOBRE EL TOTAL (descartado):
+         *   subtotal = redondear(Σ neto_i / (1 + tasa))
+         *
+         * La segunda es más simple y rompe el documento de dos maneras:
+         *
+         *   1. Σ base_i ≠ subtotal y Σ igv_i ≠ taxTotal, por los redondeos.
+         *      El UBL exige que los totales del comprobante CUADREN con la
+         *      suma de sus líneas; si no, SUNAT lo rechaza.
+         *   2. Asume una tasa única. En cuanto hay una línea exonerada
+         *      (tasa 0) junto a otras al 18 %, «la tasa» no existe y el
+         *      cálculo sobre el total declara afecto lo que no lo es.
+         *
+         * El invariante que esto garantiza —y que `tests/pos-invoicing.ts`
+         * comprueba sobre datos reales— es:
+         *
+         *   Σ lineTotal_i == subtotal + taxTotal == total
+         *
+         * Se cumple de forma EXACTA, no aproximada, porque `igv_i` se obtiene
+         * restando (`neto_i - base_i`) en lugar de multiplicando: así
+         * `base_i + igv_i` reconstruye `neto_i` sin residuo por definición.
+         */
         // El precio de venta en Perú se muestra CON IGV incluido, así que el
         // impuesto se extrae del total, no se suma encima. Sumarlo haría que
         // la boleta cobrara un 18% más de lo que marca la etiqueta.

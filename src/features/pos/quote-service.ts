@@ -1,5 +1,6 @@
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
+import { redondearCentimos } from '@/lib/dinero'
 import { hasRole, requireBranch, type TenantContext } from '@/lib/tenant-context'
 import { cargarSucursalOperativa, serieDe } from '@/features/branches/queries'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
@@ -14,7 +15,12 @@ function num(d: Prisma.Decimal | number | null | undefined): number {
   return typeof d === 'number' ? d : d.toNumber()
 }
 
-const cent = (n: number) => Math.round(n * 100) / 100
+/**
+ * Redondeo a céntimos, half-up. Único en todo el proyecto.
+ *
+ * Ver src/lib/dinero.ts para el porqué del `toFixed(4)` intermedio.
+ */
+const cent = redondearCentimos
 
 export interface QuoteResult {
   quoteId: string

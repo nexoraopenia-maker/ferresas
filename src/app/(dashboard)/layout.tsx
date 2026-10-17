@@ -47,6 +47,8 @@ export default async function DashboardLayout({
       select: {
         branch: { select: { id: true, code: true, name: true, seriesNumber: true } },
       },
+      // Una sentencia en vez de dos: ver la nota en src/lib/session.ts.
+      relationLoadStrategy: 'join',
       orderBy: { branch: { code: 'asc' } },
     }),
   ])
