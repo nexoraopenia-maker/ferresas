@@ -351,7 +351,61 @@ src/
 
 ---
 
-## 12. Trampas ya pisadas (para no repetirlas)
+## 12. Pruebas estructurales: por AST, nunca por texto
+
+Hay invariantes que ninguna prueba de comportamiento alcanza. El principal:
+**que ninguna página ni Server Action se salte la verificación de sesión**
+contra la base. Antes lo cubría el 307 del proxy; desde que el proxy no
+consulta (§2), un olvido sería un agujero real.
+
+`tests/proxy-sin-bd.ts` lo comprueba recorriendo el código y **falla nombrando
+el archivo**. Las excepciones son una lista explícita con su motivo, así que
+añadir una ruta pública exige escribir por qué.
+
+### Por qué AST y no `includes()`
+
+La primera versión buscaba texto y dio **tres falsos positivos seguidos**,
+todos por la misma causa: la cadena buscada aparecía en un **comentario que
+explicaba por qué el código NO hacía eso**.
+
+Filtrar las líneas que empiezan por `*` o `//` tapa el síntoma y falla con un
+comentario al final de una línea de código, o con una cadena que contenga la
+palabra. **El AST no tiene ese problema:** los comentarios no son nodos del
+árbol, y un identificador se distingue de una cadena literal por construcción.
+
+`tests/ast.ts` ofrece las consultas: `imports`, `llamadas`,
+`identificadores`, `cadenas`, `tieneDefaultDeCadena`, `esValorCalculado`,
+`dependeDeLaBase`.
+
+Dos detalles que solo el AST acierta:
+
+- **`dependeDeLaBase`** ignora los imports de TIPO. `route-access.ts` importa
+  `type { Role }` del cliente generado, y eso se borra al compilar: el módulo
+  sigue siendo puro. Contarlo habría sido un cuarto falso positivo.
+- **`esValorCalculado`** distingue una plantilla con sustituciones de una
+  cadena escrita a mano. Existe porque la cabecera `Server-Timing` llevaba
+  `sesion_bd;dur=0` como literal con un comentario diciendo que si cambiaba
+  sería que alguien reintrodujo la consulta — falso: un literal nunca cambia.
+
+El analizador se comprueba a sí mismo con un **señuelo**: un archivo que solo
+menciona `requireTenantContext` en comentarios y cadenas debe dar «no
+verifica», y otro que sí lo llama debe dar «verifica». Sin eso, un helper roto
+que devolviera siempre «todo bien» dejaría pasar la suite entera.
+
+### La dependencia
+
+`ts-morph`, solo como **devDependency** (nunca viaja a producción).
+
+TypeScript 7 es el compilador reescrito en Go: su entry principal exporta
+**solo `version`**, y la API clásica (`ts.createSourceFile`,
+`ts.forEachChild`) ya no existe. Lo que queda está en
+`typescript/unstable/ast`, sin función de parseo expuesta y marcado
+**unstable** por el propio proveedor. Una suite que debe quedarse verde no se
+apoya en eso. Comprobado: `ts-morph` no añade ninguna vulnerabilidad al árbol.
+
+---
+
+## 13. Trampas ya pisadas (para no repetirlas)
 
 | Trampa | Síntoma | Lección |
 |---|---|---|
@@ -365,4 +419,4 @@ src/
 | Consulta de sesión en el proxy | 120-140 ms en cada navegación, invisible en local | El proxy corre cerca del USUARIO, no de la base, y `regions` no lo mueve |
 | `sesion_bd;dur=0` escrito a mano | El «detector» de regresiones no detectaba nada | Un literal nunca cambia. Hay que MEDIR el tramo |
 | `?? 'VENDEDOR'` para un rol ausente | Habría echado al login todas las sesiones abiertas al desplegar | Un dato ausente es «no se sabe», no «el mínimo» |
-| `includes()` sobre todo el archivo en una prueba estructural | Dos falsos positivos: la palabra estaba en un comentario | Distinguir lo que el archivo HACE de lo que CUENTA |
+| `includes()` sobre el archivo en una prueba estructural | **Tres** falsos positivos: la palabra estaba en un comentario que explicaba justo lo contrario | No se arregla filtrando comentarios: se arregla con AST (`tests/ast.ts`) |

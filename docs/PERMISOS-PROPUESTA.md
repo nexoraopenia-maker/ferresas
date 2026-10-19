@@ -1,214 +1,316 @@
-# Fase B — Modelo de permisos (propuesta)
+# Fase B — Permisos, roles y sesiones
 
-**No está implementado.** Esto es para que lo apruebes o lo corrijas antes de
-programar nada.
+Actualizado con tus decisiones. **Nada de esto está implementado**: es para tu
+OK antes de programar.
+
+Tus cuatro decisiones, recogidas:
+
+| | Decidido |
+|---|---|
+| Modelo | **Permisos nombrados**; los roles son paquetes predefinidos |
+| Sucursales | **Un rol por usuario** + lista de sucursales permitidas. No rol por sucursal |
+| Nombres de rol | **No renombrar** `VENDEDOR` |
+| Cierre remoto | Surte efecto en la **navegación siguiente** |
 
 ---
 
-## 1. Los roles
+## 1. Catálogo de permisos
 
-Hoy el enum tiene `SUPERADMIN · OWNER · ADMIN · ALMACENERO · VENDEDOR`. Pediste
-*dueño, administrador, cajero, almacenero*. El mapeo:
+Tu lista, con la correspondencia al código de hoy. 18 permisos.
 
-| Tú dijiste | Enum | Cambio |
+| Permiso | Qué habilita | Hoy lo controla |
 |---|---|---|
-| Dueño | `OWNER` | — |
-| Administrador | `ADMIN` | — |
-| Cajero | `VENDEDOR` | ⚠️ **renombrar a `CAJERO`** |
-| Almacenero | `ALMACENERO` | — |
-| (plataforma) | `SUPERADMIN` | — |
-| Contador | `CONTADOR` | ⚠️ **añadir** (lo pedía el pliego original) |
+| `ventas.crear` | Armar el carrito y dejar un pedido pendiente | `hasRole(VENDEDOR)` |
+| `ventas.cobrar` | **Cerrar** la venta y recibir el dinero | — *(hoy va junto a crear)* |
+| `ventas.anular` | Anular una venta ya cobrada | — *(no existe)* |
+| `ventas.descuento` | Descuento de línea, **con tope % por rol** | — *(sin tope)* |
+| `cotizaciones.crear` | Guardar y convertir cotizaciones | `hasRole(VENDEDOR)` |
+| `caja.abrir_cerrar` | Abrir y cerrar turno | `hasRole(VENDEDOR)` |
+| `caja.arqueo` | Ver descuadres, incluidos los de turnos ajenos | — |
+| `productos.ver_costo` | **Ver costo y margen** | ⚠️ hoy por rango |
+| `productos.editar_precio` | Cambiar precio de venta | `hasRole(ALMACENERO)` |
+| `stock.ajustar` | Conteo físico (sobrescribe el saldo) | `hasRole(ADMIN)` |
+| `stock.transferir_despachar` | Despachar a otra sucursal | `hasRole(ALMACENERO)` |
+| `stock.transferir_recibir` | Recibir y contar lo que llega | `hasRole(ALMACENERO)` |
+| `reportes.ver` | Reportes de venta y caja | — |
+| `comprobantes.emitir` | Boleta y factura | `hasRole(VENDEDOR)` |
+| `comprobantes.anular` | Nota de crédito | ⚠️ **no implementada** |
+| `usuarios.gestionar` | CRUD de usuarios e invitaciones | `hasRole(ADMIN)` |
+| `sucursales.gestionar` | Alta y edición de sucursales | `hasRole(ADMIN)` |
+| `config.fiscal` | Correlativo inicial, series, certificado, Clave SOL | `hasRole(ADMIN)` |
 
-**Sobre el renombrado.** `ALTER TYPE "Role" RENAME VALUE 'VENDEDOR' TO 'CAJERO'`
-es instantáneo y no destructivo en Postgres. Toca ~20 referencias en código y
-pruebas. Lo propongo porque «vendedor» y «cajero» conviviendo en la cabeza del
-dueño es una fuente de errores al asignar permisos. **Si prefieres no tocarlo,
-dilo y lo dejo como está** — es cosmético, no funcional.
+### 🔴 `productos.ver_costo` oculta el costo también en API y exportaciones
 
----
+Lo pediste explícitamente y es el permiso con más superficie: el costo no vive
+solo en una pantalla.
 
-## 2. La decisión de diseño que necesito que apruebes
+**Dónde hay que filtrarlo, todo:**
 
-Hoy los permisos son una **escalera**: `ROLE_RANK` da un número a cada rol y
-`hasRole(actual, minimo)` compara. Simple y funciona, pero tiene un límite
-duro: **no se puede dar un permiso a un rol bajo sin dárselo también a todos
-los de arriba**, ni quitárselo a uno de arriba.
+| Superficie | Qué expone hoy | Qué hay que hacer |
+|---|---|---|
+| `Product.costPrice` | el campo | quitarlo del `select` sin el permiso |
+| `SaleItem.unitCost` | costo congelado al vender | ídem |
+| `/api/...` que devuelvan productos | el campo en el JSON | ídem |
+| Exportación CSV del catálogo | columna de costo | omitir la columna |
+| Importación CSV | **acepta** columna de costo | ⚠️ rechazar el archivo si trae costo |
+| Reportes de margen | margen = precio − costo | el margen **revela** el costo |
+| Ticket de 80 mm | no lo imprime | ✅ ya correcto |
 
-Y tu pliego pide justo eso: *«permisos granulares (vender, anular, descuentos,
-ajustar stock, ver costos, emitir NC, ver reportes)»*. Dos ejemplos que la
-escalera no sabe expresar:
+**Cómo propongo implementarlo** para que no se escape por un `select` nuevo:
+un helper `selectProducto(ctx)` que **devuelva** el `select`, en lugar de
+escribirlo a mano en cada consulta. Más una **prueba AST** que falle si algún
+archivo pone `costPrice: true` o `unitCost: true` literal en un `select` sin
+pasar por el helper.
 
-- El **contador** debe ver reportes y comprobantes, pero **no** vender ni tocar
-  stock. No está «por encima» ni «por debajo» del cajero: está al lado.
-- **Ver costos** es información sensible (margen del negocio). Un cajero no
-  debería verla, pero sí vender. Con la escalera, cualquier permiso que tenga
-  el cajero lo hereda el almacenero.
-
-### Propuesta: permisos nombrados, con el rol como preajuste
-
-```
-Permiso         → lo que habilita
-─────────────────────────────────────────────────────────────────
-venta.crear       cobrar en el POS
-venta.anular      anular una venta ya cobrada
-venta.descuento   aplicar descuento de línea
-venta.sin_stock   forzar venta con stock negativo
-cotizacion.crear  guardar y convertir cotizaciones
-stock.mover       entradas y salidas
-stock.ajustar     conteo físico (sobrescribe el saldo)
-stock.transferir  pedir, despachar y recibir entre sucursales
-producto.crear    alta de productos y catálogo
-producto.costo    VER precios de costo y margen
-comprobante.emitir   boleta y factura
-comprobante.anular   nota de crédito  (⚠️ no implementada aún)
-caja.abrir        abrir y cerrar turno
-caja.arquear      ver descuadres de turnos ajenos
-cliente.gestionar alta y edición de clientes
-reporte.ver       reportes de venta y caja
-usuario.gestionar CRUD de usuarios e invitaciones
-sucursal.gestionar  alta y edición de sucursales
-serie.configurar  correlativo inicial  (⚠️ irreversible)
-plan.gestionar    contratar y pagar
-```
-
-### Matriz por rol (el preajuste)
-
-| Permiso | OWNER | ADMIN | CAJERO | ALMACENERO | CONTADOR |
-|---|:-:|:-:|:-:|:-:|:-:|
-| `venta.crear` | ✅ | ✅ | ✅ | — | — |
-| `venta.anular` | ✅ | ✅ | — | — | — |
-| `venta.descuento` | ✅ | ✅ | ⚙️ | — | — |
-| `venta.sin_stock` | ✅ | ✅ | ⚙️ | — | — |
-| `cotizacion.crear` | ✅ | ✅ | ✅ | — | — |
-| `stock.mover` | ✅ | ✅ | — | ✅ | — |
-| `stock.ajustar` | ✅ | ✅ | — | ⚙️ | — |
-| `stock.transferir` | ✅ | ✅ | — | ✅ | — |
-| `producto.crear` | ✅ | ✅ | — | ✅ | — |
-| **`producto.costo`** | ✅ | ✅ | ❌ | ❌ | ✅ |
-| `comprobante.emitir` | ✅ | ✅ | ✅ | — | — |
-| `comprobante.anular` | ✅ | ✅ | — | — | — |
-| `caja.abrir` | ✅ | ✅ | ✅ | — | — |
-| `caja.arquear` | ✅ | ✅ | — | — | ✅ |
-| `cliente.gestionar` | ✅ | ✅ | ✅ | — | — |
-| `reporte.ver` | ✅ | ✅ | — | ⚙️ | ✅ |
-| `usuario.gestionar` | ✅ | ✅ | — | — | — |
-| `sucursal.gestionar` | ✅ | ✅ | — | — | — |
-| **`serie.configurar`** | ✅ | ✅ | — | — | — |
-| `plan.gestionar` | ✅ | ❌ | — | — | — |
-
-✅ por defecto · — no · ⚙️ **activable por el dueño, apagado de fábrica**
-❌ explícitamente denegado
-
-**Lo que cambia respecto de hoy:** `producto.costo` deja de depender del rango.
-Hoy un almacenero ve los costos porque está «por encima» del cajero; con esto,
-ninguno de los dos los ve, y el contador sí.
-
-**Lo que NO cambia:** `hasRole` sigue existiendo para lo que de verdad es
-jerárquico, y la matriz se evalúa en el servidor. Un permiso en la UI es
-pintura; lo que manda es la comprobación del servicio, igual que ahora.
+> El margen merece una nota: en un reporte, `margen %` permite **deducir** el
+> costo a partir del precio, que sí es visible. Así que `reportes.ver` sin
+> `productos.ver_costo` tiene que ocultar las columnas de margen, no solo las
+> de costo. Si no, el permiso es decorativo.
 
 ---
 
-## 3. Roles **por sucursal**
+## 2. Matriz rol × permiso
 
-Pediste roles por sucursal. Hoy `User.role` es uno solo para todo el negocio y
-`UserBranch` solo dice a qué sucursales entra.
+Seis roles. **Un usuario puede tener varios**, y entonces se queda con la
+**unión** de sus permisos.
 
-**Propuesta:** el rol pasa a `UserBranch`, con el de `User` como respaldo.
+| Permiso | DUEÑO | ADMIN | VENDEDOR | CAJERO | ALMACENERO | CONTADOR |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| `ventas.crear` | ✅ | ✅ | ✅ | ✅ | — | — |
+| `ventas.cobrar` | ✅ | ✅ | **❌** | ✅ | — | — |
+| `ventas.anular` | ✅ | ✅ | — | — | — | — |
+| `ventas.descuento` | ✅ **sin tope** | ✅ **sin tope** | ⚙️ **tope %** | ⚙️ **tope %** | — | — |
+| `cotizaciones.crear` | ✅ | ✅ | ✅ | ✅ | — | — |
+| `caja.abrir_cerrar` | ✅ | ✅ | — | ✅ | — | — |
+| `caja.arqueo` | ✅ | ✅ | — | — | — | ✅ |
+| **`productos.ver_costo`** | ✅ | ✅ | **❌** | **❌** | **❌** | ✅ |
+| `productos.editar_precio` | ✅ | ✅ | — | — | ⚙️ | — |
+| `stock.ajustar` | ✅ | ✅ | — | — | ⚙️ | — |
+| `stock.transferir_despachar` | ✅ | ✅ | — | — | ✅ | — |
+| `stock.transferir_recibir` | ✅ | ✅ | — | — | ✅ | — |
+| `reportes.ver` | ✅ | ✅ | — | — | **❌** | ✅ |
+| `comprobantes.emitir` | ✅ | ✅ | — | ✅ | — | — |
+| `comprobantes.anular` | ✅ | ✅ | — | — | — | — |
+| `usuarios.gestionar` | ✅ | ✅ | — | — | — | — |
+| `sucursales.gestionar` | ✅ | ✅ | — | — | — | — |
+| **`config.fiscal`** | ✅ | **❌** | — | — | — | — |
+| *(gestión del plan)* | ✅ | **❌** | — | — | — | — |
+
+✅ concedido · — no concedido · ❌ **denegado explícitamente** · ⚙️ **activable
+por el dueño, apagado de fábrica**
+
+### Lo que cambia respecto de hoy
+
+| Cambio | Hoy | Con la matriz |
+|---|---|---|
+| **El almacenero deja de ver costos** | los ve, por estar «por encima» del vendedor | ❌ denegado |
+| **El almacenero deja de ver reportes de ventas** | los vería por rango | ❌ denegado |
+| **El vendedor deja de cobrar** | cobra | ❌ denegado; deja pedido pendiente |
+| **El administrador deja de tocar lo fiscal** | puede | ❌ `config.fiscal` solo DUEÑO |
+| `CONTADOR` existe | no existe | nuevo, solo lectura |
+
+⚠️ **Dos de estos son incompatibles con lo que ya hay desplegado.** Hoy
+`fijarArranqueSerie` exige `hasRole(ADMIN)`, y con la matriz pasa a exigir
+`config.fiscal`, que el ADMIN **no** tiene. Si tienes un administrador que hoy
+configura series, dejará de poder. **Dímelo si eso te rompe algo.**
+
+### ⚙️ El tope de descuento
+
+`ventas.descuento` no es sí/no: lleva un **porcentaje máximo por rol**.
 
 ```
-UserBranch { tenantId, userId, branchId, role? }
+RolePermission { tenantId, role, permiso, concedido, limite? }
+                                                     └─ 10 = hasta 10 %
 ```
 
-- `role` nulo → se usa `User.role` (lo de hoy; nada se rompe al migrar).
-- `role` presente → manda para esa sucursal.
-
-Así el encargado de SJL puede ser `ADMIN` allí y `CAJERO` en la matriz, que es
-un caso real en cadenas pequeñas.
-
-⚠️ **El coste honesto:** `TenantContext.role` deja de ser «el rol del usuario»
-y pasa a ser «su rol EN LA SUCURSAL ACTIVA». Hay que repasar los ~29 sitios que
-llaman a `hasRole(ctx.role, …)` y confirmar que todos quieren eso. Creo que sí
-—todas son operaciones de una sucursal concreta— salvo `usuario.gestionar`,
-`sucursal.gestionar` y `plan.gestionar`, que son del negocio entero y deberían
-mirar el rol de `User`.
-
-**Si prefieres no complicarlo**, lo dejo como hoy (un rol por usuario) y las
-sucursales solo controlan el acceso. Dímelo: es la decisión con más
-consecuencias de esta fase.
+- DUEÑO y ADMIN: sin tope.
+- VENDEDOR y CAJERO: **apagado de fábrica**; el dueño lo activa y pone el tope.
+- Se comprueba en el **servidor**, dentro de la transacción de la venta. Un
+  tope que solo valide el navegador no es un tope.
 
 ---
 
-## 4. PIN de cajero
+## 3. Sucursales: un rol, varias sucursales permitidas
 
-Para el relevo de turno sin cerrar sesión.
+`UserBranch` ya existe y ya dice a qué sucursales entra cada usuario. **No se
+toca el modelo de rol.**
+
+Lo que falta: que **toda consulta respete esa lista**, no solo la sucursal
+activa. Hoy `filtroAlmacen(ctx.branchId)` acota a la activa, que es correcto
+para operar, pero un reporte consolidado o un buscador de productos podría
+leer sucursales que el usuario no tiene asignadas.
+
+**Propuesta:** `ctx.branchIds` (todas las permitidas) junto a `ctx.branchId`
+(la activa), y una **prueba AST** que falle si una consulta de varias
+sucursales no filtra por `branchIds`.
+
+### Preparado para migrar después, sin romper datos
+
+Lo pediste, y la forma de conseguirlo es que el rol **ya se lea por una sola
+función**:
+
+```ts
+function rolEfectivo(ctx: TenantContext): Role     // hoy: ctx.role
+function permisos(ctx: TenantContext): Set<Permiso>
+```
+
+El día que quieras rol por sucursal, se añade `UserBranch.role` nullable
+—nulo significa «usa el de User», así que **ningún dato existente cambia**— y
+solo `rolEfectivo` se modifica. Si en cambio los 29 `hasRole(ctx.role, …)`
+siguen repartidos, esa migración vuelve a ser el repaso que acabas de
+descartar. **Encapsularlo ahora es lo que hace baratа la migración luego.**
+
+---
+
+## 4. ⚙️ Flujo vendedor → cajero: cómo encaja con las cotizaciones
+
+Pediste que lo proponga antes de construirlo. Hay tres caminos y **el tercero
+es el que recomiendo**.
+
+### El problema
+
+El vendedor atiende el mostrador y arma el pedido; el cajero cobra. Entre los
+dos hace falta un objeto que signifique «esto está listo para cobrar, con
+estos precios».
+
+### (a) Reusar `Quote` tal cual
+
+Ya existe, ya congela precios, ya se convierte en venta.
+
+❌ **No sirve**, y por una razón concreta: una cotización es un documento *para
+el cliente*, con validez de días y que **no reserva stock**. Un pedido en el
+mostrador es *interno*, de validez de minutos, y el cliente está esperando.
+Meter los dos en la misma tabla mezcla «presupuesto que mandé por WhatsApp
+hace tres días» con «lo que el señor tiene ahora en el mostrador», y el
+listado de cotizaciones se vuelve inútil para las dos cosas.
+
+### (b) Tabla `Pedido` nueva
+
+Limpio conceptualmente, pero duplica `Quote` casi entero: cabecera, líneas con
+precio congelado, conversión a venta, correlativo. Y duplicar la conversión a
+venta significa duplicar **la congelación de precios**, que ya nos dio un bug
+(una cotización de S/130 intentó cobrar S/200).
+
+### ✅ (c) `Quote.tipo` — recomendado
+
+Un campo que distingue el propósito, reusando toda la mecánica probada:
+
+```prisma
+enum QuoteKind {
+  COTIZACION   // documento para el cliente, validez en días
+  PEDIDO       // interno, mostrador, validez en minutos
+}
+```
+
+| | COTIZACION | PEDIDO |
+|---|---|---|
+| Quién lo crea | cualquiera con `cotizaciones.crear` | `ventas.crear` |
+| Quién lo cobra | cualquiera con `ventas.cobrar` | ídem |
+| Validez por defecto | 7-15 días | **30-60 min** |
+| Serie | `C001` | `P001` (serie propia) |
+| Sale en `/cotizaciones` | sí | **no**: sale en una bandeja del POS |
+| Reserva stock | no | **no** *(ver abajo)* |
+| Se imprime | sí, 80 mm | opcional |
+
+**Por qué reusa lo probado:** `registerQuote` y `convertQuoteToSale` ya
+congelan precios y ya pasan los precios como argumento de función —fuera del
+esquema Zod— para que el navegador no pueda imponerlos. El pedido hereda eso
+sin escribir una línea nueva de lógica de dinero.
+
+**Lo que hay que añadir:**
+1. `QuoteKind` + serie `P001` derivada de la sucursal (la mecánica ya existe).
+2. Bandeja «pedidos pendientes» en el POS del cajero, de su sucursal.
+3. Caducidad automática: un pedido de ayer no se cobra a los precios de ayer.
+4. `ventas.cobrar` separado de `ventas.crear`.
+
+⚠️ **La decisión que te toca: ¿el pedido RESERVA stock?**
+
+- **No reservar** (lo que propongo): más simple y consistente con la
+  cotización. Riesgo: dos vendedores arman pedidos del último saco de cemento
+  y el segundo falla al cobrar. El POS ya sabe gestionar eso —tiene venta
+  forzada— pero es una conversación incómoda en el mostrador.
+- **Reservar**: necesita stock comprometido, caducidad que lo libere, y un
+  proceso que limpie reservas huérfanas. Es un subsistema, no un campo.
+
+Para una ferretería con un mostrador, **no reservar**. Si tienes varios
+vendedores sobre el mismo inventario escaso, cambia la respuesta.
+
+---
+
+## 5. PIN de cajero
+
+Recogido lo que pediste.
 
 | | |
 |---|---|
-| Qué es | 4-6 dígitos por usuario, `User.pinHash` con bcrypt |
-| Para qué | Cambiar de cajero en el mismo dispositivo, sin teclear correo y contraseña |
-| Alcance | **Solo cambia quién opera, NUNCA eleva permisos** |
+| Qué es | 4-6 dígitos, `User.pinHash` con bcrypt |
+| Para qué | Relevo de turno en el mismo dispositivo |
+| Alcance | **Solo identifica; NUNCA eleva permisos** |
+| Bloqueo | **5 intentos fallidos** → bloqueado |
+| Desbloqueo | **Solo DUEÑO o ADMINISTRADOR** |
+| Auditoría | **Cada uso**, acierto o fallo |
 
-🔴 **La regla que lo hace defendible:** el PIN sirve para *identificar* en un
-dispositivo ya autenticado, no para *autenticar* desde cero. Concretamente:
+🔴 **La regla que lo hace defendible:** el PIN identifica en un dispositivo ya
+autenticado; no autentica desde cero.
 
-- Solo funciona si ya hay una sesión válida del negocio en ese dispositivo.
+- Solo funciona si ya hay una sesión válida **de ese negocio** en el dispositivo.
 - Solo entre usuarios de **la sucursal activa**.
-- **No** da acceso a `/sucursales`, `/mi-plan` ni a nada de `usuario.gestionar`:
-  para eso hay que entrar con contraseña.
-- Límite de intentos por dispositivo, igual que el login.
+- **No** da acceso a `/sucursales`, `/mi-plan` ni a `usuarios.gestionar`: para
+  eso hay que entrar con contraseña.
+- El bloqueo es **por usuario**, no por dispositivo: así no se puede bloquear
+  al cajero de la caja de al lado probando su PIN.
 
-Sin esas condiciones, un PIN de 4 dígitos sería una contraseña de 10 000
-combinaciones para entrar a un sistema con dinero dentro.
+Sin esas condiciones, 4 dígitos serían una contraseña de 10 000 combinaciones
+para entrar a un sistema con dinero dentro.
 
 ---
 
-## 5. Sesiones por dispositivo
-
-Pediste cierre remoto. Hoy la sesión es un JWT sin registro, así que **no se
-puede cerrar una concreta**: solo cambiar la contraseña, que cierra todas.
-
-**Propuesta:** tabla `DeviceSession` + un `sid` en el JWT.
+## 6. Sesiones por dispositivo
 
 ```
 DeviceSession { id, userId, tenantId, label, userAgent, ip,
                 lastSeenAt, createdAt, revokedAt? }
 ```
 
-- Al entrar se crea la fila y su id va en el JWT como `sid`.
-- Revocar = poner `revokedAt`. La sesión muere en la navegación siguiente.
-- `lastSeenAt` se refresca para «cerrar por inactividad».
+El `id` viaja en el JWT como `sid`. Revocar = poner `revokedAt`.
 
-⚠️ **El coste, y hay que decirlo claro:** comprobar `revokedAt` es **una
-consulta más por petición**. Acabamos de quitar la del proxy justamente para
-ahorrarla. Mitigaciones posibles, de menos a más:
+**Cierre en la navegación siguiente** (aprobado): `revokedAt` se añade al
+`select` que el layout **ya hace**, así que el coste es **cero consultas
+nuevas**. Una sesión revocada muere en el siguiente clic, no en el siguiente
+instante.
 
-1. Comprobarlo **solo en el layout** (ya consulta la sesión; se añade al
-   `select` existente, coste ~0). Una sesión revocada muere en la siguiente
-   navegación, no en el siguiente clic. **Es lo que recomiendo.**
-2. Comprobarlo también en cada Server Action que escriba (una consulta extra
-   solo al escribir, no al navegar).
-3. Caché en Vercel KV. Más piezas; lo dejaría para cuando haga falta.
+⚠️ **Dónde no alcanza, y conviene decirlo:** una Server Action en curso en una
+pestaña ya cargada se completa. Para cortar también eso habría que comprobar
+`revokedAt` en cada escritura — una consulta por escritura, no por navegación.
+Si quieres eso para operaciones de dinero (cobrar, anular), dímelo: es un
+añadido pequeño y acotado a esas acciones.
 
 ---
 
-## 6. Orden propuesto
+## 7. Orden de implementación
 
-1. `CONTADOR` al enum + renombrar `VENDEDOR` → `CAJERO` (migración trivial).
-2. Permisos nombrados + matriz + `can(ctx, permiso)` **con prueba estructural**
-   que falle si un servicio comprueba el rol a mano en vez de pedir el permiso.
-3. CRUD de usuarios + invitaciones por token con caducidad.
-4. Rol por sucursal — **solo si lo apruebas** (punto 3).
-5. Sesiones por dispositivo con cierre remoto.
-6. PIN de cajero.
-7. **MFA al final**, como pediste.
+1. **Catálogo de permisos + matriz + `can(ctx, permiso)`**, con prueba AST que
+   falle si un servicio comprueba el rol a mano en vez de pedir el permiso.
+2. `CONTADOR` al enum (migración trivial; sin renombrar nada).
+3. **`productos.ver_costo` en toda la superficie**: helper de `select`, API,
+   exportación, importación, márgenes. Con su prueba AST.
+4. `ctx.branchIds` y el filtro en consultas multi-sucursal.
+5. CRUD de usuarios + invitaciones por token con caducidad.
+6. Sesiones por dispositivo con cierre remoto.
+7. PIN de cajero con bloqueo y auditoría.
+8. `ventas.cobrar` separado + `QuoteKind.PEDIDO` + bandeja del cajero.
+9. **MFA al final**, como pediste.
 
 ---
 
 ## Lo que necesito de ti
 
-1. **¿Permisos nombrados o seguimos con la escalera de roles?** (§2)
-2. **¿Rol por sucursal, o un rol por usuario?** (§3) — la de más consecuencias.
-3. **¿Renombro `VENDEDOR` → `CAJERO`?** (§1)
-4. **¿Te vale que el cierre remoto surta efecto en la navegación siguiente** en
-   vez de instantáneamente, para no reintroducir una consulta por petición? (§5)
+1. **¿Apruebas la matriz?** En particular los cuatro ❌ que **quitan** permisos
+   que hoy existen: almacenero sin costos, almacenero sin reportes, vendedor
+   sin cobrar, y **administrador sin `config.fiscal`** — este último afecta a
+   quien hoy configure series.
+2. **¿El pedido reserva stock?** (§4) Recomiendo que no.
+3. **¿Los topes de descuento por rol** salen apagados de fábrica para VENDEDOR
+   y CAJERO, o prefieres un valor inicial?
+4. **¿Quieres comprobar la revocación también en cada escritura de dinero**
+   (cobrar, anular), o te vale solo en la navegación? (§6)

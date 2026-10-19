@@ -49,7 +49,20 @@ enum Role {
   OWNER
   ADMIN
   ALMACENERO
+  /**
+   * Atiende el mostrador: arma el pedido y cotiza. NO cobra.
+   * Separar «armar» de «cobrar» es lo que permite el relevo vendedor →
+   * cajero sin que el vendedor toque el dinero.
+   */
   VENDEDOR
+  /**
+   * Cobra, abre y cierra caja y emite comprobantes. NO ve costos.
+   */
+  CAJERO
+  /**
+   * Solo lectura: reportes, comprobantes y arqueos. SÍ ve costos.
+   */
+  CONTADOR
 }
 
 enum SubscriptionStatus {

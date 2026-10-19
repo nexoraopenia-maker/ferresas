@@ -109,6 +109,24 @@ export const ROLE_RANK: Record<Role, number> = {
   ADMIN: 60,
   ALMACENERO: 40,
   VENDEDOR: 20,
+  /*
+   * CAJERO y CONTADOR entran a 0, y es deliberado.
+   *
+   * No caben en una escalera: el CONTADOR ve reportes y comprobantes pero no
+   * vende ni toca stock — no está «por encima» ni «por debajo» del cajero,
+   * está al lado. Cualquier número sería mentira, y esa mentira es justo lo
+   * que motivó sustituir esta tabla por permisos nombrados
+   * (`src/lib/permisos.ts`).
+   *
+   * Cero significa «denegar todo» en `hasRole`, que es el valor SEGURO
+   * mientras la escalera siga viva: un rol sin rango legítimo no obtiene
+   * nada por descuido. Y hoy no afecta a nadie, porque todavía no hay forma
+   * de asignar estos roles.
+   *
+   * Esta tabla y `hasRole` se eliminan al cablear `puede()` en los 29 sitios.
+   */
+  CAJERO: 0,
+  CONTADOR: 0,
 }
 
 export function hasRole(actual: Role, minimum: Role): boolean {

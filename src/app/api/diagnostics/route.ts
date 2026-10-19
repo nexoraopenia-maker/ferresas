@@ -91,6 +91,7 @@ export async function GET(req: NextRequest) {
     const [
       migraciones, planes, superadmins, tenants,
       tenantsSinSucursal, usuariosSinSucursal,
+      configFiscalPorAdmin, configFiscalTotal, accionesDeAdmin,
     ] = await Promise.all([
       /**
        * Se distingue ÉXITO de simple presencia.
@@ -133,6 +134,43 @@ export async function GET(req: NextRequest) {
       prisma.user.count({
         where: { deletedAt: null, isActive: true, tenantId: { not: null }, branches: { none: {} } },
       }),
+      /*
+       * ¿Algún ADMINISTRADOR ha configurado alguna vez el correlativo inicial?
+       *
+       * La matriz de permisos de la fase B mueve `config.fiscal` a DUEÑO
+       * exclusivamente, así que un ADMIN que hoy configure series dejaría de
+       * poder. Hay que saberlo ANTES de desplegar ese cambio, no después de
+       * que alguien se queje — y la única forma de saberlo es contar lo que
+       * ya pasó, que es justo para lo que existe el AuditLog.
+       */
+      prisma.auditLog.count({
+        where: { action: 'counter.startNumber', actorRole: 'ADMIN' },
+      }),
+      prisma.auditLog.count({ where: { action: 'counter.startNumber' } }),
+      /*
+       * Acciones de un ADMIN que la matriz de la fase B pasa a reservar al
+       * DUEÑO. `counter.startNumber` era la que estaba sobre la mesa; al
+       * mapear los 29 `hasRole` apareció otra de la misma clase
+       * (`tenant.plan.change`).
+       *
+       * ⚠️ El CHECKOUT no aparece aquí porque NO SE AUDITA: ni
+       * `createCheckoutSession` ni `createMercadoPagoCheckout` escriben en
+       * AuditLog. Así que de esa acción no hay histórico que consultar, y
+       * decir «0» sería confundir «no pasó» con «no se registró». Queda
+       * anotado como deuda: una acción que mueve dinero del dueño debería
+       * auditarse.
+       *
+       * Se agrupa por acción para poder decir CUÁL y CUÁNTAS, no solo que
+       * «hay algunas».
+       */
+      prisma.auditLog.groupBy({
+        by: ['action'],
+        where: {
+          actorRole: 'ADMIN',
+          action: { in: ['counter.startNumber', 'tenant.plan.change'] },
+        },
+        _count: { _all: true },
+      }),
     ])
 
     const aplicadas = migraciones.filter((m) => m.ok).map((m) => m.migration_name)
@@ -173,6 +211,20 @@ export async function GET(req: NextRequest) {
       tenants,
       tenantsSinSucursal,
       usuariosSinSucursal,
+      /** Veces que un ADMIN configuró el correlativo inicial. Ver la nota arriba. */
+      configFiscalPorAdmin,
+      /** Total, de cualquier rol, para poner el anterior en contexto. */
+      configFiscalTotal,
+      /**
+       * Acciones de ADMIN que la fase B reserva al DUEÑO, por acción.
+       * NO incluye el checkout: no se audita (ver la nota arriba).
+       */
+      accionesDeAdminQueSeReservan: Object.fromEntries(
+        (accionesDeAdmin as { action: string; _count: { _all: number } }[]).map((r) => [
+          r.action,
+          r._count._all,
+        ]),
+      ),
     }
   } catch (e) {
     baseDatos = {

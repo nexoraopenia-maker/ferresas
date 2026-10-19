@@ -45,8 +45,20 @@ npm run dev             # http://localhost:3000
 | `npm run db:new-migration` | Crea una migración sin aplicarla, para revisar el SQL a mano |
 | `npm run db:seed` | Planes y superadmin de desarrollo |
 | `npm run test:branches` | Solo sucursales, caja y transferencias |
+| `npm run test:proxy` | Solo el proxy y las pruebas **estructurales por AST** |
 | `npm run test:print` | Solo impresión térmica |
 | `npx tsc --noEmit` | Comprobación de tipos |
+
+### Pruebas estructurales
+
+Además de las de comportamiento, hay pruebas que analizan el **código** con
+AST (`tests/ast.ts`, con `ts-morph`). La principal falla —**nombrando el
+archivo**— si alguna página, layout, Server Action o ruta de API se salta la
+verificación de sesión contra la base.
+
+Son por AST y no por búsqueda de texto porque la versión anterior dio tres
+falsos positivos: la cadena buscada estaba en un comentario que explicaba por
+qué el código NO hacía eso. Detalle en `docs/ARCHITECTURE.md` §12.
 
 ### Las pruebas escriben de verdad
 

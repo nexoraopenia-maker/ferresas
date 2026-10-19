@@ -1,8 +1,13 @@
 import './guard'
 import { correr } from './teardown'
 import { randomUUID } from 'node:crypto'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join } from 'node:path'
+import { SyntaxKind, type SourceFile } from 'ts-morph'
+import {
+  RAIZ, abrir, cadenas, dependeDeLaBase, esValorCalculado, ficheros,
+  identificadores, importa, importaDeModulo, imports, llamadas, proyecto, rel,
+  tieneDefaultDeCadena,
+} from './ast'
 import { crearSucursal, asignarSucursal } from './fixtures'
 import { prisma } from '@/lib/prisma'
 import {
@@ -24,83 +29,98 @@ const M = randomUUID().slice(0, 6)
 const code = async (fn: () => Promise<unknown>) =>
   fn().then(() => 'SIN_ERROR').catch((e) => (e as { code?: string }).code ?? (e as Error).name)
 
-const RAIZ = join(import.meta.dirname ?? process.cwd(), '..')
-
-function ficheros(dir: string, filtro: (p: string) => boolean): string[] {
-  const out: string[] = []
-  const recorrer = (d: string) => {
-    for (const e of readdirSync(d, { withFileTypes: true })) {
-      const p = join(d, e.name)
-      if (e.isDirectory()) {
-        if (e.name === 'node_modules' || e.name === 'generated') continue
-        recorrer(p)
-      } else if (filtro(p)) out.push(p)
-    }
-  }
-  recorrer(dir)
-  return out
-}
-
 async function main() {
   // ═══════════════════════════════════════════════════════════════════════
-  console.log('\n1) EL PROXY NO TOCA LA BASE DE DATOS')
-  const proxy = readFileSync(join(RAIZ, 'src/proxy.ts'), 'utf-8')
-  /*
-   * Se inspecciona SOLO la cabecera de imports, no todo el archivo. La
-   * documentación del proxy EXPLICA en prosa que el enforcement vive en
-   * getTenantPrisma, y un `includes` crudo tomaba esa frase por una
-   * dependencia. La prueba tiene que distinguir lo que el archivo USA de lo
-   * que el archivo CUENTA.
-   */
-  const cabecera = proxy.split('export async function proxy')[0] ?? ''
-  const importa = (nombre: string) =>
-    new RegExp(`\\b${nombre}\\b`).test(
-      cabecera.split('\n').filter((l) => !l.trimStart().startsWith('*') && !l.trimStart().startsWith('/*') && !l.trimStart().startsWith('//')).join('\n'),
-    )
+  console.log('\n1) EL PROXY NO TOCA LA BASE DE DATOS  (por AST, no por texto)')
+  const proj = proyecto()
+  const proxy = abrir(proj, 'src/proxy.ts')
 
-  check('>>> no importa prisma', !/from ['"][^'"]*lib\/prisma['"]/.test(proxy))
+  /*
+   * Se consultan los IMPORTS del árbol, no el texto del archivo. La cabecera
+   * del proxy explica en prosa que el enforcement vive en `getTenantPrisma`,
+   * y un `includes` crudo tomaba esa frase por una dependencia. Un comentario
+   * no produce nodos, así que aquí no puede confundir.
+   */
+  check('>>> no importa prisma', !importaDeModulo(proxy, 'lib/prisma'))
   check('>>> no importa getRouteSession (la consulta que se quitó)',
-    !importa('getRouteSession'))
-  check('>>> no importa getTenantPrisma', !importa('getTenantPrisma'))
+    !importa(proxy, 'getRouteSession'))
+  check('>>> no importa getTenantPrisma', !importa(proxy, 'getTenantPrisma'))
   check('no importa resolveImpersonation (consultaba la base)',
-    !importa('resolveImpersonation'))
-  check('usa la decisión basada SOLO en token',
-    proxy.includes('resolveRouteAccessFromToken'))
-  check('verifica el token de soporte con la firma, no contra la base',
-    proxy.includes('verificarSupportToken'))
-  /*
-   * La cabecera tiene que MEDIR el tramo posterior al JWT, no declararlo.
-   * La primera versión ponía `sesion_bd;dur=0` escrito a mano, y un literal
-   * no detecta nada: si alguien reintroducía una consulta, el supuesto
-   * detector habría seguido diciendo 0.
-   */
-  check('>>> mide el tramo posterior al JWT en vez de declararlo',
-    proxy.includes('post_jwt;dur=${Math.round(tDecision - tJwt)}'))
-  check('>>> y NO quedó ningún valor de tiempo escrito a mano',
-    !/dur=0'/.test(proxy) && !/dur=\$\{0\}/.test(proxy))
+    !importa(proxy, 'resolveImpersonation'))
+  check('tampoco importa el cliente de Prisma generado',
+    !importaDeModulo(proxy, 'generated/prisma'))
 
-  // Y lo mismo, transitivamente: route-access tampoco puede tocar la base.
-  const ra = readFileSync(join(RAIZ, 'src/lib/route-access.ts'), 'utf-8')
-  check('route-access es puro: no importa prisma', !ra.includes("lib/prisma"))
-  const st = readFileSync(join(RAIZ, 'src/lib/support-token.ts'), 'utf-8')
-  check('support-token es puro: no importa prisma', !st.includes("./prisma"))
+  const llamadasProxy = llamadas(proxy)
+  check('usa la decisión basada SOLO en token',
+    llamadasProxy.has('resolveRouteAccessFromToken'))
+  check('verifica el token de soporte con la firma, no contra la base',
+    llamadasProxy.has('verificarSupportToken'))
+  check('no invoca ninguna consulta de Prisma',
+    ![...llamadasProxy].some((l) => /^(findFirst|findUnique|findMany|count|aggregate|groupBy)$/.test(l)),
+    [...llamadasProxy].filter((l) => /find|count|aggregate/.test(l)).join(', '))
+
+  /*
+   * `post_jwt` tiene que MEDIRSE, no declararse. La primera versión ponía
+   * `sesion_bd;dur=0` como literal y un comentario afirmando que si cambiaba
+   * sería que alguien reintrodujo la consulta — falso: un literal nunca
+   * cambia. El AST distingue una plantilla con sustituciones de una cadena
+   * escrita a mano.
+   */
+  check('>>> el tramo posterior al JWT se MIDE (plantilla), no se declara',
+    esValorCalculado(proxy, 'post_jwt'))
+  check('>>> no queda ninguna duración escrita a mano en la cabecera',
+    !cadenas(proxy).some((c) => /dur=\d/.test(c)),
+    cadenas(proxy).filter((c) => /dur=/.test(c)).join(' | '))
+
+  /*
+   * Y nada de rellenar el rol ausente con un valor por defecto: eso habría
+   * echado al login a todas las sesiones abiertas el día del despliegue.
+   */
+  check('>>> no pone un rol por defecto cuando el token no lo trae',
+    !tieneDefaultDeCadena(proxy, 'VENDEDOR'))
+
+  /*
+   * Transitivamente: lo que el proxy importa tampoco puede tocar la base.
+   *
+   * Se usa `dependeDeLaBase`, que IGNORA los imports de tipo.
+   * `route-access.ts` importa `type { Role }` del cliente generado, y eso se
+   * borra al compilar: el módulo sigue siendo puro. Contarlo habría sido otro
+   * falso positivo, igual que los de buscar texto.
+   */
+  for (const modulo of ['src/lib/route-access.ts', 'src/lib/support-token.ts']) {
+    const sf = abrir(proj, modulo)
+    check(`${modulo.split('/').pop()} es puro: sin dependencia de base en runtime`,
+      !dependeDeLaBase(sf))
+  }
+  check('>>> y el propio proxy tampoco', !dependeDeLaBase(proxy))
+  check('la distinción es real: route-access SÍ importa un tipo del cliente',
+    imports(abrir(proj, 'src/lib/route-access.ts')).some(
+      (i) => i.soloTipos && i.modulo.includes('generated/prisma'),
+    ))
 
   // ═══════════════════════════════════════════════════════════════════════
   console.log('\n2) >>> PRUEBA ESTRUCTURAL: nada se salta la verificación')
   /*
-   * Deny-by-default sobre el código fuente. Si alguien añade una página del
-   * panel o una Server Action sin validar la sesión contra la base, esta
-   * prueba falla y nombra el archivo.
+   * Deny-by-default sobre el AST. Si alguien añade una página del panel o una
+   * Server Action sin validar la sesión contra la base, esta prueba falla y
+   * nombra el archivo.
    *
    * Es la red que sustituye a la que daba el proxy: antes, una página que se
-   * olvidara de comprobar quedaba cubierta por el 307 del proxy. Ahora el
-   * proxy no comprueba nada contra la base, así que el olvido sería un
-   * agujero real — y tiene que fallar la suite, no descubrirse en producción.
+   * olvidara de comprobar quedaba cubierta por su 307. Ahora el proxy no
+   * comprueba nada contra la base, así que el olvido sería un agujero real —
+   * y tiene que fallar la suite, no descubrirse en producción.
+   *
+   * Se buscan LLAMADAS, no apariciones del nombre: mencionar
+   * `requireTenantContext` en un comentario ya no cuela.
    */
   const VERIFICADORES = [
     'requireTenantContext', 'guardDashboard', 'requireSuperAdmin',
     'withTenant', 'getDashboardAccountState',
   ]
+  const verifica = (sf: SourceFile) => {
+    const ll = llamadas(sf)
+    return VERIFICADORES.some((v) => ll.has(v))
+  }
 
   // Páginas públicas por diseño, con el motivo. Añadir aquí exige pensarlo.
   const PAGINAS_PUBLICAS: Record<string, string> = {
@@ -108,17 +128,13 @@ async function main() {
     'src/app/(auth)/login/page.tsx': 'login',
     'src/app/(auth)/registro/page.tsx': 'alta de nuevos negocios',
     'src/app/cuenta-suspendida/page.tsx': 'pantalla informativa; sin datos del tenant',
-    // El layout del grupo (print) no existe como página; las de impresión sí verifican.
   }
 
   const paginas = ficheros(join(RAIZ, 'src/app'), (p) => p.endsWith('page.tsx'))
-  const sinVerificar: string[] = []
-  for (const f of paginas) {
-    const rel = relative(RAIZ, f).replace(/\\/g, '/')
-    if (PAGINAS_PUBLICAS[rel]) continue
-    const txt = readFileSync(f, 'utf-8')
-    if (!VERIFICADORES.some((v) => txt.includes(v))) sinVerificar.push(rel)
-  }
+  const sinVerificar = paginas
+    .map(rel)
+    .filter((r) => !PAGINAS_PUBLICAS[r])
+    .filter((r) => !verifica(abrir(proj, r)))
   check(`>>> las ${paginas.length - Object.keys(PAGINAS_PUBLICAS).length} páginas privadas verifican contra la base`,
     sinVerificar.length === 0,
     sinVerificar.length ? `SIN VERIFICAR: ${sinVerificar.join(', ')}` : '')
@@ -129,44 +145,46 @@ async function main() {
   ])
   const layouts = ficheros(join(RAIZ, 'src/app'), (p) => p.endsWith('layout.tsx'))
   const layoutsSinVerificar = layouts
-    .map((f) => relative(RAIZ, f).replace(/\\/g, '/'))
-    .filter((rel) => !LAYOUTS_PUBLICOS.has(rel))
-    .filter((rel) => {
-      const txt = readFileSync(join(RAIZ, rel), 'utf-8')
-      return !VERIFICADORES.some((v) => txt.includes(v)) && !txt.includes('prisma.user')
+    .map(rel)
+    .filter((r) => !LAYOUTS_PUBLICOS.has(r))
+    .filter((r) => {
+      const sf = abrir(proj, r)
+      // El de superadmin consulta la base directamente, sin pasar por los
+      // helpers: se acepta porque leer `prisma.user` ES verificar.
+      const ll = llamadas(sf)
+      return !verifica(sf) && !ll.has('prisma.user.findUnique')
     })
   check('>>> los layouts de área privada verifican contra la base',
-    layoutsSinVerificar.length === 0,
-    layoutsSinVerificar.join(', '))
+    layoutsSinVerificar.length === 0, layoutsSinVerificar.join(', '))
 
-  // Server Actions: todo archivo con 'use server' debe verificar.
-  const actions = ficheros(
-    join(RAIZ, 'src'),
-    (p) => p.endsWith('.ts') && !p.includes('/generated/'),
-  ).filter((f) => {
-    const t = readFileSync(f, 'utf-8')
-    return /^['"]use server['"]/m.test(t)
-  })
+  // Server Actions: todo archivo con la directiva 'use server'.
+  const esServerAction = (sf: SourceFile) =>
+    sf.getStatements().some((st) =>
+      st.getKind() === SyntaxKind.ExpressionStatement &&
+      /^['"]use server['"]/.test(st.getText().trim()),
+    )
+  const candidatos = ficheros(join(RAIZ, 'src'), (p) => p.endsWith('.ts'))
+    .map(rel)
+    .filter((r) => !r.includes('/generated/'))
+  const actions = candidatos.filter((r) => esServerAction(abrir(proj, r)))
+
   const ACTIONS_PUBLICAS: Record<string, string> = {
     'src/app/(auth)/actions.ts': 'login y logout: por definición sin sesión previa',
     'src/app/(auth)/registro/actions.ts': 'alta de negocios nuevos',
   }
   const actionsSinVerificar = actions
-    .map((f) => relative(RAIZ, f).replace(/\\/g, '/'))
-    .filter((rel) => !ACTIONS_PUBLICAS[rel])
-    .filter((rel) => {
-      const txt = readFileSync(join(RAIZ, rel), 'utf-8')
-      return !VERIFICADORES.some((v) => txt.includes(v))
-    })
+    .filter((r) => !ACTIONS_PUBLICAS[r])
+    .filter((r) => !verifica(abrir(proj, r)))
   check(`>>> los ${actions.length} archivos de Server Actions verifican contra la base`,
-    actionsSinVerificar.length === 0,
-    actionsSinVerificar.join(', '))
+    actionsSinVerificar.length === 0, actionsSinVerificar.join(', '))
+  check('la directiva se detecta por AST, no por regex sobre el archivo',
+    actions.length >= 5, `detectados ${actions.length}`)
 
   // Rutas de API: cada una se autentica por su vía (sesión, HMAC o CRON_SECRET).
   const AUTENTICADORES = [
-    ...VERIFICADORES, 'resolveTenantContext', 'CRON_SECRET', 'timingSafeEqual', 'auth()',
-    // Firmas HMAC de las pasarelas: su autenticación NO es la sesión, y no
-    // puede serlo — un webhook llega sin cookie.
+    ...VERIFICADORES, 'resolveTenantContext', 'timingSafeEqual', 'auth',
+    // Firmas HMAC de las pasarelas: un webhook llega sin cookie, así que su
+    // autenticación NO puede ser la sesión.
     'verifyStripeSignature', 'verifyMercadoPagoSignature',
   ]
   const apis = ficheros(join(RAIZ, 'src/app/api'), (p) => p.endsWith('route.ts'))
@@ -174,19 +192,42 @@ async function main() {
     'src/app/api/auth/[...nextauth]/route.ts': 'el propio NextAuth',
   }
   const apisSinAuth = apis
-    .map((f) => relative(RAIZ, f).replace(/\\/g, '/'))
-    .filter((rel) => !API_PUBLICA[rel])
-    .filter((rel) => {
-      const txt = readFileSync(join(RAIZ, rel), 'utf-8')
-      return !AUTENTICADORES.some((v) => txt.includes(v))
+    .map(rel)
+    .filter((r) => !API_PUBLICA[r])
+    .filter((r) => {
+      const sf = abrir(proj, r)
+      const ll = llamadas(sf)
+      // `CRON_SECRET` se lee del entorno, no se llama: se busca como acceso.
+      const usaCronSecret = identificadores(sf).has('CRON_SECRET')
+      return !AUTENTICADORES.some((v) => ll.has(v)) && !usaCronSecret
     })
   check(`>>> las ${apis.length} rutas de API se autentican de alguna forma`,
     apisSinAuth.length === 0, apisSinAuth.join(', '))
 
-  check('la prueba SÍ detecta un archivo sin verificar (control negativo)',
-    !VERIFICADORES.some((v) => 'export default function Pagina() { return null }'.includes(v)))
+  console.log('\n   El analizador distingue código de comentario')
+  /*
+   * Control POSITIVO del propio analizador. Sin esto, un helper roto que
+   * devolviera siempre «todo bien» dejaría pasar la suite entera sin que
+   * nadie se enterara.
+   */
+  const señuelo = proj.createSourceFile('__señuelo.ts', [
+    "// este comentario menciona requireTenantContext y prisma",
+    "/* y este bloque tiene ?? 'VENDEDOR' */",
+    "const texto = 'requireTenantContext en una cadena'",
+    "export function nada() { return texto }",
+  ].join('\n'), { overwrite: true })
+  check('>>> un archivo que SOLO los menciona en comentarios NO verifica',
+    !verifica(señuelo))
+  check('>>> ni una cadena cuenta como coalescencia',
+    !tieneDefaultDeCadena(señuelo, 'VENDEDOR'))
+  check('las cadenas de código SÍ se ven', cadenas(señuelo).some((c) => c.includes('en una cadena')))
 
-  // ═══════════════════════════════════════════════════════════════════════
+  const señueloReal = proj.createSourceFile('__señuelo2.ts', [
+    "import { requireTenantContext } from '@/lib/session'",
+    "export default async function P() { await requireTenantContext(); return null }",
+  ].join('\n'), { overwrite: true })
+  check('>>> y un archivo que SÍ la llama, verifica', verifica(señueloReal))
+
   console.log('\n3) Token de soporte: firma y caducidad propias')
   const claims = { id: 'imp-1', tenantId: 't-1', superAdminId: 'sa-1' }
   const tok = emitirSupportToken(claims)
@@ -281,22 +322,12 @@ async function main() {
     return d.kind === 'redirect' && d.to === '/superadmin'
   })())
   /*
-   * Se miran solo las líneas de CÓDIGO. El comentario del proxy explica por
-   * qué NO hay valor por defecto, y un `includes` crudo tomaba esa frase por
-   * el código que describe. Es el mismo falso positivo que ya dio esta prueba
-   * con `getTenantPrisma`: hay que distinguir lo que el archivo HACE de lo que
-   * el archivo CUENTA.
+   * El «no hay rol por defecto» se comprueba por AST en la sección 1
+   * (`tieneDefaultDeCadena`). Aquí había una versión por texto que filtraba
+   * las líneas de comentario a mano, y ese filtro era un parche: fallaba con
+   * un comentario al final de una línea de código. Eliminada: una sola
+   * comprobación, y la buena.
    */
-  const soloCodigo = (texto: string) =>
-    texto
-      .split('\n')
-      .filter((l) => {
-        const t = l.trimStart()
-        return !t.startsWith('*') && !t.startsWith('//') && !t.startsWith('/*')
-      })
-      .join('\n')
-  check('el proxy no pone un rol por defecto',
-    !soloCodigo(readFileSync(join(RAIZ, 'src/proxy.ts'), 'utf-8')).includes("?? 'VENDEDOR'"))
 
   // ═══════════════════════════════════════════════════════════════════════
   console.log('\n5) >>> LOS CUATRO CASOS QUE DEBEN SEGUIR BLOQUEADOS')
