@@ -298,8 +298,19 @@ export function resolveRouteAccess(input: {
  */
 export interface TokenSession {
   userId: string
-  /** Rol del JWT. Puede discrepar de la base; manda la base al renderizar. */
-  role: Role
+  /**
+   * Rol del JWT. Puede discrepar de la base; manda la base al renderizar.
+   *
+   * `undefined` en los tokens emitidos ANTES de que el rol empezara a viajar
+   * en el JWT. No se trata como «rol mínimo»: se trata como «no se sabe», y
+   * la decisión se delega en el render, que sí lee la base.
+   *
+   * La alternativa —asumir el rol más bajo— habría echado al login a todas
+   * las sesiones abiertas el día del despliegue. Y delegar no debilita nada:
+   * para /superadmin, el layout responde notFound() leyendo el rol REAL, que
+   * es exactamente la misma respuesta que daría el proxy.
+   */
+  role?: Role
   /** Modo soporte vigente según el token firmado, ya verificado. */
   soporte?: { tenantId: string }
 }
@@ -344,7 +355,9 @@ export function resolveRouteAccessFromToken(input: {
     if (token && pathname === ROUTES.login) {
       return {
         kind: 'redirect',
-        to: token.soporte || token.role !== 'SUPERADMIN' ? ROUTES.dashboard : ROUTES.superadmin,
+        // Con el rol desconocido se manda al panel de cliente: si resultara
+        // ser superadmin, su layout lo reenvía a /superadmin leyendo la base.
+        to: token.role === 'SUPERADMIN' && !token.soporte ? ROUTES.superadmin : ROUTES.dashboard,
         reason: 'Ya tiene sesión iniciada.',
       }
     }
@@ -371,8 +384,17 @@ export function resolveRouteAccessFromToken(input: {
    * existe.
    */
   if (startsWithAny(pathname, [ROUTES.superadmin])) {
-    const acreditado = token.role === 'SUPERADMIN' || token.soporte != null
-    return acreditado ? { kind: 'allow' } : { kind: 'not-found', reason: 'El token no acredita superadmin.' }
+    /*
+     * Con el rol DESCONOCIDO se deja pasar y decide el layout, que lee el rol
+     * real y responde notFound(). La respuesta es idéntica, así que no se
+     * pierde la indistinguibilidad que protege la ruta; lo que se evita es
+     * echar al login a las sesiones emitidas antes de este cambio.
+     */
+    const acreditado =
+      token.role === undefined || token.role === 'SUPERADMIN' || token.soporte != null
+    return acreditado
+      ? { kind: 'allow' }
+      : { kind: 'not-found', reason: 'El token no acredita superadmin.' }
   }
 
   // 3b. Salir del modo soporte: solo mientras haya uno vigente.
@@ -393,6 +415,8 @@ export function resolveRouteAccessFromToken(input: {
       reason: 'Superadmin sin modo soporte.',
     }
   }
+  // Con el rol desconocido NO se desvía: pasa y lo resuelve `guardDashboard`,
+  // que lee la base y manda al superadmin a su panel si es el caso.
 
   /*
    * 5. Lo que queda —suspensión, mora, revocación por cambio de contraseña—

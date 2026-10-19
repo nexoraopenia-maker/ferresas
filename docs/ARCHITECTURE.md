@@ -65,21 +65,75 @@ explícitas:
 
 ---
 
-## 2. Identidad en el JWT, autorización desde la base
+## 2. El proxy NO consulta la base
 
-El JWT lleva **solo** `sub` (el `userId`). El `tenantId`, el rol, el estado de
-la cuenta y las sucursales se resuelven **en cada petición** desde Postgres.
+Es la propiedad que más condiciona el rendimiento del panel, y la más fácil de
+romper sin darse cuenta.
 
-Si el rol viajara en el token, degradar a un empleado de ADMIN a CAJERO no
-surtiría efecto hasta que su sesión caducara —12 horas— y durante ese tiempo
-seguiría pudiendo hacer lo que se le acaba de quitar. Lo mismo con una
-suscripción cancelada.
+El proxy de Next 16 se despliega **distribuido**: corre en la región más
+cercana al usuario, no donde estén las funciones. Medido en producción, sobre
+el mismo despliegue:
 
-El coste es una consulta por petición. Se paga a propósito, y se mitiga con
-`SKIP_SESSION_PREFIXES`: las rutas que se autentican por otra vía (firma HMAC
-de los webhooks, `CRON_SECRET`, el callback de NextAuth) **no** resuelven
-sesión, porque Neon suspende el cómputo por inactividad y esa consulta en el
-camino crítico del login hacía que «Entrar» se quedara colgado.
+```
+proxy   → gru1   (São Paulo)
+función → cle1   (Cleveland, us-east-2, pegada a Neon)
+```
+
+Y `vercel.json → regions` **no lo cambia**: eso solo mueve las Vercel
+Functions. Así que cuando el proxy consultaba la sesión, esa consulta cruzaba
+São Paulo → Ohio en cada navegación: **~120-140 ms**, el gasto mayor de toda
+la aplicación.
+
+Ahora decide solo con lo que viene firmado —el JWT y el token de soporte— y
+`proxy_total` bajó a **1-2 ms**.
+
+**El enforcement no se movió:** sigue en la base, al renderizar y al escribir.
+Ver `docs/REGIONES.md` para la tabla de qué se comprueba dónde, y
+`tests/proxy-sin-bd.ts` para la prueba **estructural** que falla si alguna
+ruta o Server Action se la salta.
+
+⚠️ **Si alguien vuelve a meter una consulta en el proxy**, lo delata
+`post_jwt` en la cabecera `Server-Timing`: mide el tramo donde viviría, y
+desde `gru1` una consulta cuesta ~120 ms. Un tramo de un dígito es
+físicamente incompatible con una consulta — por eso se mide en vez de
+declararse. La primera versión ponía `sesion_bd;dur=0` escrito a mano, y un
+literal no detecta nada.
+
+---
+
+## 3. Identidad en el JWT, autorización desde la base
+
+El JWT lleva `sub` (el `userId`) y el **rol del momento del login**. El
+`tenantId`, el estado de la cuenta y las sucursales se resuelven **en cada
+petición** desde Postgres.
+
+El rol está en el token por una sola razón: que el proxy pueda enrutar sin
+consultar la base (ver §2). **No es la fuente de verdad de la autorización.**
+Si el del token y el de la base discrepan, manda la base.
+
+Consecuencia aceptada: ascender a alguien a SUPERADMIN exige que vuelva a
+entrar para que el proxy le deje pasar a `/superadmin`. **Degradar surte efecto
+de inmediato**, porque el enforcement lo hace la base — y ese es el lado que
+importa.
+
+Si la AUTORIZACIÓN viajara en el token, degradar a un empleado de ADMIN a
+CAJERO no surtiría efecto hasta que su sesión caducara —12 horas— y durante ese
+tiempo seguiría pudiendo hacer lo que se le acaba de quitar. Lo mismo con una
+suscripción cancelada. De ahí que el rol del token solo sirva para elegir
+rutas, nunca para permitir operaciones.
+
+El coste es una consulta por petición, que se paga a propósito y se mitiga de
+tres formas:
+
+- `SKIP_SESSION_PREFIXES`: las rutas que se autentican por otra vía (firma HMAC
+  de los webhooks, `CRON_SECRET`, el callback de NextAuth) **no** resuelven
+  sesión. Sin esto, Neon despertando en el camino crítico del login hacía que
+  «Entrar» se quedara colgado.
+- `cache()` de React sobre `requireTenantContext`: el layout, los banners y la
+  página comparten **una** consulta por render. Medido: eran **3**.
+- `relationLoadStrategy: 'join'`: la consulta de sesión se resolvía en **3,2
+  idas y vueltas** porque Prisma partía los `select` anidados en una consulta
+  por relación. Con LATERAL JOIN es **1,0**.
 
 **Revocación real:** `User.passwordChangedAt`. La sesión guarda su `iat`; si es
 anterior, se rechaza. Sin esta columna, cambiar la contraseña porque sospechas
@@ -87,7 +141,7 @@ que te la robaron **no echaría** a quien ya tiene sesión abierta.
 
 ---
 
-## 3. Concurrencia de stock
+## 4. Concurrencia de stock
 
 Un único `UPDATE ... WHERE quantity >= $n` condicional vía
 `updateManyAndReturn`. Postgres reevalúa el `WHERE` tras liberar el bloqueo
@@ -110,7 +164,7 @@ explícitos:
 
 ---
 
-## 4. Numeración sin huecos
+## 5. Numeración sin huecos
 
 ```sql
 UPDATE document_counters SET next = next + 1 RETURNING next
@@ -143,7 +197,7 @@ ya en uso. Ni un número cambió.
 
 ---
 
-## 5. IGV: se EXTRAE, no se suma
+## 6. IGV: se EXTRAE, no se suma
 
 En Perú el precio de etiqueta incluye IGV:
 
@@ -163,7 +217,7 @@ céntimos vive en `src/lib/dinero.ts`, y usa `toFixed(4)` antes de
 
 ---
 
-## 6. Idempotencia
+## 7. Idempotencia
 
 | Dónde | Clave |
 |---|---|
@@ -178,7 +232,7 @@ movimiento se aplica **una** vez.
 
 ---
 
-## 7. Webhooks
+## 8. Webhooks
 
 HMAC a mano con `timingSafeEqual` y ventana anti-replay.
 
@@ -193,7 +247,7 @@ que nadie se enterara.
 
 ---
 
-## 8. Bloqueo progresivo por impago
+## 9. Bloqueo progresivo por impago
 
 `computeAccessLevel()` es una función **pura** (y por eso testeable sin base):
 
@@ -214,7 +268,7 @@ porque si no el moroso no podría llegar a la pantalla donde paga.
 
 ---
 
-## 9. Sucursales, caja y transferencias
+## 10. Sucursales, caja y transferencias
 
 ### Sucursal ≠ almacén
 
@@ -254,7 +308,7 @@ Es correcto (no está en ningún estante) pero no es visible como saldo.
 
 ---
 
-## 10. Mapa del código
+## 11. Mapa del código
 
 ```
 src/
@@ -297,7 +351,7 @@ src/
 
 ---
 
-## 11. Trampas ya pisadas (para no repetirlas)
+## 12. Trampas ya pisadas (para no repetirlas)
 
 | Trampa | Síntoma | Lección |
 |---|---|---|
@@ -308,3 +362,7 @@ src/
 | Precios recalculados al convertir cotización | Una cotización de S/130 intentaba cobrar S/200 | Congelar precios y pasarlos **como argumento de función**, fuera del esquema Zod: en el cuerpo, el navegador podría vender a cualquier precio |
 | Diagnóstico contando **filas** de `_prisma_migrations` | Una migración a medias se reportaba como aplicada | Filtrar `finished_at IS NOT NULL AND rolled_back_at IS NULL` |
 | «Cualquier almacén activo» | Tras multi-sucursal, el cajero de otro local veía el almacén equivocado y cada cobro fallaba | `filtroAlmacen(ctx.branchId)` |
+| Consulta de sesión en el proxy | 120-140 ms en cada navegación, invisible en local | El proxy corre cerca del USUARIO, no de la base, y `regions` no lo mueve |
+| `sesion_bd;dur=0` escrito a mano | El «detector» de regresiones no detectaba nada | Un literal nunca cambia. Hay que MEDIR el tramo |
+| `?? 'VENDEDOR'` para un rol ausente | Habría echado al login todas las sesiones abiertas al desplegar | Un dato ausente es «no se sabe», no «el mínimo» |
+| `includes()` sobre todo el archivo en una prueba estructural | Dos falsos positivos: la palabra estaba en un comentario | Distinguir lo que el archivo HACE de lo que CUENTA |

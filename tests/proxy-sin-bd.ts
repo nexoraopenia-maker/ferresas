@@ -68,8 +68,16 @@ async function main() {
     proxy.includes('resolveRouteAccessFromToken'))
   check('verifica el token de soporte con la firma, no contra la base',
     proxy.includes('verificarSupportToken'))
-  check('>>> declara sesion_bd=0 en la cabecera, para que un retroceso se VEA',
-    proxy.includes("'sesion_bd;dur=0'"))
+  /*
+   * La cabecera tiene que MEDIR el tramo posterior al JWT, no declararlo.
+   * La primera versión ponía `sesion_bd;dur=0` escrito a mano, y un literal
+   * no detecta nada: si alguien reintroducía una consulta, el supuesto
+   * detector habría seguido diciendo 0.
+   */
+  check('>>> mide el tramo posterior al JWT en vez de declararlo',
+    proxy.includes('post_jwt;dur=${Math.round(tDecision - tJwt)}'))
+  check('>>> y NO quedó ningún valor de tiempo escrito a mano',
+    !/dur=0'/.test(proxy) && !/dur=\$\{0\}/.test(proxy))
 
   // Y lo mismo, transitivamente: route-access tampoco puede tocar la base.
   const ra = readFileSync(join(RAIZ, 'src/lib/route-access.ts'), 'utf-8')
@@ -245,6 +253,50 @@ async function main() {
   check('>>> la API se salta la política ANTES de llegar aquí',
     requiresSessionLookup('/api/tenants') === false)
   check('y el panel sí la necesita', requiresSessionLookup('/pos') === true)
+
+  console.log('\n   >>> TRANSICIÓN: tokens emitidos ANTES de que el rol viajara')
+  /*
+   * El día del despliegue, todas las sesiones abiertas tenían un JWT SIN rol.
+   * La primera versión asumía el rol más bajo por defecto, y eso habría
+   * echado al login a todo el mundo de una vez.
+   *
+   * Ahora `role: undefined` significa «no se sabe» y la decisión se delega en
+   * el render, que sí lee la base. No se pierde nada de seguridad: para
+   * /superadmin, el layout responde notFound() leyendo el rol REAL, que es
+   * exactamente la misma respuesta que daría el proxy.
+   */
+  const viejo: TokenSession = { userId: 'u1' }
+  check('>>> un token sin rol NO se echa al login', at('/pos', viejo).kind === 'allow')
+  check('>>> ni se le desvía del panel de cliente', at('/pos', viejo).kind !== 'redirect')
+  check('>>> /superadmin lo deja pasar y decide el layout contra la base',
+    at('/superadmin', viejo).kind === 'allow')
+  check('un rol CONOCIDO que no es superadmin sigue recibiendo 404',
+    at('/superadmin', T({ role: 'ADMIN' })).kind === 'not-found')
+  check('el login con token sin rol manda al panel de cliente', (() => {
+    const d = at('/login', viejo)
+    return d.kind === 'redirect' && d.to === '/inventario'
+  })())
+  check('y con token de SUPERADMIN, a su panel', (() => {
+    const d = at('/login', T({ role: 'SUPERADMIN' }))
+    return d.kind === 'redirect' && d.to === '/superadmin'
+  })())
+  /*
+   * Se miran solo las líneas de CÓDIGO. El comentario del proxy explica por
+   * qué NO hay valor por defecto, y un `includes` crudo tomaba esa frase por
+   * el código que describe. Es el mismo falso positivo que ya dio esta prueba
+   * con `getTenantPrisma`: hay que distinguir lo que el archivo HACE de lo que
+   * el archivo CUENTA.
+   */
+  const soloCodigo = (texto: string) =>
+    texto
+      .split('\n')
+      .filter((l) => {
+        const t = l.trimStart()
+        return !t.startsWith('*') && !t.startsWith('//') && !t.startsWith('/*')
+      })
+      .join('\n')
+  check('el proxy no pone un rol por defecto',
+    !soloCodigo(readFileSync(join(RAIZ, 'src/proxy.ts'), 'utf-8')).includes("?? 'VENDEDOR'"))
 
   // ═══════════════════════════════════════════════════════════════════════
   console.log('\n5) >>> LOS CUATRO CASOS QUE DEBEN SEGUIR BLOQUEADOS')

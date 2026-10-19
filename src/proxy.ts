@@ -87,21 +87,37 @@ export async function proxy(req: NextRequest) {
   const token: TokenSession | null = jwt?.user?.id
     ? {
         userId: jwt.user.id,
-        role: jwt.user.role ?? 'VENDEDOR',
+        /*
+         * Sin `?? 'VENDEDOR'` a propósito. Los tokens emitidos antes de que
+         * el rol viajara en el JWT no lo traen, y asumir el rol más bajo
+         * habría echado al login a todas las sesiones abiertas el día del
+         * despliegue. `undefined` significa «no se sabe» y la decisión la
+         * toma el render, que sí lee la base.
+         */
+        role: jwt.user.role,
         ...(soporteValido ? { soporte: { tenantId: soporteValido.tenantId } } : {}),
       }
     : null
 
   const decision = resolveRouteAccessFromToken({ pathname, token })
+  const tDecision = performance.now()
 
   /*
-   * `sesion_bd` se mantiene en la cabecera y debe salir SIEMPRE en 0. Si
-   * alguna vez marca otra cosa, es que alguien volvió a meter una consulta
-   * aquí, y eso se ve desde la pestaña de red sin leer código.
+   * `post_jwt` MIDE el tramo donde antes vivía la consulta de sesión, y donde
+   * volvería a colarse si alguien la reintroduce.
+   *
+   * Antes aquí había un `sesion_bd;dur=0` escrito a mano, y eso no probaba
+   * nada: un literal nunca cambia, así que el supuesto detector no habría
+   * detectado nada. Ahora es tiempo real.
+   *
+   * Cómo leerlo: desde `gru1` (São Paulo), una ida y vuelta a la base en
+   * `us-east-2` (Ohio) cuesta ~120 ms. Si este tramo está en un dígito, es
+   * FÍSICAMENTE imposible que haya habido una consulta. Eso es lo que lo
+   * convierte en prueba y no en declaración.
    */
   const timing = [
     `jwt;dur=${Math.round(tJwt - t0)}`,
-    'sesion_bd;dur=0',
+    `post_jwt;dur=${Math.round(tDecision - tJwt)}`,
     `proxy_total;dur=${Math.round(performance.now() - t0)}`,
     `region;desc="${process.env.VERCEL_REGION ?? 'local'}"`,
   ].join(', ')

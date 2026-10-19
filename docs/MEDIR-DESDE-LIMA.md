@@ -18,13 +18,14 @@ Esto se mide en un minuto, con sesión real, sin instalar nada.
 6. En la misma petición, pestaña **Cabeceras** → busca `server-timing`:
 
 ```
-server-timing: jwt;dur=2, sesion_bd;dur=131, proxy_total;dur=133, region;desc="gru1"
+server-timing: jwt;dur=2, post_jwt;dur=0, proxy_total;dur=2, region;desc="gru1"
 ```
 
-- `sesion_bd` — lo que tarda el proxy en consultar la sesión. **Es el número
-  clave:** si sale por encima de 100 ms, confirma que el proxy corre lejos de
-  la base (ver docs/REGIONES.md).
-- `region` — dónde corrió el proxy para TI.
+- `proxy_total` — **el número clave.** Debe estar en un dígito. El proxy ya no
+  consulta la base, y desde `gru1` una consulta costaría ~120 ms: si esto sube
+  de 100 ms, alguien reintrodujo una consulta (ver docs/REGIONES.md).
+- `post_jwt` — el tramo donde vivía esa consulta. También en un dígito.
+- `region` — dónde corrió el proxy para TI. Para Perú, `gru1`.
 
 **En frío frente a en caliente:** deja el panel quieto 10 minutos y vuelve a
 navegar. Esa primera navegación incluye el despertar de Neon
@@ -60,7 +61,7 @@ red tardó».
 | | esperado |
 |---|---|
 | Respuesta visual al clic | **< 100 ms** — el menú se marca y sale el esqueleto, sin esperar al servidor |
-| `sesion_bd` en caliente | ⚠️ ~120-140 ms *si el proxy corre en gru1* — es lo que queda por arreglar |
+| `proxy_total` | **1-2 ms** — ya no consulta la base |
 | Fases de la página | 3-16 ms (medido en `cle1`) |
 | Primera navegación tras una pausa | + ~400 ms del despertar de Neon |
 
