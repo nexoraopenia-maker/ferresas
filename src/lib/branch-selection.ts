@@ -22,6 +22,23 @@ export interface BranchOption {
 }
 
 /**
+ * Sucursales cuyos datos puede ver y tocar el usuario.
+ *
+ * Quien administra sucursales (`sucursales.gestionar`: dueño y administrador)
+ * ve TODAS las activas del negocio: no tendría sentido que el dueño necesite
+ * asignarse a cada local nuevo para poder mirarlo. El resto, solo las que
+ * tiene asignadas. Sin asignaciones, la lista queda vacía y el filtro del
+ * cliente aislado no deja pasar nada: lo seguro es no ver, no ver todo.
+ */
+export function sucursalesPermitidas<T extends BranchOption>(
+  asignadas: readonly T[],
+  todasActivas: readonly T[],
+  veTodas: boolean,
+): T[] {
+  return [...(veTodas ? todasActivas : asignadas)]
+}
+
+/**
  * Resuelve la sucursal activa.
  *
  * Orden de preferencia:

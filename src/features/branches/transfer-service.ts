@@ -54,9 +54,24 @@ export async function createTransfer(
   if (!puede(ctx, 'stock.transferir_solicitar')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para solicitar transferencias.')
   }
-  const fromBranchId = requireBranch(ctx)
+  const miSucursal = requireBranch(ctx)
 
-  if (input.toBranchId === fromBranchId) {
+  /*
+   * Mi sucursal es el ORIGEN si envío y el DESTINO si pido. El otro extremo
+   * viene del input; el mío, de la sesión. Así nadie puede abrir una
+   * transferencia entre dos locales ajenos pasando ids.
+   */
+  const pide = input.sentido === 'PEDIR'
+  if (pide && input.toBranchId !== miSucursal) {
+    throw new BusinessError(
+      'INVALID_DOCUMENT',
+      'Un pedido de reposición llega siempre a tu propia sucursal.',
+    )
+  }
+  const fromBranchId = pide ? input.fromBranchId! : miSucursal
+  const toBranchId = pide ? miSucursal : input.toBranchId
+
+  if (toBranchId === fromBranchId) {
     throw new BusinessError(
       'INVALID_DOCUMENT',
       'El origen y el destino son la misma sucursal. Para mover stock dentro de un local, usa un ajuste.',
@@ -78,12 +93,17 @@ export async function createTransfer(
       select: { id: true },
     })
     if (!origen) {
-      throw new BusinessError('TENANT_MISMATCH', 'El almacén de origen no es de tu sucursal.')
+      throw new BusinessError(
+        'TENANT_MISMATCH',
+        pide
+          ? 'El almacén de origen no pertenece a la sucursal a la que pides.'
+          : 'El almacén de origen no es de tu sucursal.',
+      )
     }
 
     const destino = await t.warehouse.findFirst({
       where: {
-        id: input.toWarehouseId, branchId: input.toBranchId,
+        id: input.toWarehouseId, branchId: toBranchId,
         isActive: true, deletedAt: null,
         branch: { isActive: true, deletedAt: null },
       },
@@ -127,7 +147,7 @@ export async function createTransfer(
         number,
         fromBranchId,
         fromWarehouseId: origen.id,
-        toBranchId: input.toBranchId,
+        toBranchId,
         toWarehouseId: destino.id,
         status: 'SOLICITADA',
         requestedById: ctx.userId,
@@ -153,7 +173,7 @@ export async function createTransfer(
     })
 
     await auditar(t, ctx, 'transfer.create', transfer.id, {
-      number, destino: input.toBranchId, lineas: input.items.length,
+      number, sentido: input.sentido, origen: fromBranchId, destino: toBranchId, lineas: input.items.length,
     })
 
     return { ...transfer, lineas: input.items.length }

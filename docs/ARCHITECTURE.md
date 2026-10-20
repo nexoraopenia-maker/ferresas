@@ -389,6 +389,31 @@ permiso nombra?»*:
 
 ---
 
+### Alcance por sucursal: `ctx.branchIds`
+
+`ctx.branchId` es la sucursal donde el usuario OPERA; `ctx.branchIds`, hasta
+dónde LLEGA. Lo calcula `resolveTenantContext` en la misma sentencia de la
+sesión: las asignadas (`UserBranch`), o TODAS las activas del negocio si el
+rol tiene `sucursales.gestionar` (dueño y administrador). Sin asignaciones
+queda vacío y no se ve nada.
+
+`getTenantPrisma` acota por esa lista, sin que el servicio lo pida, las
+lecturas, actualizaciones, borrados y altas de `Sale`, `Quote`, `CashSession`,
+`Merma` y `BranchTransfer` (esta última por cualquiera de sus dos extremos).
+`Warehouse`, `Stock` y `DocumentCounter` quedan fuera a propósito: una
+transferencia obliga a mirar el almacén de otra sucursal y ahí acotan los
+servicios (`filtroAlmacen`). `branchIds === undefined` significa «sin
+restricción» (SUPERADMIN, alta del negocio, scripts), y `tests/branch-ids.ts`
+comprueba por AST que todo contexto de usuario de `session.ts` lo trae; si no,
+el filtro se apagaría en silencio.
+
+**Reposición desde el destino.** `createTransfer` admite `sentido: 'PEDIR'`:
+quien está en el destino le pide mercadería a otra sucursal. Su sucursal sale de
+la sesión y es siempre el DESTINO; solo se nombra al otro extremo. El origen
+atiende el pedido con el mismo ciclo (aprobar → despachar → recibir). Antes,
+el botón «Pedir mercadería a otra sucursal» creaba en realidad un envío desde
+el almacén de quien lo pulsaba.
+
 ### `productos.ver_costo`: qué protege hoy
 
 Hoy el costo entra por tres caminos y los tres lo exigen en el servidor:

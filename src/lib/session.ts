@@ -7,7 +7,8 @@ import {
   type ActiveImpersonation,
 } from './impersonation'
 import { computeAccessLevel, type TenantContext } from './tenant-context'
-import { BRANCH_COOKIE, resolverSucursalActiva } from './branch-selection'
+import { BRANCH_COOKIE, resolverSucursalActiva, sucursalesPermitidas } from './branch-selection'
+import { puede } from './puede'
 import { SUPPORT_COOKIE, verificarSupportToken } from './support-token'
 import { BusinessError, TenantIsolationError } from './errors'
 import type { RouteSession } from './route-access'
@@ -73,6 +74,26 @@ const USER_SELECT = {
  * `passwordChangedAt` en milisegundos: sin el margen, la propia sesión que
  * acaba de cambiar la contraseña se invalidaría a sí misma.
  */
+/**
+ * Lo mismo que `USER_SELECT` más TODAS las sucursales activas del negocio.
+ *
+ * Solo para armar el contexto completo: el dueño y el administrador alcanzan
+ * todas, y eso se decide con los datos de la misma sentencia. Se mantiene
+ * aparte para no ensanchar la consulta que corre en el enrutado.
+ */
+const CONTEXT_SELECT = {
+  ...USER_SELECT,
+  tenant: {
+    select: {
+      ...USER_SELECT.tenant.select,
+      branches: {
+        where: { isActive: true, deletedAt: null },
+        select: { id: true, code: true, isDefault: true },
+      },
+    },
+  },
+} as const
+
 function sesionRevocada(
   passwordChangedAt: Date | null,
   issuedAt: number | undefined,
@@ -149,7 +170,7 @@ async function cargarContextoSuplantado(
   imp: ActiveImpersonation,
   now: Date,
 ): Promise<
-  { userId: string; role: TenantContext['role']; branchId?: string } | null
+  { userId: string; role: TenantContext['role']; branchId?: string; branchIds: string[] } | null
 > {
   /*
    * Se traen también las sucursales del suplantado. El soporte tiene que ver
@@ -162,6 +183,14 @@ async function cargarContextoSuplantado(
     branches: {
       where: { branch: { deletedAt: null, isActive: true } },
       select: { branch: { select: { id: true, code: true, isDefault: true } } },
+    },
+    tenant: {
+      select: {
+        branches: {
+          where: { isActive: true, deletedAt: null },
+          select: { id: true, code: true, isDefault: true },
+        },
+      },
     },
   } as const
 
@@ -180,10 +209,16 @@ async function cargarContextoSuplantado(
 
   void now
   if (!objetivo) return null
+  const permitidas = sucursalesPermitidas(
+    objetivo.branches.map((ub) => ub.branch),
+    objetivo.tenant?.branches ?? [],
+    puede({ role: objetivo.role } as TenantContext, 'sucursales.gestionar'),
+  )
   return {
     userId: objetivo.id,
     role: objetivo.role,
-    branchId: resolverSucursalActiva(objetivo.branches.map((ub) => ub.branch)),
+    branchId: resolverSucursalActiva(permitidas),
+    branchIds: permitidas.map((b) => b.id),
   }
 }
 
@@ -196,7 +231,7 @@ export async function resolveTenantContext(
 ): Promise<TenantContext> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: USER_SELECT,
+    select: CONTEXT_SELECT,
     /*
      * UNA sola sentencia con LATERAL JOIN, en lugar de una consulta por
      * relación anidada.
@@ -225,15 +260,20 @@ export async function resolveTenantContext(
     throw new TenantIsolationError('Sesión sin negocio asociado.')
   }
 
+  const permitidas = sucursalesPermitidas(
+    user.branches.map((ub) => ub.branch),
+    user.tenant.branches,
+    puede({ role: user.role } as TenantContext, 'sucursales.gestionar'),
+  )
+
   return {
     tenantId: user.tenantId,
     userId: user.id,
     role: user.role,
     access: computeAccessLevel(user.tenant, user.tenant.subscription, now),
-    branchId: resolverSucursalActiva(
-      user.branches.map((ub) => ub.branch),
-      branchPedida,
-    ),
+    // La cookie del selector es una sugerencia: solo vale si es una de las permitidas.
+    branchId: resolverSucursalActiva(permitidas, branchPedida),
+    branchIds: permitidas.map((b) => b.id),
   }
 }
 
@@ -296,6 +336,7 @@ async function requireTenantContextSinCache(): Promise<TenantContext> {
           role: suplantado.role,
           access: 'READ_ONLY',
           branchId: suplantado.branchId,
+          branchIds: suplantado.branchIds,
           impersonationId: imp.id,
         }
       }

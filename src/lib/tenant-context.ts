@@ -29,6 +29,20 @@ export interface TenantContext {
    */
   branchId?: string
   /**
+   * TODAS las sucursales cuyos datos puede ver y tocar este usuario.
+   *
+   * `branchId` es en cuál OPERA ahora; esto es hasta dónde LLEGA. El cliente
+   * aislado (`getTenantPrisma`) filtra por esta lista las ventas, cotizaciones,
+   * turnos de caja, mermas y transferencias, así que un servicio que olvide
+   * filtrar por sucursal no filtra datos de un local ajeno.
+   *
+   * `undefined` = sin restricción de sucursal (flujos que no son de una
+   * persona: SUPERADMIN, alta del negocio, scripts). Un contexto de usuario
+   * siempre lo trae; `tests/branch-ids.ts` lo comprueba por AST. Vacío (`[]`)
+   * = no ve ninguna.
+   */
+  branchIds?: readonly string[]
+  /**
    * Roles ADICIONALES del usuario, además de `role`. Sus permisos se UNEN.
    *
    * Hoy ninguna parte lo rellena —`User.role` es uno solo—, pero el modelo

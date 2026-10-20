@@ -9,6 +9,20 @@ const cantidad = z
   .max(9_999_999)
 
 export const createTransferSchema = z.object({
+  /**
+   * Quién empieza la transferencia.
+   *
+   *   · ENVIAR (por defecto): yo estoy en el ORIGEN y mando mercadería a otro
+   *     local. `fromWarehouseId` es mío; `toBranchId` es el otro.
+   *   · PEDIR: yo estoy en el DESTINO y le pido reposición a otro local.
+   *     `fromBranchId` es a quien se la pido; `toBranchId` tiene que ser mi
+   *     propia sucursal y `toWarehouseId` uno de mis almacenes.
+   *
+   * La sucursal propia sale SIEMPRE de la sesión, nunca de aquí: este campo
+   * solo nombra al OTRO extremo.
+   */
+  sentido: z.enum(['ENVIAR', 'PEDIR']).default('ENVIAR'),
+  fromBranchId: id.optional(),
   fromWarehouseId: id,
   toBranchId: id,
   toWarehouseId: id,
@@ -23,6 +37,13 @@ export const createTransferSchema = z.object({
     .min(1, 'Añade al menos un producto a la transferencia.')
     .max(200),
   notes: z.string().trim().max(500).optional(),
+}).superRefine((v, ctx) => {
+  if (v.sentido === 'PEDIR' && !v.fromBranchId) {
+    ctx.addIssue({ code: 'custom', path: ['fromBranchId'], message: 'Indica a qué sucursal le pides la mercadería.' })
+  }
+  if (v.sentido === 'ENVIAR' && v.fromBranchId) {
+    ctx.addIssue({ code: 'custom', path: ['fromBranchId'], message: 'Al enviar, el origen es tu propia sucursal.' })
+  }
 })
 
 export type CreateTransferInput = z.infer<typeof createTransferSchema>

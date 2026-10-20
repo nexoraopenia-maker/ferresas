@@ -485,6 +485,64 @@ async function main() {
     transferId: trV.id, reason: 'Solicitud de prueba del ciclo separado',
   }))
 
+  console.log('\n   >>> REPOSICIÓN pedida desde el DESTINO (sentido PEDIR)')
+  const ctxPide: TenantContext = { ...ctx2, userId: multi.id, role: 'VENDEDOR' }
+  const dbPide = getTenantPrisma(ctxPide)
+  const stockOrigenAntes = Number((await db.stock.findFirstOrThrow({
+    where: { productId: prod.productId, warehouseId: wMatriz.id },
+  })).quantity)
+  const stockDestinoAntes = Number((await prisma.stock.findFirst({
+    where: { productId: prod.productId, warehouseId: w2 },
+  }))?.quantity ?? 0)
+  check('el esquema exige a quién se le pide',
+    !createTransferSchema.safeParse({
+      sentido: 'PEDIR', fromWarehouseId: wMatriz.id, toBranchId: suc2.id, toWarehouseId: w2,
+      items: [{ productId: prod.productId, quantity: 1 }],
+    }).success)
+  check('y al ENVIAR no se admite un origen ajeno',
+    !createTransferSchema.safeParse({
+      sentido: 'ENVIAR', fromBranchId: matriz.id, fromWarehouseId: wMatriz.id, toBranchId: suc2.id, toWarehouseId: w2,
+      items: [{ productId: prod.productId, quantity: 1 }],
+    }).success)
+  const pedido = (extra: Record<string, unknown> = {}) => createTransferSchema.parse({
+    sentido: 'PEDIR', fromBranchId: matriz.id, fromWarehouseId: wMatriz.id,
+    toBranchId: suc2.id, toWarehouseId: w2,
+    items: [{ productId: prod.productId, quantity: 2 }], ...extra,
+  })
+  const pr = await createTransfer(dbPide, ctxPide, pedido())
+  check('>>> el VENDEDOR del destino pide reposición: nace SOLICITADA', pr.status === 'SOLICITADA')
+  const fila = await prisma.branchTransfer.findUniqueOrThrow({ where: { id: pr.id } })
+  check('>>> el ORIGEN es la sucursal a la que se le pidió y el DESTINO es la mía',
+    fila.fromBranchId === matriz.id && fila.toBranchId === suc2.id)
+  check('la numeración usa la serie del origen', pr.number.startsWith('T001-'), pr.number)
+  check('quien pidió queda como solicitante', fila.requestedById === multi.id)
+  check('>>> pedir NO mueve stock',
+    Number((await db.stock.findFirstOrThrow({ where: { productId: prod.productId, warehouseId: wMatriz.id } })).quantity) === stockOrigenAntes)
+  check('>>> un pedido a un destino que NO es mi sucursal se rechaza',
+    await code(() => createTransfer(dbPide, ctxPide, pedido({ toBranchId: matriz.id, toWarehouseId: wMatriz.id, fromBranchId: suc2.id, fromWarehouseId: w2 }))) === 'INVALID_DOCUMENT')
+  check('>>> no se le puede pedir a la propia sucursal',
+    await code(() => createTransfer(dbPide, ctxPide, pedido({ fromBranchId: suc2.id, fromWarehouseId: w2 }))) === 'INVALID_DOCUMENT')
+  check('>>> el almacén tiene que ser de la sucursal a la que se pide',
+    await code(() => createTransfer(dbPide, ctxPide, pedido({ fromWarehouseId: w2 }))) === 'TENANT_MISMATCH')
+  check('el CONTADOR tampoco puede pedir',
+    await code(() => createTransfer(getTenantPrisma({ ...ctxPide, role: 'CONTADOR' }), { ...ctxPide, role: 'CONTADOR' }, pedido())) === 'FORBIDDEN_ROLE')
+
+  await approveTransfer(db, ctx, { transferId: pr.id })
+  check('>>> quien pidió no puede despacharlo (no es del origen)',
+    await code(() => shipTransfer(dbPide, ctxPide, { transferId: pr.id })) === 'FORBIDDEN_ROLE')
+  await shipTransfer(db, ctx, { transferId: pr.id })
+  check('>>> el stock SALE del origen al despachar',
+    Number((await db.stock.findFirstOrThrow({ where: { productId: prod.productId, warehouseId: wMatriz.id } })).quantity) === stockOrigenAntes - 2)
+  const itemsPr = await prisma.branchTransferItem.findMany({ where: { transferId: pr.id } })
+  await receiveTransfer(db2, ctx2, receiveTransferSchema.parse({
+    transferId: pr.id, items: itemsPr.map((i) => ({ itemId: i.id, quantityReceived: 2 })),
+  }))
+  check('>>> y ENTRA al destino que pidió al recibir',
+    Number((await prisma.stock.findFirstOrThrow({ where: { productId: prod.productId, warehouseId: w2 } })).quantity) === stockDestinoAntes + 2)
+  check('quedó RECIBIDA', (await prisma.branchTransfer.findUniqueOrThrow({ where: { id: pr.id } })).status === 'RECIBIDA')
+  const auditPr = await db.auditLog.findFirst({ where: { action: 'transfer.create', entityId: pr.id } })
+  check('la auditoría registra el sentido', JSON.stringify(auditPr?.after ?? '').includes('PEDIR'))
+
   console.log('\n9) Asignación de usuarios a sucursales')
   const cajero = await prisma.user.create({
     data: { email: `c-${M}@x.com`, name: 'Cajero', role: 'VENDEDOR', tenantId: t.id },

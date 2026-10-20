@@ -200,6 +200,9 @@ async function tomarLock(): Promise<() => Promise<void>> {
   return async () => {
     try {
       await cliente.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY])
+    } catch {
+      // Si la conexión ya murió, Postgres soltó el bloqueo de sesión por su
+      // cuenta: no hay nada que liberar y no debe tumbar la suite.
     } finally {
       await cliente.end().catch(() => {})
     }

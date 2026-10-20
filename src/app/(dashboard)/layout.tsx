@@ -52,17 +52,13 @@ export default async function DashboardLayout({
      * de local al emitir es un error que solo se detecta cuando el
      * comprobante ya salió impreso con la serie de otro establecimiento.
      */
-    db.userBranch.findMany({
-      where: { userId: ctx.userId, branch: { isActive: true, deletedAt: null } },
-      select: {
-        branch: { select: { id: true, code: true, name: true, seriesNumber: true } },
-      },
-      // Una sentencia en vez de dos: ver la nota en src/lib/session.ts.
-      relationLoadStrategy: 'join',
-      orderBy: { branch: { code: 'asc' } },
+    db.branch.findMany({
+      where: { id: { in: [...(ctx.branchIds ?? [])] }, isActive: true, deletedAt: null },
+      select: { id: true, code: true, name: true, seriesNumber: true },
+      orderBy: { code: 'asc' },
     }),
   ])
-  const sucursales = asignadas.map((a) => a.branch)
+  const sucursales = asignadas
 
   return (
     <div className="min-h-dvh lg:flex">

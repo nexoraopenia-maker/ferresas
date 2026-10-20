@@ -85,6 +85,11 @@ export default async function TransferenciasPage() {
     (t) => t.status === 'EN_TRANSITO' && t.toBranchId === ctx.branchId,
   ).length
 
+  // Pedidos de reposición de otros locales que esta sucursal tiene que atender.
+  const porDespachar = transferencias.filter(
+    (t) => ['SOLICITADA', 'APROBADA'].includes(t.status) && t.fromBranchId === ctx.branchId,
+  ).length
+
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-5 p-4">
       <header>
@@ -95,13 +100,15 @@ export default async function TransferenciasPage() {
         </p>
       </header>
 
-      <section className="grid grid-cols-2 gap-3">
+      <section className="grid grid-cols-3 gap-3">
         <Contador label="Sin cerrar" value={pendientes} />
+        <Contador label="Por despachar desde aquí" value={porDespachar} aviso={porDespachar > 0} />
         <Contador label="Por recibir aquí" value={porRecibir} aviso={porRecibir > 0} />
       </section>
 
       {(ctx.access === 'FULL' || ctx.access === 'WARN') && puede(ctx, 'stock.transferir_solicitar') && (
         <NewTransfer
+          miSucursalId={ctx.branchId}
           almacenes={misAlmacenes}
           destinos={otrasSucursales
             // Una sucursal sin almacén activo no puede recibir nada.

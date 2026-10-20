@@ -39,11 +39,22 @@ export interface DestinoPosible {
 export function NewTransfer({
   almacenes,
   destinos,
+  miSucursalId,
 }: {
+  /** Almacenes de MI sucursal. */
   almacenes: AlmacenOrigen[]
+  /** Las OTRAS sucursales, con sus almacenes. */
   destinos: DestinoPosible[]
+  miSucursalId: string
 }) {
   const router = useRouter()
+  /**
+   * PEDIR: estoy en el destino y le pido reposición a otro local (lo habitual:
+   * al cajero o vendedor se le acaba algo en su estante).
+   * ENVIAR: estoy en el origen y mando mercadería a otro local.
+   */
+  const [modo, setModo] = useState<'PEDIR' | 'ENVIAR'>('PEDIR')
+  const pide = modo === 'PEDIR'
   const [abierto, setAbierto] = useState(false)
   const [origen, setOrigen] = useState(almacenes[0]?.id ?? '')
   const [destinoBranch, setDestinoBranch] = useState(destinos[0]?.branchId ?? '')
@@ -59,7 +70,9 @@ export function NewTransfer({
     setBusqueda(v)
     if (v.trim().length < 2) { setCandidatos([]); return }
     startTransition(async () => {
-      const res = await searchForTransfer(v, origen)
+      // Se busca el saldo en el almacén que DESPACHA: el mío al enviar, el del
+      // otro local al pedir (ahí es donde hay que mirar si hay para dar).
+      const res = await searchForTransfer(v, pide ? destinoWh : origen)
       setCandidatos(res.ok ? res.data : [])
     })
   }
@@ -88,9 +101,20 @@ export function NewTransfer({
     }
     startTransition(async () => {
       const res = await createTransfer({
-        fromWarehouseId: origen,
-        toBranchId: destinoBranch,
-        toWarehouseId: destinoWh,
+        ...(pide
+          ? {
+              sentido: 'PEDIR',
+              fromBranchId: destinoBranch,
+              fromWarehouseId: destinoWh,
+              toBranchId: miSucursalId,
+              toWarehouseId: origen,
+            }
+          : {
+              sentido: 'ENVIAR',
+              fromWarehouseId: origen,
+              toBranchId: destinoBranch,
+              toWarehouseId: destinoWh,
+            }),
         items,
         notes: notas.trim() || undefined,
       })
@@ -125,11 +149,32 @@ export function NewTransfer({
 
   return (
     <div className="rounded-2xl border-2 border-industrial-600 bg-surface p-4">
-      <h2 className="font-bold text-ink">Nueva transferencia</h2>
+      <h2 className="font-bold text-ink">
+        {pide ? 'Pedir reposición a otra sucursal' : 'Enviar mercadería a otra sucursal'}
+      </h2>
+
+      <div role="tablist" className="mt-3 grid grid-cols-2 gap-1 rounded-xl bg-surface-sunken p-1">
+        {(['PEDIR', 'ENVIAR'] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            role="tab"
+            aria-selected={modo === m}
+            onClick={() => { setModo(m); setCandidatos([]); setLineas([]) }}
+            className={`h-touch rounded-lg text-sm font-semibold ${
+              modo === m ? 'bg-surface text-ink shadow-sm' : 'text-ink-muted'
+            }`}
+          >
+            {m === 'PEDIR' ? 'Pedir' : 'Enviar'}
+          </button>
+        ))}
+      </div>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium text-ink-muted">Sale de</span>
+          <span className="text-sm font-medium text-ink-muted">
+            {pide ? 'Entra a mi almacén' : 'Sale de mi almacén'}
+          </span>
           <select
             value={origen}
             onChange={(e) => { setOrigen(e.target.value); setCandidatos([]); setLineas([]) }}
@@ -142,13 +187,16 @@ export function NewTransfer({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium text-ink-muted">Va a</span>
+          <span className="text-sm font-medium text-ink-muted">
+            {pide ? 'Se lo pido a' : 'Va a'}
+          </span>
           <select
             value={destinoBranch}
             onChange={(e) => {
               setDestinoBranch(e.target.value)
               const d = destinos.find((x) => x.branchId === e.target.value)
               setDestinoWh(d?.warehouses[0]?.id ?? '')
+              setCandidatos([]); setLineas([])
             }}
             className="h-touch-lg rounded-xl border border-hairline bg-surface px-3 text-base text-ink"
           >
@@ -161,10 +209,12 @@ export function NewTransfer({
 
       {destinoActual && destinoActual.warehouses.length > 1 && (
         <label className="mt-3 flex flex-col gap-1">
-          <span className="text-sm font-medium text-ink-muted">Almacén de destino</span>
+          <span className="text-sm font-medium text-ink-muted">
+            {pide ? 'Almacén que despacha' : 'Almacén de destino'}
+          </span>
           <select
             value={destinoWh}
-            onChange={(e) => setDestinoWh(e.target.value)}
+            onChange={(e) => { setDestinoWh(e.target.value); setCandidatos([]); setLineas([]) }}
             className="h-touch-lg rounded-xl border border-hairline bg-surface px-3 text-base text-ink"
           >
             {destinoActual.warehouses.map((w) => (
@@ -279,7 +329,7 @@ export function NewTransfer({
           onClick={enviar}
           className="h-touch-lg flex-1 rounded-xl bg-industrial-600 font-bold text-white disabled:opacity-40"
         >
-          {pending ? 'Enviando…' : 'Solicitar'}
+          {pending ? 'Enviando…' : pide ? 'Pedir reposición' : 'Solicitar envío'}
         </button>
       </div>
     </div>

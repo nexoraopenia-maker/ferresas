@@ -76,6 +76,50 @@ const TENANT_SCOPED = new Set([
   'WebhookEvent',
 ])
 
+/**
+ * Modelos cuyas filas pertenecen a una sucursal, y por qué columna(s).
+ *
+ * Cuando el contexto trae `branchIds`, el cliente filtra por ellas SIN que el
+ * servicio lo pida: un servicio que olvide acotar por sucursal no filtra datos
+ * de un local ajeno. Es el mismo principio que `tenantId`, un nivel más abajo.
+ *
+ * Quedan fuera A PROPÓSITO `Warehouse`, `Stock` y `DocumentCounter`: una
+ * transferencia obliga a mirar el almacén de OTRA sucursal, y ahí el acotado
+ * lo hacen los servicios (`filtroAlmacen`, `verificarAlmacenDeSucursal`).
+ * Las transferencias se ven desde cualquiera de sus dos extremos.
+ */
+const BRANCH_SCOPED: Record<string, readonly string[]> = {
+  Sale: ['branchId'],
+  Quote: ['branchId'],
+  CashSession: ['branchId'],
+  Merma: ['branchId'],
+  BranchTransfer: ['fromBranchId', 'toBranchId'],
+}
+
+function condicionDeSucursal(columnas: readonly string[], ids: readonly string[]): AnyArgs {
+  const lista = [...ids]
+  return columnas.length === 1
+    ? { [columnas[0]!]: { in: lista } }
+    : { OR: columnas.map((c) => ({ [c]: { in: lista } })) }
+}
+
+/** Añade una condición a `where` sin perder las claves únicas del nivel superior. */
+function conjuntar(args: AnyArgs, condicion: AnyArgs): AnyArgs {
+  const where = (args.where ?? {}) as AnyArgs
+  const previo = where.AND === undefined ? [] : Array.isArray(where.AND) ? where.AND : [where.AND]
+  return { ...args, where: { ...where, AND: [...previo, condicion] } }
+}
+
+function verificarSucursalEnData(data: AnyArgs, columnas: readonly string[], ids: readonly string[]) {
+  const valores = columnas.map((c) => data[c]).filter((v) => typeof v === 'string') as string[]
+  // Con una sola columna, el valor es obligatorio en el modelo; con dos (transferencia),
+  // basta con que UNO de los extremos sea de una sucursal permitida.
+  const permitido = columnas.length === 1
+    ? valores.length === 0 || valores.every((v) => ids.includes(v))
+    : valores.some((v) => ids.includes(v))
+  if (!permitido) throw new TenantIsolationError('Esa sucursal no está disponible para tu usuario.')
+}
+
 /** El propio tenant: se filtra por `id`, no por `tenantId`. */
 const SELF_SCOPED = 'Tenant'
 
@@ -216,9 +260,26 @@ function buildTenantClient(ctx: TenantContext) {
             nextArgs = injectIntoWhere(nextArgs, scopeKey, tenantId)
           }
 
+          // 3b. Acotado por sucursal (ver BRANCH_SCOPED).
+          const columnasSucursal = !isSelf && ctx.branchIds !== undefined ? BRANCH_SCOPED[model] : undefined
+          if (columnasSucursal && ctx.branchIds) {
+            if (
+              READ_OPERATIONS.has(operation) ||
+              WHERE_WRITE_OPERATIONS.has(operation) ||
+              operation === 'upsert'
+            ) {
+              nextArgs = conjuntar(nextArgs, condicionDeSucursal(columnasSucursal, ctx.branchIds))
+            }
+          }
+
           // 4. Inyección en `data` (el Tenant no se autocrea desde aquí).
           if (CREATE_OPERATIONS.has(operation) && !isSelf) {
             const data = nextArgs.data
+            if (columnasSucursal && ctx.branchIds) {
+              for (const d of Array.isArray(data) ? data : [data]) {
+                if (d && typeof d === 'object') verificarSucursalEnData(d, columnasSucursal, ctx.branchIds)
+              }
+            }
             if (Array.isArray(data)) {
               nextArgs = { ...nextArgs, data: data.map((d) => injectIntoData(d, tenantId)) }
             } else if (data && typeof data === 'object') {
@@ -229,6 +290,9 @@ function buildTenantClient(ctx: TenantContext) {
           // 5. upsert toca where + create + update a la vez.
           if (operation === 'upsert' && !isSelf) {
             nextArgs = injectIntoWhere(nextArgs, scopeKey, tenantId)
+            if (columnasSucursal && ctx.branchIds && nextArgs.create && typeof nextArgs.create === 'object') {
+              verificarSucursalEnData(nextArgs.create, columnasSucursal, ctx.branchIds)
+            }
             if (nextArgs.create && typeof nextArgs.create === 'object') {
               nextArgs = { ...nextArgs, create: injectIntoData(nextArgs.create, tenantId) }
             }
