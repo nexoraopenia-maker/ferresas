@@ -9,11 +9,14 @@ import { isBusinessError, type ActionResult } from '@/lib/errors'
 import { checkRateLimit, clientIp, RATE_RULES } from '@/lib/rate-limit'
 import type { TenantContext } from '@/lib/tenant-context'
 import {
-  aceptarSchema, cambiarEstadoSchema, cambiarRolesSchema, invitarSchema, revocarSchema,
+  aceptarSchema, cambiarEstadoSchema, cambiarPasswordSchema, cambiarRolesSchema,
+  crearDirectoSchema, invitarSchema, revocarSchema,
 } from './schemas'
 import {
-  aceptarInvitacion as runAceptar, cambiarEstado as runEstado, cambiarRoles as runRoles,
-  invitar as runInvitar, revocarInvitacion as runRevocar,
+  aceptarInvitacion as runAceptar, cambiarEstado as runEstado,
+  cambiarPasswordUsuario as runPassword, cambiarRoles as runRoles,
+  crearUsuarioDirecto as runCrearDirecto, invitar as runInvitar,
+  revocarInvitacion as runRevocar,
 } from './service'
 
 /**
@@ -95,6 +98,28 @@ export async function cambiarEstadoUsuario(raw: unknown) {
 
   return withTenant('cambiarEstadoUsuario', async (db, ctx) => {
     await runEstado(db, ctx, parsed.data)
+    revalidatePath('/usuarios')
+    return { ok: true as const, data: null }
+  })
+}
+
+export async function crearUsuarioDirecto(raw: unknown) {
+  const parsed = crearDirectoSchema.safeParse(raw)
+  if (!parsed.success) return validationFailure(parsed.error, 'el usuario')
+
+  return withTenant('crearUsuarioDirecto', async (db, ctx) => {
+    const r = await runCrearDirecto(db, ctx, parsed.data)
+    revalidatePath('/usuarios')
+    return { ok: true as const, data: { userId: r.userId, email: r.email } }
+  })
+}
+
+export async function cambiarPasswordUsuario(raw: unknown) {
+  const parsed = cambiarPasswordSchema.safeParse(raw)
+  if (!parsed.success) return validationFailure(parsed.error, 'la contraseña')
+
+  return withTenant('cambiarPasswordUsuario', async (db, ctx) => {
+    await runPassword(db, ctx, parsed.data)
     revalidatePath('/usuarios')
     return { ok: true as const, data: null }
   })

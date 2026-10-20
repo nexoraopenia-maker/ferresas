@@ -10,11 +10,12 @@ import { MATRIZ, permisosDeRol } from '../src/lib/permisos'
 import { puede, permisosDe } from '../src/lib/puede'
 import type { Role } from '../src/generated/prisma/enums'
 import type { TenantContext } from '../src/lib/tenant-context'
-import { puedeAsignar, puedeGestionarA, rolesAsignables } from '../src/features/usuarios/asignacion'
+import { puedeAsignar, puedeCambiarPassword, puedeGestionarA, rolesAsignables } from '../src/features/usuarios/asignacion'
 import {
-  aceptarInvitacion, cambiarEstado, cambiarRoles, hashToken, invitar, listarEquipo, revocarInvitacion,
+  aceptarInvitacion, cambiarEstado, cambiarPasswordUsuario, cambiarRoles, crearUsuarioDirecto,
+  hashToken, invitar, listarEquipo, revocarInvitacion,
 } from '../src/features/usuarios/service'
-import { cambiarEstadoSchema, cambiarRolesSchema, invitarSchema } from '../src/features/usuarios/schemas'
+import { cambiarEstadoSchema, cambiarPasswordSchema, cambiarRolesSchema, crearDirectoSchema, invitarSchema } from '../src/features/usuarios/schemas'
 
 let pass = 0, fail = 0
 const check = (n: string, ok: boolean, extra = '') => {
@@ -264,6 +265,68 @@ async function main() {
     equipo.miembros.find((m) => m.id === cajero.id)?.gestionable === true)
   check('un CAJERO no puede ni listar el equipo',
     await code(listarEquipo(dbCajero, cCajero)) === 'FORBIDDEN_ROLE')
+
+  console.log('\n10) >>> Contraseñas: quién puede poner la de quién (reglas puras)')
+  const objetivoDe = (id: string, role: Role, extra: Role[] = []) => ({ id, role, extraRoles: extra })
+  check('cualquiera puede cambiar la SUYA', TODOS.every((r) => puedeCambiarPassword(ctxDe(r), objetivoDe('u-actor', r))))
+  check('>>> el DUEÑO puede cambiar la suya', puedeCambiarPassword(ctxDe('OWNER'), objetivoDe('u-actor', 'OWNER')))
+  check('>>> NADIE más puede cambiar la clave del dueño',
+    TODOS.every((r) => !puedeCambiarPassword(ctxDe(r), objetivoDe('u-otro', 'OWNER'))))
+  check('>>> ni la de un SUPERADMIN', TODOS.every((r) => !puedeCambiarPassword(ctxDe(r), objetivoDe('u-otro', 'SUPERADMIN'))))
+  check('un ADMIN puede cambiar la de un cajero', puedeCambiarPassword(ctxDe('ADMIN'), objetivoDe('u-otro', 'CAJERO')))
+  check('>>> un ADMIN no puede cambiar la de quien tenga un rol extra de DUEÑO',
+    !puedeCambiarPassword(ctxDe('ADMIN'), objetivoDe('u-otro', 'CAJERO', ['OWNER'])))
+  check('un VENDEDOR no puede cambiar la de nadie más', !puedeCambiarPassword(ctxDe('VENDEDOR'), objetivoDe('u-otro', 'CAJERO')))
+
+  console.log('\n11) Cambiar la contraseña')
+  const NUEVA = 'clave-nueva-9876'
+  const antesHash = (await prisma.user.findUniqueOrThrow({ where: { id: cajero.id } })).passwordHash
+  const t0 = new Date()
+  await cambiarPasswordUsuario(dbAdmin, cAdmin, { userId: cajero.id, password: NUEVA })
+  const trasCambio = await prisma.user.findUniqueOrThrow({ where: { id: cajero.id } })
+  check('>>> la guarda con bcrypt (no en claro) y es la elegida',
+    !!trasCambio.passwordHash && trasCambio.passwordHash !== NUEVA && trasCambio.passwordHash !== antesHash &&
+    await bcrypt.compare(NUEVA, trasCambio.passwordHash))
+  check('fija passwordChangedAt', trasCambio.passwordChangedAt !== null && trasCambio.passwordChangedAt.getTime() >= t0.getTime() - 1000)
+  const emitidaAntes = Math.floor((t0.getTime() - 60_000) / 1000)
+  check('>>> una sesión abierta ANTES del cambio deja de valer',
+    await code(resolveTenantContext(cajero.id, new Date(), emitidaAntes)) === 'UNAUTHENTICATED')
+  check('y una iniciada DESPUÉS sí', (await resolveTenantContext(cajero.id, new Date(), Math.floor(Date.now() / 1000) + 5)).userId === cajero.id)
+  const audPw = await prisma.auditLog.findFirst({ where: { tenantId: t.id, action: 'usuario.cambiar_password', entityId: cajero.id } })
+  check('>>> queda auditado SIN la contraseña', !!audPw && !JSON.stringify(audPw).includes(NUEVA) && audPw.actorId === admin.id)
+
+  console.log('\n12) Quién NO puede')
+  check('>>> el ADMIN no puede cambiar la clave del DUEÑO',
+    await code(cambiarPasswordUsuario(dbAdmin, cAdmin, { userId: owner.id, password: NUEVA })) === 'FORBIDDEN_ROLE')
+  check('y la del dueño no cambió', !(await bcrypt.compare(NUEVA, (await prisma.user.findUniqueOrThrow({ where: { id: owner.id } })).passwordHash ?? '')))
+  check('>>> el DUEÑO sí puede cambiar la suya', await code(cambiarPasswordUsuario(dbOwner, cOwner, { userId: owner.id, password: NUEVA + 'x' })) === null)
+  check('el DUEÑO también puede cambiar la de un cajero', await code(cambiarPasswordUsuario(dbOwner, cOwner, { userId: cajero.id, password: NUEVA + 'y' })) === null)
+  check('>>> el CAJERO no puede cambiar ninguna (no gestiona usuarios)',
+    await code(cambiarPasswordUsuario(dbCajero, cCajero, { userId: cajero.id, password: NUEVA })) === 'FORBIDDEN_ROLE')
+  check('>>> otro negocio no ve al usuario', await code(cambiarPasswordUsuario(dbAdminB, cAdminB, { userId: cajero.id, password: NUEVA })) === 'NOT_FOUND')
+  check('una contraseña débil se rechaza en el esquema', !cambiarPasswordSchema.safeParse({ userId: 'x', password: 'corta' }).success && !cambiarPasswordSchema.safeParse({ userId: 'x', password: '         ' }).success)
+
+  console.log('\n13) Alta directa con contraseña')
+  const dir = (o: Record<string, unknown>) => crearDirectoSchema.parse({ name: 'Pedro Directo', email: 'directo@x.com', password: 'clave-directa-1', role: 'CAJERO', ...o })
+  const nuevoDir = await crearUsuarioDirecto(dbAdmin, cAdmin, dir({ branchIds: [bN.id] }))
+  const filaDir = await prisma.user.findUniqueOrThrow({ where: { id: nuevoDir.userId }, include: { branches: true } })
+  check('>>> crea la cuenta lista para entrar, con el rol y la sucursal', filaDir.role === 'CAJERO' && filaDir.tenantId === t.id && filaDir.branches.length === 1 && filaDir.isActive)
+  check('con la contraseña hasheada y verificable', await bcrypt.compare('clave-directa-1', filaDir.passwordHash ?? ''))
+  check('>>> y sin dejar la contraseña en la auditoría',
+    !JSON.stringify(await prisma.auditLog.findMany({ where: { tenantId: t.id, action: 'usuario.crear_directo' } })).includes('clave-directa-1'))
+  check('puede iniciar sesión: obtiene contexto', (await resolveTenantContext(nuevoDir.userId)).role === 'CAJERO')
+  check('>>> un correo ya usado se rechaza con mensaje neutro', await code(crearUsuarioDirecto(dbAdmin, cAdmin, dir({}))) === 'DUPLICATE_CODE')
+  check('>>> el ADMIN no puede crear un DUEÑO (saltándose Zod)', await code(crearUsuarioDirecto(dbAdmin, cAdmin, { ...dir({ email: 'o@x.com' }), role: 'OWNER' } as never)) === 'FORBIDDEN_ROLE')
+  check('ni con el rol extra', await code(crearUsuarioDirecto(dbAdmin, cAdmin, { ...dir({ email: 'o2@x.com' }), extraRoles: ['OWNER'] } as never)) === 'FORBIDDEN_ROLE')
+  check('>>> el CAJERO no puede crear usuarios', await code(crearUsuarioDirecto(dbCajero, cCajero, dir({ email: 'o3@x.com' }))) === 'FORBIDDEN_ROLE')
+  check('>>> una sucursal ajena se rechaza', await code(crearUsuarioDirecto(dbAdmin, cAdmin, dir({ email: 'o4@x.com', branchIds: [bB.id] }))) === 'TENANT_MISMATCH')
+  check('una invitación viva a ese correo se anula al crearlo directamente', await (async () => {
+    await invitar(dbAdmin, cAdmin, invitarSchema.parse({ email: 'conflicto@x.com', role: 'CAJERO' }))
+    await crearUsuarioDirecto(dbAdmin, cAdmin, dir({ email: 'conflicto@x.com' }))
+    return (await prisma.invitation.count({ where: { tenantId: t.id, email: 'conflicto@x.com', revokedAt: null, acceptedAt: null } })) === 0
+  })())
+  await prisma.plan.update({ where: { id: planTest.id }, data: { maxUsers: 1 } })
+  check('>>> con el cupo lleno no se puede crear otro', await code(crearUsuarioDirecto(dbAdmin, cAdmin, dir({ email: 'cupo@x.com' }))) === 'PLAN_LIMIT_REACHED')
 
   await prisma.tenant.deleteMany({ where: { id: { in: [t.id, tB.id] } } })
   await prisma.plan.delete({ where: { id: planTest.id } })

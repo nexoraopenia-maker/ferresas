@@ -459,6 +459,31 @@ vuelca en `TenantContext.roles` y los permisos se **unen**.
 - **Decimales**: `tieneMaxDecimales` sustituye a `Math.round(n*100) === n*100`,
   que rechazaba 1,10; 8,20 o 19,99 por error de coma flotante.
 
+### Sesiones por dispositivo y PIN de cajero
+
+**Sesiones.** Cada inicio de sesión crea una `DeviceSession`; su id (`sid`) viaja
+en el JWT. `resolveTenantContext` comprueba en la MISMA sentencia que ya resuelve
+al usuario (un `join`, sin ida y vuelta extra) que el `sid` exista y no esté
+revocado. Revocar surte efecto en la siguiente navegación o Server Action, y
+cada acción que escribe dinero resuelve el contexto de nuevo, así que no hace
+falta una comprobación aparte. Los JWT anteriores a esto no llevan `sid` y se
+aceptan hasta caducar (12 h). `/seguridad` lista y cierra las propias; un
+dueño/administrador cierra las de quien tenga menos poder que él.
+
+**PIN de cajero.** Identifica a quien opera en un dispositivo cuya sesión ya
+está abierta; no es un segundo login. La cookie `ferresaas.operador` está
+firmada con HMAC y atada al `sid` y al usuario de la sesión. El contexto
+resultante tiene la identidad del operador y permisos = **intersección** de los
+de la sesión y los del operador, menos `usuarios.gestionar`,
+`sucursales.gestionar`, `plan.gestionar`, `config.fiscal` y
+`comprobantes.estado_manual` (se comprueba para las 36 combinaciones de roles).
+Solo entran usuarios asignados a la sucursal activa. El intento se **reserva con
+un incremento atómico antes de comparar**, así que una ráfaga de peticiones
+simultáneas prueba como mucho 5 PIN; al 5.º fallo se bloquea y solo un
+dueño/administrador lo libera. Cada uso, fallo, bloqueo y desbloqueo se audita
+(sin el PIN). Un PIN son pocas cifras: el bloqueo y el límite por conexión son
+lo que lo protege, no el hash.
+
 ### `productos.ver_costo`: qué protege hoy
 
 Hoy el costo entra por tres caminos y los tres lo exigen en el servidor:

@@ -6,9 +6,10 @@ import { prisma } from '@/lib/prisma'
 import { exigir } from '@/lib/puede'
 import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
-import { puedeAsignar, puedeGestionarA } from './asignacion'
+import { puedeAsignar, puedeCambiarPassword, puedeGestionarA } from './asignacion'
 import type {
-  AceptarInput, CambiarEstadoInput, CambiarRolesInput, InvitarInput,
+  AceptarInput, CambiarEstadoInput, CambiarPasswordInput, CambiarRolesInput,
+  CrearDirectoInput, InvitarInput,
 } from './schemas'
 
 /** Una invitación vale 7 días: lo bastante para un fin de semana de por medio. */
@@ -255,6 +256,119 @@ export async function cambiarEstado(
   })
 }
 
+/**
+ * Alta directa: crea la cuenta con una contraseña que pone quien administra,
+ * sin esperar a que la persona abra un enlace.
+ *
+ * Mismas reglas que una invitación: nadie concede más poder del que tiene,
+ * las sucursales tienen que estar a su alcance y el cupo del plan manda. La
+ * contraseña se guarda con bcrypt y NO se registra en ningún sitio.
+ */
+export async function crearUsuarioDirecto(
+  db: TenantPrismaClient,
+  ctx: TenantContext,
+  input: CrearDirectoInput,
+  ahora: Date = new Date(),
+): Promise<{ userId: string; email: string }> {
+  exigir(ctx, 'usuarios.gestionar')
+
+  const roles = [input.role, ...input.extraRoles] as Role[]
+  if (!puedeAsignar(ctx, roles)) {
+    throw new BusinessError('FORBIDDEN_ROLE', 'No puedes conceder un rol con más poder que el tuyo.')
+  }
+
+  if (input.branchIds.length > 0) {
+    const alcance = new Set(ctx.branchIds ?? [])
+    const validas = await db.branch.count({
+      where: { id: { in: input.branchIds }, isActive: true, deletedAt: null },
+    })
+    if (validas !== input.branchIds.length || input.branchIds.some((b) => !alcance.has(b))) {
+      throw new BusinessError('TENANT_MISMATCH', 'Alguna de las sucursales no está disponible.')
+    }
+  }
+
+  await verificarCupo(db, ahora, input.email)
+
+  // bcrypt FUERA de la transacción: ~100 ms con coste 12.
+  const passwordHash = await bcrypt.hash(input.password, 12)
+
+  try {
+    return await db.$transaction(async (tx) => {
+      const t = tx as unknown as TenantPrismaClient
+      const user = await t.user.create({
+        data: {
+          tenantId: ctx.tenantId, email: input.email, name: input.name,
+          passwordHash, role: input.role, extraRoles: input.extraRoles, emailVerified: ahora,
+        },
+        select: { id: true, email: true },
+      })
+      if (input.branchIds.length > 0) {
+        await t.userBranch.createMany({
+          data: input.branchIds.map((branchId) => ({ tenantId: ctx.tenantId, userId: user.id, branchId })),
+        })
+      }
+      // Una invitación viva a ese correo ya no tiene sentido.
+      await t.invitation.updateMany({
+        where: { email: input.email, acceptedAt: null, revokedAt: null },
+        data: { revokedAt: ahora },
+      })
+      await auditar(t, ctx, 'usuario.crear_directo', user.id, {
+        after: { email: input.email, role: input.role, extraRoles: input.extraRoles, branchIds: input.branchIds },
+      })
+      return { userId: user.id, email: user.email }
+    })
+  } catch (e) {
+    // El correo es único en toda la plataforma. Mensaje neutro: no se dice si
+    // pertenece a otro negocio.
+    if (typeof e === 'object' && e && 'code' in e && (e as { code?: string }).code === 'P2002') {
+      throw new BusinessError('DUPLICATE_CODE', 'Ese correo no está disponible. Usa otro.')
+    }
+    throw e
+  }
+}
+
+/**
+ * Pone una contraseña nueva a un usuario (la de otro, o la propia).
+ *
+ * Fija `passwordChangedAt`, así que TODAS las sesiones abiertas de esa cuenta
+ * caen en su próxima navegación (la propia incluida si cambia la suya). La
+ * contraseña no se registra: la auditoría guarda quién, a quién y cuándo.
+ */
+export async function cambiarPasswordUsuario(
+  db: TenantPrismaClient,
+  ctx: TenantContext,
+  input: CambiarPasswordInput,
+  ahora: Date = new Date(),
+): Promise<void> {
+  exigir(ctx, 'usuarios.gestionar')
+
+  const objetivo = await db.user.findFirst({
+    where: { id: input.userId, deletedAt: null },
+    select: { id: true, role: true, extraRoles: true },
+  })
+  if (!objetivo) throw new BusinessError('NOT_FOUND', 'El usuario no existe.')
+
+  if (!puedeCambiarPassword(ctx, objetivo)) {
+    throw new BusinessError(
+      'FORBIDDEN_ROLE',
+      'No puedes cambiar la contraseña de este usuario: es el dueño o tiene más poder que tú.',
+    )
+  }
+
+  const passwordHash = await bcrypt.hash(input.password, 12)
+
+  await db.$transaction(async (tx) => {
+    const t = tx as unknown as TenantPrismaClient
+    await t.user.update({
+      where: { id: objetivo.id },
+      data: { passwordHash, passwordChangedAt: ahora },
+    })
+    await auditar(t, ctx, 'usuario.cambiar_password', objetivo.id, {
+      after: { passwordChangedAt: ahora.toISOString(), propia: objetivo.id === ctx.userId },
+    })
+  })
+}
+
 export interface MiembroEquipo {
   id: string
   name: string
@@ -266,6 +380,11 @@ export interface MiembroEquipo {
   sucursales: string[]
   /** Si el que mira puede cambiarlo o desactivarlo. */
   gestionable: boolean
+  /** Si el que mira puede ponerle la contraseña (incluye la propia). */
+  puedeCambiarPassword: boolean
+  /** Tiene PIN de cajero. Solo se informa SI lo tiene, nunca nada del PIN. */
+  tienePin: boolean
+  pinBloqueado: boolean
 }
 
 export interface InvitacionPendiente {
@@ -290,7 +409,7 @@ export async function listarEquipo(
       orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
       select: {
         id: true, name: true, email: true, role: true, extraRoles: true,
-        isActive: true, lastLoginAt: true,
+        isActive: true, lastLoginAt: true, pinHash: true, pinLockedAt: true,
         branches: { select: { branch: { select: { name: true } } } },
       },
       relationLoadStrategy: 'join',
@@ -308,6 +427,9 @@ export async function listarEquipo(
       isActive: u.isActive, lastLoginAt: u.lastLoginAt,
       sucursales: u.branches.map((b) => b.branch.name),
       gestionable: puedeGestionarA(ctx, u),
+      puedeCambiarPassword: puedeCambiarPassword(ctx, u),
+      tienePin: u.pinHash !== null,
+      pinBloqueado: u.pinLockedAt !== null,
     })),
     invitaciones,
   }

@@ -1,8 +1,9 @@
 'use server'
 
-import { headers } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { AuthError } from 'next-auth'
-import { signIn, signOut } from '@/auth'
+import { auth, signIn, signOut } from '@/auth'
+import { OPERATOR_COOKIE } from '@/lib/operator-token'
 import { credentialsSchema } from '@/lib/credentials'
 import { ROUTES } from '@/lib/route-access'
 import { checkRateLimit, clientIp, RATE_RULES } from '@/lib/rate-limit'
@@ -66,5 +67,15 @@ export async function loginAction(input: {
 }
 
 export async function logoutAction() {
+  // Se revoca el registro del dispositivo ANTES de borrar la cookie: así el JWT,
+  // si alguien lo hubiera copiado, deja de valer.
+  try {
+    const sesion = await auth()
+    const { cerrarSesionActual } = await import('@/features/seguridad/dispositivos')
+    await cerrarSesionActual(sesion?.sid)
+  } catch {
+    /* cerrar sesión nunca debe fallar por esto */
+  }
+  ;(await cookies()).delete(OPERATOR_COOKIE)
   await signOut({ redirectTo: ROUTES.login })
 }

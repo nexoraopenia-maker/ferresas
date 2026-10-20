@@ -10,6 +10,8 @@ import { computeAccessLevel, type TenantContext } from './tenant-context'
 import { BRANCH_COOKIE, resolverSucursalActiva, sucursalesPermitidas } from './branch-selection'
 import { permisosEfectivos } from './permisos'
 import { SUPPORT_COOKIE, verificarSupportToken } from './support-token'
+import { OPERATOR_COOKIE, verificarOperadorToken } from './operator-token'
+import { tocarDispositivo } from '@/features/seguridad/dispositivos'
 import { BusinessError, TenantIsolationError } from './errors'
 import type { RouteSession } from './route-access'
 
@@ -237,10 +239,24 @@ export async function resolveTenantContext(
   issuedAt?: number,
   /** Sucursal pedida por el selector. Es una sugerencia: se valida contra lo asignado. */
   branchPedida?: string,
+  /**
+   * Sesión de dispositivo del JWT. Si viene, tiene que existir y no estar
+   * revocada: revocar una sesión surte efecto en la siguiente petición. Sin
+   * `sid` (JWT anteriores a las sesiones por dispositivo) no se exige.
+   */
+  sid?: string,
 ): Promise<TenantContext> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: CONTEXT_SELECT,
+    select: {
+      ...CONTEXT_SELECT,
+      // En la MISMA sentencia (join): comprobar la sesión no añade una ida y vuelta.
+      deviceSessions: {
+        where: { id: sid ?? '__sin_sid__' },
+        select: { revokedAt: true, lastSeenAt: true },
+        take: 1,
+      },
+    },
     /*
      * UNA sola sentencia con LATERAL JOIN, en lugar de una consulta por
      * relación anidada.
@@ -261,6 +277,14 @@ export async function resolveTenantContext(
       'UNAUTHENTICATED',
       'Tu contraseña cambió. Vuelve a iniciar sesión.',
     )
+  }
+  if (sid) {
+    const d = user.deviceSessions[0]
+    if (!d || d.revokedAt) {
+      throw new BusinessError('UNAUTHENTICATED', 'Esta sesión se cerró. Vuelve a iniciar sesión.')
+    }
+    // Accesorio y sin esperar: «visto por última vez» (máx. cada 5 min).
+    void tocarDispositivo(sid, d.lastSeenAt, now)
   }
 
   // Un SUPERADMIN no opera dentro de un tenant: entra por el módulo auditado
@@ -355,12 +379,29 @@ async function requireTenantContextSinCache(): Promise<TenantContext> {
     }
   }
 
-  return resolveTenantContext(
+  const jar = await cookies()
+  const base = await resolveTenantContext(
     session.user.id,
     new Date(),
     session.issuedAt,
-    (await cookies()).get(BRANCH_COOKIE)?.value,
+    jar.get(BRANCH_COOKIE)?.value,
+    session.sid,
   )
+
+  /*
+   * Operador por PIN. La cookie solo vale si está firmada, no ha caducado y
+   * está atada a ESTA sesión de dispositivo y a ESTE usuario. Si no se puede
+   * aplicar (operador desactivado, PIN quitado o bloqueado, fuera de la
+   * sucursal) se ignora en silencio y se sigue con el usuario de la sesión: el
+   * fallo seguro es «no hay operador», nunca «hay otro».
+   */
+  const op = session.sid ? verificarOperadorToken(jar.get(OPERATOR_COOKIE)?.value) : null
+  if (op && op.sid === session.sid && op.sub === session.user.id) {
+    const { aplicarOperador } = await import('@/features/seguridad/pin-service')
+    const conOperador = await aplicarOperador(base, op.op)
+    if (conOperador) return conOperador
+  }
+  return base
 }
 
 /** Sesión de SUPERADMIN real, ignorando cualquier impersonation en curso. */

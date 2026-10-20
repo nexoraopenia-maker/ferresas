@@ -64,3 +64,19 @@ export function puedeGestionarA(actor: TenantContext, objetivo: UsuarioObjetivo)
   const propios = permisosDe(actor)
   return roles.every((r) => contenidoEn(r, propios))
 }
+
+/**
+ * ¿Puede `actor` poner la contraseña de este usuario?
+ *
+ *   · La suya propia: sí. Es el único caso en que el DUEÑO entra en la
+ *     regla: cualquier otra persona que toque la clave del dueño tendría su
+ *     cuenta, y con ella el negocio entero.
+ *   · La de otro: solo si `puedeGestionarA`, es decir, si ese usuario tiene
+ *     MENOS poder que él. Nadie cambia la clave de un dueño, de un
+ *     superadmin ni de alguien con permisos que él no alcanza (un ADMIN no
+ *     puede cambiarle la clave a otro ADMIN con más poder, ni a un DUEÑO).
+ */
+export function puedeCambiarPassword(actor: TenantContext, objetivo: UsuarioObjetivo): boolean {
+  if (objetivo.id === actor.userId) return true
+  return puedeGestionarA(actor, objetivo)
+}

@@ -501,6 +501,14 @@ model User {
    * el cambio de contraseña revoca de verdad lo que había.
    */
   passwordChangedAt DateTime?
+  /// PIN de cajero (4 a 6 dígitos), hasheado. Solo IDENTIFICA al operador en un
+  /// dispositivo ya autenticado; nunca da más permisos que los de la sesión.
+  pinHash           String?
+  /// Intentos fallidos seguidos. Al llegar a 5 la cuenta de PIN se bloquea.
+  pinFailedAttempts Int       @default(0)
+  /// Si no es NULL, el PIN está bloqueado. Solo un dueño o administrador lo libera.
+  pinLockedAt       DateTime?
+  pinSetAt          DateTime?
 
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
@@ -508,6 +516,7 @@ model User {
   deletedAt   DateTime?
 
   accounts        Account[]
+  deviceSessions  DeviceSession[]
   sessions        Session[]
   branches        UserBranch[]
   managedBranches Branch[]               @relation("BranchManager")
@@ -1819,4 +1828,24 @@ model Invitation {
   @@index([tenantId, email])
   @@index([tenantId, acceptedAt, revokedAt, expiresAt])
   @@map("invitations")
+}
+
+/// Sesión de un dispositivo. Su `id` viaja en el JWT (`sid`); revocarla cierra
+/// esa sesión en la siguiente navegación, aunque el JWT siga sin caducar.
+model DeviceSession {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenantId    String?
+  userAgent   String?
+  ip          String?
+  createdAt   DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  revokedAt   DateTime?
+  /// Quién la cerró: él mismo o un administrador. NULL si caducó o aún está viva.
+  revokedById String?
+
+  @@index([userId, revokedAt])
+  @@index([tenantId, userId])
+  @@map("device_sessions")
 }

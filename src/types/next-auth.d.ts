@@ -23,6 +23,8 @@ declare module 'next-auth' {
      * contraseña no echaría a nadie.
      */
     issuedAt?: number
+    /** Id de la sesión de dispositivo (`DeviceSession`). Revocarla cierra esta sesión. */
+    sid?: string
   }
 }
 
@@ -31,5 +33,7 @@ declare module 'next-auth/jwt' {
     sub?: string
     /** Rol en el momento del login. Para enrutado, no para autorizar. */
     role?: Role
+    /** Sesión de dispositivo creada al iniciar sesión. */
+    sid?: string
   }
 }

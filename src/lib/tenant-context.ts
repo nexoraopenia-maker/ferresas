@@ -67,6 +67,13 @@ export interface TenantContext {
    * Permite restringir a una persona sin inventar un rol nuevo para ella.
    */
   permisosDenegados?: readonly Permiso[]
+  /**
+   * Presente cuando un operador entró con su PIN en un dispositivo cuya sesión
+   * es de OTRA persona: es el usuario cuya sesión está abierta. `userId` y
+   * `role` son los del operador; los permisos nunca superan los de este usuario
+   * ni los del operador (ver `src/features/seguridad/pin-reglas.ts`).
+   */
+  operadorDe?: string
   /** Presente solo si un SUPERADMIN está impersonando (§5.3). */
   impersonationId?: string
 }

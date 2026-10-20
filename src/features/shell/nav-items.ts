@@ -113,6 +113,14 @@ export const NAV_ITEMS: NavItem[] = [
     permisos: ['usuarios.gestionar'],
   },
   {
+    href: '/seguridad',
+    label: 'Seguridad',
+    short: 'Seguridad',
+    // Escudo
+    icon: 'M12 3 4 6v6c0 4.5 3.2 8.2 8 9 4.8-.8 8-4.5 8-9V6l-8-3Zm-1 11-3-3 1.4-1.4L11 11.2l3.6-3.6L16 9l-5 5Z',
+    permisos: PERMISOS_PANEL,
+  },
+  {
     href: '/facturacion',
     label: 'Mi plan',
     short: 'Plan',

@@ -1,12 +1,13 @@
 import Link from 'next/link'
 import { guardDashboard } from '@/lib/dashboard-guard'
-import { permisosDe } from '@/lib/puede'
+import { permisosDe, puede } from '@/lib/puede'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { logoutAction } from '../(auth)/actions'
 import { AccountBannerBar } from '@/features/billing/components/AccountBannerBar'
 import { ImpersonationBanner } from '@/features/superadmin/components/ImpersonationBanner'
 import { NavLinks } from '@/features/shell/components/NavLinks'
 import { BranchSwitcher } from '@/features/branches/components/BranchSwitcher'
+import { OperadorSwitcher } from '@/features/seguridad/components/OperadorSwitcher'
 
 /**
  * Armazón del área de cliente.
@@ -44,7 +45,7 @@ export default async function DashboardLayout({
    */
   const { ctx } = await guardDashboard()
   const db = getTenantPrisma(ctx)
-  const [tenant, asignadas] = await Promise.all([
+  const [tenant, asignadas, operador] = await Promise.all([
     db.tenant.findFirst({ select: { name: true, isDemo: true } }),
     /*
      * Sucursales que el usuario puede operar. Se consultan aquí, en el
@@ -57,7 +58,15 @@ export default async function DashboardLayout({
       select: { id: true, code: true, name: true, seriesNumber: true },
       orderBy: { code: 'asc' },
     }),
+    // Solo en modo operador: el nombre de quien está cobrando.
+    ctx.operadorDe
+      ? db.user.findFirst({ where: { id: ctx.userId }, select: { name: true } })
+      : Promise.resolve(null),
   ])
+  const nombreOperador = operador?.name ?? null
+  // El selector de operador lo ve quien cobra o vende; y siempre quien YA está en modo operador, para poder salir.
+  const puedeOperarCaja =
+    !!ctx.operadorDe || puede(ctx, 'ventas.cobrar') || puede(ctx, 'ventas.crear') || puede(ctx, 'caja.abrir_cerrar')
   const sucursales = asignadas
 
   return (
@@ -73,6 +82,7 @@ export default async function DashboardLayout({
 
         <div className="border-b border-hairline px-4 py-3">
           <BranchSwitcher sucursales={sucursales} activa={ctx.branchId} />
+          {puedeOperarCaja && <div className="mt-2"><OperadorSwitcher operadorActual={nombreOperador} /></div>}
         </div>
 
         <nav aria-label="Navegación principal" className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
@@ -122,6 +132,7 @@ export default async function DashboardLayout({
           <div className="mt-2">
             <BranchSwitcher sucursales={sucursales} activa={ctx.branchId} />
           </div>
+          {puedeOperarCaja && <div className="mt-2"><OperadorSwitcher operadorActual={nombreOperador} /></div>}
         </header>
 
         <main className="min-w-0 flex-1 bg-surface-raised">{children}</main>

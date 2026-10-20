@@ -101,8 +101,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
          * infraestructura se disfrace de contraseña mala. Se aísla.
          */
         let ip = 'desconocida'
+        let userAgent: string | null = null
         try {
-          ip = clientIp(await headers())
+          const cabeceras = await headers()
+          ip = clientIp(cabeceras)
+          userAgent = cabeceras.get('user-agent')
         } catch (e) {
           console.error('[auth] no se pudo leer la IP del request', {
             error: e instanceof Error ? e.message : e,
@@ -133,7 +136,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           } catch (e) {
             console.error('[auth] arranque de la demo falló (no afecta al login)', e instanceof Error ? e.message : e)
           }
-          return r.user
+          // Sesión de dispositivo: su id viaja en el JWT y se puede revocar. Si
+          // no se pudo crear, el login sigue (sin sid) en vez de fallar por algo accesorio.
+          let sid: string | undefined
+          try {
+            const { registrarDispositivo } = await import('@/features/seguridad/dispositivos')
+            sid = await registrarDispositivo({ userId: r.user.id, tenantId: null, userAgent, ip })
+          } catch (e) {
+            console.error('[auth] no se pudo registrar el dispositivo', e instanceof Error ? e.message : e)
+          }
+          return sid ? { ...r.user, sid } : r.user
         }
 
         // Un fallo de base NO es culpa del usuario: se registra como error,
@@ -161,6 +173,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   callbacks: {
     jwt({ token, user }) {
       if (user?.id) token.sub = user.id
+      const sid = (user as { sid?: string } | undefined)?.sid
+      if (sid) token.sid = sid
       /*
        * El rol se fija AL ENTRAR y no se refresca. Solo lo usa el proxy para
        * enrutar; la autorización la resuelve la base en cada petición.
@@ -189,6 +203,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // resolveTenantContext pueda descartar tokens emitidos antes del
       // último cambio de contraseña.
       if (typeof token.iat === 'number') session.issuedAt = token.iat
+      if (typeof token.sid === 'string') session.sid = token.sid
       return session
     },
   },
