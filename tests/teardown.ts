@@ -173,7 +173,17 @@ async function tomarLock(): Promise<() => Promise<void>> {
 
   // Se quita lo que el `pg` crudo no entiende de la cadena de Prisma.
   const conexion = url.replace(/[?&]pgbouncer=true/, '').replace(/[?&]connection_limit=\d+/, '')
-  const cliente = new Client({ connectionString: conexion })
+  // keepAlive: Neon cierra las conexiones inactivas y esta pasa minutos sin
+  // hablar. Sin el manejador de 'error', ese cierre tumbaba TODA la suite con
+  // un 'Unhandled error event' que nada tenía que ver con lo que se probaba.
+  const cliente = new Client({ connectionString: conexion, keepAlive: true })
+  let perdida = false
+  cliente.on('error', () => {
+    if (!perdida) {
+      perdida = true
+      console.log('  ⚠ se perdió la conexión del bloqueo de la suite; sigue sin exclusión entre ejecuciones.')
+    }
+  })
   await cliente.connect()
 
   const t0 = Date.now()

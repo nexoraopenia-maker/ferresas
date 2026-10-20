@@ -60,6 +60,7 @@ const TENANT_SCOPED = new Set([
   'ProductVariant',
   'Stock',
   'StockMovement',
+  'Merma',
   'Sale',
   'SaleItem',
   'Payment',
