@@ -85,6 +85,19 @@ async function main() {
   check('>>> sin sucursales no ve NADA', (await dbNada.sale.count()) === 0 && (await dbNada.cashSession.count()) === 0)
   check('contexto sin branchIds (SUPERADMIN, alta) no se restringe', (await dbLibre.sale.count()) === 2)
 
+  console.log('\n2b) >>> Los hijos heredan la sucursal de su venta (informes incluidos)')
+  const prodX = await prisma.product.create({ data: { tenantId: t.id, sku: 'HIJO-1', name: 'Hijo' } })
+  const lin = (saleId: string, q: number) => prisma.saleItem.create({
+    data: { tenantId: t.id, saleId, productId: prodX.id, nameSnapshot: 'Hijo', skuSnapshot: 'HIJO-1', quantity: q, unitPrice: 1, lineTotal: q },
+  })
+  await lin(sA.id, 2); await lin(sB.id, 5)
+  check('>>> las líneas de la venta de B no se ven desde A', (await dbA.saleItem.findMany()).length === 1)
+  const agg = await dbA.saleItem.groupBy({ by: ['productId'], _sum: { quantity: true } })
+  check('>>> y un groupBy (informe) solo suma lo de A: 2, no 7', Number(agg[0]?._sum.quantity) === 2, String(agg[0]?._sum.quantity))
+  check('el dueño (A y B) suma 7',
+    Number((await dbOwner.saleItem.groupBy({ by: ['productId'], _sum: { quantity: true } }))[0]?._sum.quantity) === 7)
+  check('>>> sin sucursales no ve líneas', (await dbNada.saleItem.count()) === 0)
+
   console.log('\n3) Transferencias: se ven desde ambos extremos')
   const dbB = getTenantPrisma(ctx(uSinSuc.id, 'VENDEDOR', [bB.id]))
   check('el origen la ve', (await dbA.branchTransfer.count()) === 1)

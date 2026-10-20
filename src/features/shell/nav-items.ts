@@ -29,7 +29,24 @@ export interface NavItem {
   permisos: readonly Permiso[]
 }
 
+/**
+ * El panel lo ve todo rol de negocio: cada bloque decide qué enseña según sus
+ * permisos. Se declara con un permiso que cada rol tiene por lo menos uno.
+ */
+export const PERMISOS_PANEL: readonly Permiso[] = [
+  'ventas.crear', 'ventas.cobrar', 'cotizaciones.crear', 'reportes.ver', 'caja.arqueo',
+  'stock.entrada', 'stock.transferir_solicitar', 'productos.crear', 'usuarios.gestionar',
+]
+
 export const NAV_ITEMS: NavItem[] = [
+  {
+    href: '/panel',
+    label: 'Panel',
+    short: 'Panel',
+    // Cuadrícula
+    icon: 'M4 4h7v7H4V4Zm9 0h7v4h-7V4ZM4 13h7v7H4v-7Zm9-3h7v10h-7V10Z',
+    permisos: PERMISOS_PANEL,
+  },
   {
     href: '/pos',
     label: 'Punto de venta',

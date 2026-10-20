@@ -20,6 +20,7 @@ import {
   type RegisterSaleInput,
 } from './schemas'
 import { filtroAlmacen } from '@/features/branches/queries'
+import { buscarProductos, MIN_CARACTERES } from './busqueda'
 import { registerSale as runRegisterSale } from './sale-service'
 import {
   convertQuoteToSale as runConvertQuote,
@@ -83,6 +84,8 @@ export interface PosProduct {
   stockStatus: StockStatus
   warehouseId: string
   warehouseName: string
+  /** Solo en la búsqueda: 0 = coincide exactamente con un código. Menor = mejor. */
+  relevancia?: number
 }
 
 /**
@@ -164,66 +167,19 @@ export async function lookupForPos(
   })
 }
 
-/** Búsqueda por nombre, para cuando el código no se lee o no existe. */
+/**
+ * Búsqueda del POS: código de barras, SKU o nombre parcial, ordenada por lo
+ * parecido que es (ver `busqueda.ts`).
+ */
 export async function searchForPos(
   texto: string,
 ): Promise<ActionResult<PosProduct[]>> {
-  const parsed = z.string().trim().min(2).max(80).safeParse(texto)
+  const parsed = z.string().trim().min(MIN_CARACTERES).max(80).safeParse(texto)
   if (!parsed.success) return { ok: true, data: [] }
 
   return withTenant('searchForPos', async (db, ctx) => {
-    const warehouse = await db.warehouse.findFirst({
-      where: filtroAlmacen(ctx.branchId),
-      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-      select: { id: true, name: true },
-    })
-    if (!warehouse) return { ok: true, data: [] }
-
-    const productos = await db.product.findMany({
-      where: {
-        deletedAt: null,
-        isActive: true,
-        name: { contains: parsed.data, mode: 'insensitive' },
-      },
-      orderBy: { name: 'asc' },
-      take: 20,
-      select: {
-        id: true, name: true, sku: true, barcode: true, qrCode: true,
-        unitType: true, salePrice: true, taxRate: true, minStock: true,
-        trackStock: true,
-        stocks: {
-          where: { warehouseId: warehouse.id, variantId: null },
-          select: { quantity: true, minStock: true },
-          take: 1,
-        },
-      },
-    })
-
-    return {
-      ok: true,
-      data: productos.map((p) => {
-        const s = p.stocks[0]
-        const stock = s ? Number(s.quantity) : 0
-        const minStock = Number(s?.minStock ?? p.minStock)
-        return {
-          productId: p.id,
-          variantId: null,
-          name: p.name,
-          sku: p.sku,
-          barcode: p.barcode,
-          qrCode: p.qrCode,
-          unitType: p.unitType,
-          salePrice: Number(p.salePrice),
-          taxRate: Number(p.taxRate),
-          trackStock: p.trackStock,
-          stock,
-          minStock,
-          stockStatus: getStockStatus(stock, minStock),
-          warehouseId: warehouse.id,
-          warehouseName: warehouse.name,
-        }
-      }),
-    }
+    const data = await buscarProductos(db, ctx, parsed.data)
+    return { ok: true, data }
   })
 }
 

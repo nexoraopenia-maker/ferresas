@@ -64,11 +64,11 @@ export default async function DashboardLayout({
     <div className="min-h-dvh lg:flex">
       {/* ───────── Sidebar: solo escritorio ───────── */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-hairline bg-surface-raised lg:sticky lg:top-0 lg:flex lg:h-dvh">
-        <div className="border-b border-hairline px-4 py-4">
-          <p className="truncate text-sm font-bold text-ink">
+        <div className="bg-brand-gradient px-4 py-4 text-white">
+          <p className="truncate text-sm font-bold">
             {tenant?.name ?? 'Mi ferretería'}
           </p>
-          <p className="truncate text-xs text-ink-muted">{ctx.role.toLowerCase()}</p>
+          <p className="truncate text-xs font-medium text-white/85">{ctx.role.toLowerCase()}</p>
         </div>
 
         <div className="border-b border-hairline px-4 py-3">
@@ -102,12 +102,12 @@ export default async function DashboardLayout({
 
         {/* Cabecera solo en móvil: en escritorio esa información ya está en
             el sidebar y repetirla gasta altura. */}
-        <header className="border-b border-hairline bg-surface px-4 py-3 lg:hidden">
+        <header className="bg-brand-gradient px-4 py-3 text-white lg:hidden">
           <div className="flex items-center justify-between gap-3">
-            <p className="truncate text-sm font-bold text-ink">
+            <p className="truncate text-sm font-bold">
               {tenant?.name ?? 'Mi ferretería'}
             </p>
-            <Link href="/facturacion" className="shrink-0 text-xs font-semibold text-ink-muted">
+            <Link href="/facturacion" className="shrink-0 text-xs font-semibold text-white/85">
               {ctx.role.toLowerCase()}
             </Link>
           </div>
@@ -119,7 +119,7 @@ export default async function DashboardLayout({
           </div>
         </header>
 
-        <main className="min-w-0 flex-1">{children}</main>
+        <main className="min-w-0 flex-1 bg-surface-raised">{children}</main>
 
         {/* ───────── Barra inferior: solo móvil ───────── */}
         <nav

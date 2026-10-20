@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useRef, useState, useTransition } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { formatearFechaLocal } from '@/lib/fecha-local'
 import { redondearCentimos } from '@/lib/dinero'
 import { InventoryScannerModal } from '@/components/inventory/InventoryScannerModal'
@@ -145,14 +145,53 @@ export function PosTerminal({
     agregar(res.data)
   }, [agregar])
 
+  /*
+   * Búsqueda inmediata pero sin atropellarse:
+   *   · 120 ms de espera tras la última tecla (no una consulta por letra);
+   *   · cada consulta lleva un número de secuencia y solo vale la ÚLTIMA: sin
+   *     esto, la respuesta lenta de «ce» podía llegar después de la de «cem» y
+   *     pisarla con resultados viejos.
+   */
+  const seqBusqueda = useRef(0)
+  const temporizador = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(temporizador.current), [])
+
   const buscar = useCallback((texto: string) => {
     setBusqueda(texto)
+    clearTimeout(temporizador.current)
+    const seq = ++seqBusqueda.current
     if (texto.trim().length < 2) { setResultados([]); return }
-    startTransition(async () => {
-      const r = await searchForPos(texto)
-      setResultados(r.ok ? r.data : [])
-    })
+    temporizador.current = setTimeout(() => {
+      startTransition(async () => {
+        const r = await searchForPos(texto)
+        if (seq === seqBusqueda.current) setResultados(r.ok ? r.data : [])
+      })
+    }, 120)
   }, [])
+
+  /*
+   * Enter en la caja: lo que hace un lector USB que «teclea» el código y
+   * termina con Enter. Se resuelve por código EXACTO sin esperar a la lista, y
+   * si no hay código exacto, con el primer resultado cuando es inequívoco.
+   */
+  const alPulsarEnter = async () => {
+    const texto = busqueda.trim()
+    if (texto.length < 2) return
+    clearTimeout(temporizador.current)
+    seqBusqueda.current++
+    setError(null); setAviso(null)
+    const exacto = await lookupForPos({ code: texto })
+    if (exacto.ok && exacto.data) {
+      agregar(exacto.data); setBusqueda(''); setResultados([]); return
+    }
+    const lista = resultados.length > 0 ? resultados : (await searchForPos(texto).then((r) => (r.ok ? r.data : [])))
+    const primero = lista[0]
+    if (primero && (lista.length === 1 || (primero.relevancia ?? 9) <= 1)) {
+      agregar(primero); setBusqueda(''); setResultados([]); return
+    }
+    setResultados(lista)
+    if (lista.length === 0) setAviso(`No encontré «${texto}». Revisa el código o créalo en inventario.`)
+  }
 
   const fijarCantidad = (key: string, q: number) =>
     setCarrito((prev) =>
@@ -348,7 +387,8 @@ export function PosTerminal({
           ref={buscadorRef}
           value={busqueda}
           onChange={(e) => buscar(e.target.value)}
-          placeholder="O busca por nombre…  (F2)"
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void alPulsarEnter() } }}
+          placeholder="Código, SKU o nombre…  (F2)"
           className="h-touch-lg w-full rounded-xl border border-hairline bg-surface px-4 text-base text-ink placeholder:text-ink-muted focus:border-industrial-600 focus:outline-none focus:ring-2 focus:ring-industrial-600/40"
         />
         {resultados.length > 0 && (

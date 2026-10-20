@@ -11,7 +11,7 @@ import {
 import { crearSucursal, asignarSucursal } from './fixtures'
 import { prisma } from '@/lib/prisma'
 import {
-  requiresSessionLookup, resolveRouteAccessFromToken, resolveAccountGate,
+  requiresSessionLookup, resolveRouteAccessFromToken, resolveAccountGate, ROUTES,
   type TokenSession,
 } from '@/lib/route-access'
 import {
@@ -316,7 +316,7 @@ async function main() {
     at('/superadmin', T({ role: 'ADMIN' })).kind === 'not-found')
   check('el login con token sin rol manda al panel de cliente', (() => {
     const d = at('/login', viejo)
-    return d.kind === 'redirect' && d.to === '/inventario'
+    return d.kind === 'redirect' && d.to === ROUTES.dashboard
   })())
   check('y con token de SUPERADMIN, a su panel', (() => {
     const d = at('/login', T({ role: 'SUPERADMIN' }))

@@ -81,7 +81,9 @@ export function NavLinks({
               aria-current={activo ? 'page' : undefined}
               aria-busy={cargando || undefined}
               className={`flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1.5 transition-colors ${
-                activo ? 'text-industrial-600 dark:text-industrial-400' : 'text-ink-muted'
+                activo
+                  ? 'bg-industrial-50 text-industrial-700 dark:bg-graphite-800 dark:text-industrial-300'
+                  : 'text-ink-muted'
               }`}
             >
               <Icono d={i.icon} activo={activo} cargando={cargando} />
@@ -107,8 +109,8 @@ export function NavLinks({
             aria-busy={cargando || undefined}
             className={`flex h-touch-lg items-center gap-3 rounded-xl px-3 text-sm font-semibold transition-colors ${
               activo
-                ? 'bg-industrial-600 text-white'
-                : 'text-ink hover:bg-surface-sunken'
+                ? 'bg-brand-gradient text-white shadow-md shadow-industrial-600/30'
+                : 'text-ink hover:bg-industrial-50 hover:text-industrial-700 dark:hover:bg-graphite-800 dark:hover:text-industrial-300'
             }`}
           >
             <Icono d={i.icon} activo={activo} cargando={cargando} />

@@ -89,19 +89,35 @@ const TENANT_SCOPED = new Set([
  * lo hacen los servicios (`filtroAlmacen`, `verificarAlmacenDeSucursal`).
  * Las transferencias se ven desde cualquiera de sus dos extremos.
  */
-const BRANCH_SCOPED: Record<string, readonly string[]> = {
-  Sale: ['branchId'],
-  Quote: ['branchId'],
-  CashSession: ['branchId'],
-  Merma: ['branchId'],
-  BranchTransfer: ['fromBranchId', 'toBranchId'],
+interface AlcanceSucursal {
+  columnas: readonly string[]
+  /**
+   * Relación hacia el padre que SÍ lleva la sucursal. Las líneas de venta, los
+   * pagos o los comprobantes no tienen `branchId` propio: heredan el de su
+   * venta. Sin esto, un `saleItem.groupBy` (un informe) saltaba el filtro.
+   */
+  via?: string
 }
 
-function condicionDeSucursal(columnas: readonly string[], ids: readonly string[]): AnyArgs {
+const BRANCH_SCOPED: Record<string, AlcanceSucursal> = {
+  Sale: { columnas: ['branchId'] },
+  Quote: { columnas: ['branchId'] },
+  CashSession: { columnas: ['branchId'] },
+  Merma: { columnas: ['branchId'] },
+  BranchTransfer: { columnas: ['fromBranchId', 'toBranchId'] },
+  SaleItem: { columnas: ['branchId'], via: 'sale' },
+  Payment: { columnas: ['branchId'], via: 'sale' },
+  TaxDocument: { columnas: ['branchId'], via: 'sale' },
+  QuoteItem: { columnas: ['branchId'], via: 'quote' },
+  BranchTransferItem: { columnas: ['fromBranchId', 'toBranchId'], via: 'transfer' },
+}
+
+function condicionDeSucursal(alcance: AlcanceSucursal, ids: readonly string[]): AnyArgs {
   const lista = [...ids]
-  return columnas.length === 1
-    ? { [columnas[0]!]: { in: lista } }
-    : { OR: columnas.map((c) => ({ [c]: { in: lista } })) }
+  const propia = alcance.columnas.length === 1
+    ? { [alcance.columnas[0]!]: { in: lista } }
+    : { OR: alcance.columnas.map((c) => ({ [c]: { in: lista } })) }
+  return alcance.via ? { [alcance.via]: propia } : propia
 }
 
 /** Añade una condición a `where` sin perder las claves únicas del nivel superior. */
@@ -262,14 +278,16 @@ function buildTenantClient(ctx: TenantContext) {
           }
 
           // 3b. Acotado por sucursal (ver BRANCH_SCOPED).
-          const columnasSucursal = !isSelf && ctx.branchIds !== undefined ? BRANCH_SCOPED[model] : undefined
-          if (columnasSucursal && ctx.branchIds) {
+          const alcanceSucursal = !isSelf && ctx.branchIds !== undefined ? BRANCH_SCOPED[model] : undefined
+          // Solo los modelos con sucursal PROPIA se validan al crear; los hijos heredan la del padre.
+          const columnasSucursal = alcanceSucursal && !alcanceSucursal.via ? alcanceSucursal.columnas : undefined
+          if (alcanceSucursal && ctx.branchIds) {
             if (
               READ_OPERATIONS.has(operation) ||
               WHERE_WRITE_OPERATIONS.has(operation) ||
               operation === 'upsert'
             ) {
-              nextArgs = conjuntar(nextArgs, condicionDeSucursal(columnasSucursal, ctx.branchIds))
+              nextArgs = conjuntar(nextArgs, condicionDeSucursal(alcanceSucursal, ctx.branchIds))
             }
           }
 

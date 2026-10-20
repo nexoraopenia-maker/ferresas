@@ -146,7 +146,7 @@ export function TenantActions({
       if (accion === 'soporte') {
         // Recarga completa: la cookie de soporte cambió quién es el usuario
         // efectivo y el router de Next serviría caché del superadmin.
-        window.location.assign('/inventario')
+        window.location.assign('/panel')
         return
       }
 

@@ -14,44 +14,62 @@
    ========================================================================= */
 
 @theme {
-  /* --- Primario: Naranja Industrial -------------------------------------
-     Ancla en amber-600 (#d97706), la acción principal: escanear, cobrar,
-     confirmar. Se reserva para eso — si todo es naranja, nada resalta. */
-  --color-industrial-50: #fffbeb;
-  --color-industrial-100: #fef3c7;
-  --color-industrial-200: #fde68a;
-  --color-industrial-300: #fcd34d;
-  --color-industrial-400: #fbbf24;
-  --color-industrial-500: #f59e0b;
-  --color-industrial-600: #d97706;
-  --color-industrial-700: #b45309;
-  --color-industrial-800: #92400e;
-  --color-industrial-900: #78350f;
-  --color-industrial-950: #451a03;
+  /* --- Primario: Azul Cobalto ------------------------------------------
+     La acción principal: escanear, cobrar, confirmar, y el color de marca en
+     menús y tarjetas. (El nombre «industrial» se conserva por las miles de
+     utilidades que ya lo usan; antes era ámbar y se leía apagado.)
+     600 lleva texto blanco con contraste ≥ 4,5:1: `tests/contraste.ts` lo
+     comprueba, así que retocar un tono sin querer rompe la suite. */
+  --color-industrial-50: #eff4ff;
+  --color-industrial-100: #dbe5ff;
+  --color-industrial-200: #bdd0ff;
+  --color-industrial-300: #8fb0ff;
+  --color-industrial-400: #5c88ff;
+  --color-industrial-500: #3a64f7;
+  --color-industrial-600: #2548e0;
+  --color-industrial-700: #1d39b6;
+  --color-industrial-800: #1c3190;
+  --color-industrial-900: #1c2f73;
+  --color-industrial-950: #121c47;
 
-  /* --- Secundario: Grafito ----------------------------------------------
-     Base slate/zinc para textos, headers y superficies oscuras. */
-  --color-graphite-50: #f8fafc;
-  --color-graphite-100: #f1f5f9;
-  --color-graphite-200: #e2e8f0;
-  --color-graphite-300: #cbd5e1;
-  --color-graphite-400: #94a3b8;
-  --color-graphite-500: #64748b;
-  --color-graphite-600: #475569;
-  --color-graphite-700: #334155;
-  --color-graphite-800: #1e293b;
-  --color-graphite-900: #0f172a;
-  --color-graphite-950: #020617;
+  /* --- Acento: Coral ----------------------------------------------------
+     Para destacar, no para el flujo principal: novedades, alertas amables,
+     el segundo botón de una tarjeta. Si todo es acento, nada lo es. */
+  --color-accent-50: #fff4ed;
+  --color-accent-100: #ffe6d5;
+  --color-accent-200: #ffcaa8;
+  --color-accent-300: #ffa571;
+  --color-accent-400: #ff7a39;
+  --color-accent-500: #fb5a14;
+  --color-accent-600: #d63f06;
+  --color-accent-700: #b03208;
+  --color-accent-800: #8c290d;
+  --color-accent-900: #73250f;
+
+  /* --- Neutros: Grafito azulado ------------------------------------------
+     Antes eran grises planos; con un matiz azul las superficies dejan de
+     verse apagadas sin perder el contraste del texto. */
+  --color-graphite-50: #f5f8ff;
+  --color-graphite-100: #eaeffb;
+  --color-graphite-200: #d9e0f3;
+  --color-graphite-300: #bfc9e3;
+  --color-graphite-400: #8793b6;
+  --color-graphite-500: #566287;
+  --color-graphite-600: #434d6c;
+  --color-graphite-700: #313a56;
+  --color-graphite-800: #212840;
+  --color-graphite-900: #141a30;
+  --color-graphite-950: #0a0e20;
 
   /* --- Semáforo de stock (§5.1) -----------------------------------------
      Tres estados, nunca más: verde saludable, ámbar cerca del mínimo, rojo
      agotado. El color va SIEMPRE acompañado de texto o ícono — un 8% de los
      hombres tiene daltonismo rojo-verde y esto se usa en ferreterías. */
-  --color-stock-ok: #059669;        /* emerald-600 */
+  --color-stock-ok: #047857;        /* emerald-700 */
   --color-stock-ok-soft: #d1fae5;
-  --color-stock-low: #f59e0b;       /* amber-500  */
+  --color-stock-low: #b45309;       /* amber-700: el 500 no llegaba a 4,5:1 sobre el fondo suave */
   --color-stock-low-soft: #fef3c7;
-  --color-stock-out: #e11d48;       /* rose-600   */
+  --color-stock-out: #be123c;       /* rose-700   */
   --color-stock-out-soft: #ffe4e6;
 
   /* --- Ergonomía táctil --------------------------------------------------
@@ -132,4 +150,20 @@
 @utility safe-bottom {
   /* El botón primario nunca debe quedar bajo la barra de gestos del iPhone. */
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
+}
+
+/* Degradado de marca: cabeceras de menú y tarjetas destacadas. El texto sobre
+   él es siempre blanco; ambos extremos pasan 4,5:1 (tests/contraste.ts). */
+@utility bg-brand-gradient {
+  background-image: linear-gradient(
+    135deg,
+    var(--color-industrial-700) 0%,
+    var(--color-industrial-600) 55%,
+    var(--color-industrial-500) 100%
+  );
+}
+
+/* Variante cálida para el segundo plano de énfasis (acento). */
+@utility bg-accent-gradient {
+  background-image: linear-gradient(135deg, var(--color-accent-700) 0%, var(--color-accent-600) 100%);
 }

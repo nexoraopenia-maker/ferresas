@@ -473,6 +473,8 @@ async function main() {
     enMenu('OWNER', '/facturacion') && !enMenu('ADMIN', '/facturacion'))
   check('el administrador ve sucursales', enMenu('ADMIN', '/sucursales'))
   check('el vendedor no ve sucursales', !enMenu('VENDEDOR', '/sucursales'))
+  check('>>> TODO rol de negocio ve el Panel (es la pantalla de aterrizaje)',
+    (['OWNER', 'ADMIN', 'VENDEDOR', 'CAJERO', 'ALMACENERO', 'CONTADOR'] as Role[]).every((r) => enMenu(r, '/panel')))
   check('todos los enlaces declaran al menos un permiso del catálogo',
     NAV_ITEMS.every((i) => i.permisos.length > 0 &&
       i.permisos.every((p) => (PERMISOS as readonly string[]).includes(p))))
