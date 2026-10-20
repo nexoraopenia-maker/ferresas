@@ -197,6 +197,21 @@ export async function approveTransfer(
 
   const tr = await cargarTransferencia(db, input.transferId, ['SOLICITADA'])
 
+  /*
+   * Quien solicita NO aprueba, ni siendo OWNER con los dos permisos: la
+   * aprobación es el control sobre el movimiento de inventario entre locales y
+   * no controla nada si la da quien lo pidió. Es la misma regla que en las
+   * mermas. Si hay una sola persona con autoridad, que el pedido lo haga
+   * otro usuario (p. ej. el encargado del local que repone).
+   */
+  if (tr.requestedById === ctx.userId) {
+    throw new BusinessError(
+      'FORBIDDEN_ROLE',
+      'No puedes aprobar una transferencia que solicitaste tú. Que la apruebe otra persona.',
+      { solicitante: 'mismo-usuario' },
+    )
+  }
+
   const actualizada = await db.branchTransfer.update({
     where: { id: tr.id },
     data: { status: 'APROBADA', approvedById: ctx.userId, approvedAt: new Date() },
@@ -455,7 +470,7 @@ async function cargarTransferencia(
   const tr = await db.branchTransfer.findFirst({
     where: { id: transferId },
     select: {
-      id: true, number: true, status: true, notes: true,
+      id: true, number: true, status: true, notes: true, requestedById: true,
       fromBranchId: true, fromWarehouseId: true,
       toBranchId: true, toWarehouseId: true,
       items: {

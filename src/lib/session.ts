@@ -8,7 +8,7 @@ import {
 } from './impersonation'
 import { computeAccessLevel, type TenantContext } from './tenant-context'
 import { BRANCH_COOKIE, resolverSucursalActiva, sucursalesPermitidas } from './branch-selection'
-import { puede } from './puede'
+import { permisosEfectivos } from './permisos'
 import { SUPPORT_COOKIE, verificarSupportToken } from './support-token'
 import { BusinessError, TenantIsolationError } from './errors'
 import type { RouteSession } from './route-access'
@@ -29,6 +29,7 @@ import type { RouteSession } from './route-access'
 const USER_SELECT = {
   id: true,
   role: true,
+  extraRoles: true,
   isActive: true,
   deletedAt: true,
   tenantId: true,
@@ -170,7 +171,13 @@ async function cargarContextoSuplantado(
   imp: ActiveImpersonation,
   now: Date,
 ): Promise<
-  { userId: string; role: TenantContext['role']; branchId?: string; branchIds: string[] } | null
+  {
+    userId: string
+    role: TenantContext['role']
+    roles: TenantContext['role'][]
+    branchId?: string
+    branchIds: string[]
+  } | null
 > {
   /*
    * Se traen también las sucursales del suplantado. El soporte tiene que ver
@@ -180,6 +187,7 @@ async function cargarContextoSuplantado(
   const select = {
     id: true,
     role: true,
+    extraRoles: true,
     branches: {
       where: { branch: { deletedAt: null, isActive: true } },
       select: { branch: { select: { id: true, code: true, isDefault: true } } },
@@ -212,11 +220,12 @@ async function cargarContextoSuplantado(
   const permitidas = sucursalesPermitidas(
     objetivo.branches.map((ub) => ub.branch),
     objetivo.tenant?.branches ?? [],
-    puede({ role: objetivo.role } as TenantContext, 'sucursales.gestionar'),
+    permisosEfectivos([objetivo.role, ...objetivo.extraRoles]).has('sucursales.gestionar'),
   )
   return {
     userId: objetivo.id,
     role: objetivo.role,
+    roles: objetivo.extraRoles,
     branchId: resolverSucursalActiva(permitidas),
     branchIds: permitidas.map((b) => b.id),
   }
@@ -263,13 +272,15 @@ export async function resolveTenantContext(
   const permitidas = sucursalesPermitidas(
     user.branches.map((ub) => ub.branch),
     user.tenant.branches,
-    puede({ role: user.role } as TenantContext, 'sucursales.gestionar'),
+    permisosEfectivos([user.role, ...user.extraRoles]).has('sucursales.gestionar'),
   )
 
   return {
     tenantId: user.tenantId,
     userId: user.id,
     role: user.role,
+    // Roles adicionales: sus permisos se UNEN a los del principal.
+    roles: user.extraRoles,
     access: computeAccessLevel(user.tenant, user.tenant.subscription, now),
     // La cookie del selector es una sugerencia: solo vale si es una de las permitidas.
     branchId: resolverSucursalActiva(permitidas, branchPedida),
@@ -337,6 +348,7 @@ async function requireTenantContextSinCache(): Promise<TenantContext> {
           access: 'READ_ONLY',
           branchId: suplantado.branchId,
           branchIds: suplantado.branchIds,
+          roles: suplantado.roles,
           impersonationId: imp.id,
         }
       }

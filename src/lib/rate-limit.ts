@@ -122,6 +122,11 @@ export const RATE_RULES = {
    * cuentas.
    */
   login: { limit: 10, windowSeconds: 900 },
+  /**
+   * Aceptar invitación: 10 por hora y por IP. El token tiene 256 bits y no se
+   * adivina; el límite frena el abuso del bcrypt, no el acierto del token.
+   */
+  invitation: { limit: 10, windowSeconds: 3600 },
   /** Checkout: evita crear decenas de sesiones de pago por doble clic. */
   checkout: { limit: 10, windowSeconds: 300 },
 } as const satisfies Record<string, RateLimitRule>

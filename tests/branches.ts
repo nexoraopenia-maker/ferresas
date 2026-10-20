@@ -348,7 +348,12 @@ async function main() {
   check('no se puede despachar sin aprobar',
     await code(() => shipTransfer(db, ctx, { transferId: tr.id })) === 'INVALID_DOCUMENT')
 
-  await approveTransfer(db, ctx, { transferId: tr.id })
+  const ctxAprueba: TenantContext = { ...ctx, userId: multi.id, role: 'ADMIN' }
+  const dbAprueba = getTenantPrisma(ctxAprueba)
+  check('>>> quien solicita NO puede aprobar su propia transferencia (ni siendo OWNER)',
+    await code(() => approveTransfer(db, ctx, { transferId: tr.id })) === 'FORBIDDEN_ROLE')
+  check('sigue SOLICITADA tras el intento', (await db.branchTransfer.findFirstOrThrow({ where: { id: tr.id } })).status === 'SOLICITADA')
+  await approveTransfer(dbAprueba, ctxAprueba, { transferId: tr.id })
   check('aprobada tampoco mueve stock',
     Number((await db.stock.findFirstOrThrow({
       where: { productId: prod.productId, warehouseId: wMatriz.id },
@@ -423,7 +428,7 @@ async function main() {
     fromWarehouseId: wMatriz.id, toBranchId: suc2.id, toWarehouseId: w2,
     items: [{ productId: prod.productId, quantity: 10 }],
   }))
-  await approveTransfer(db, ctx, { transferId: tr2.id })
+  await approveTransfer(dbAprueba, ctxAprueba, { transferId: tr2.id })
   await shipTransfer(db, ctx, { transferId: tr2.id })
   const antesRechazo = Number((await db.stock.findFirstOrThrow({
     where: { productId: prod.productId, warehouseId: wMatriz.id },

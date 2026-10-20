@@ -127,6 +127,7 @@ async function main() {
     'src/app/page.tsx': 'portada',
     'src/app/(auth)/login/page.tsx': 'login',
     'src/app/(auth)/registro/page.tsx': 'alta de nuevos negocios',
+    'src/app/(auth)/invitacion/[token]/page.tsx': 'aceptar una invitación: la persona aún no tiene cuenta; el token (256 bits, un solo uso) la autentica',
     'src/app/cuenta-suspendida/page.tsx': 'pantalla informativa; sin datos del tenant',
   }
 

@@ -414,6 +414,29 @@ atiende el pedido con el mismo ciclo (aprobar → despachar → recibir). Antes,
 el botón «Pedir mercadería a otra sucursal» creaba en realidad un envío desde
 el almacén de quien lo pulsaba.
 
+### Usuarios, invitaciones y varios roles
+
+`/usuarios` (permiso `usuarios.gestionar`: dueño y administrador). Una persona
+entra al negocio por **invitación**: un token de 256 bits, de un solo uso y con
+7 días de vida. En la base solo se guarda su hash SHA-256; el enlace en claro se
+muestra una vez, al crearla. Quien acepta solo aporta nombre y contraseña: rol,
+sucursales y negocio salen de la fila de la invitación, y el consumo es un
+`UPDATE` condicional, así que dos clics simultáneos crean una sola cuenta. Al
+reinvitar el mismo correo, la invitación anterior queda anulada. El cupo del
+plan cuenta usuarios activos **más** invitaciones vivas.
+
+**Nadie concede más poder del que tiene** (`asignacion.ts`): un rol solo se
+puede dar si todos sus permisos están entre los de quien lo da. Un ADMIN puede
+crear otros administradores y los demás roles, pero no un dueño; la regla se
+deriva de la matriz, no de una escalera de rangos, y vale igual con varios
+roles. El OWNER y el SUPERADMIN no se conceden por invitación, ni siquiera el
+dueño (traspasar la propiedad será una operación aparte). Nadie cambia su
+propio rol ni se desactiva, nadie toca al dueño y nadie gestiona a quien tenga
+permisos que él no alcanza. Desactivar a alguien invalida sus sesiones abiertas.
+
+`User.extraRoles` guarda los roles adicionales; `resolveTenantContext` los
+vuelca en `TenantContext.roles` y los permisos se **unen**.
+
 ### `productos.ver_costo`: qué protege hoy
 
 Hoy el costo entra por tres caminos y los tres lo exigen en el servidor:

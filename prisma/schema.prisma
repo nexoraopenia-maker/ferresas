@@ -358,6 +358,7 @@ model Tenant {
   mermas         Merma[]
   transfers      BranchTransfer[]
   transferItems  BranchTransferItem[]
+  invitations    Invitation[]
   warehouses     Warehouse[]
   categories     Category[]
   products       Product[]
@@ -475,8 +476,12 @@ model User {
   phone         String?
   image         String?
 
-  role     Role    @default(VENDEDOR)
-  isActive Boolean @default(true)
+  role       Role    @default(VENDEDOR)
+  /// Roles ADICIONALES: los permisos de todos se UNEN (ver `permisosEfectivos`).
+  /// Nunca incluye OWNER ni SUPERADMIN: el dueño no se concede, y `role` ya
+  /// es el principal.
+  extraRoles Role[]  @default([])
+  isActive   Boolean @default(true)
 
   /**
    * Momento del último cambio de contraseña.
@@ -498,6 +503,7 @@ model User {
   sessions        Session[]
   branches        UserBranch[]
   managedBranches Branch[]               @relation("BranchManager")
+  invitaciones    Invitation[]           @relation("InvitedBy")
   mermasPedidas   Merma[]                @relation("MermaRequestedBy")
   mermasResueltas Merma[]                @relation("MermaResolvedBy")
   cashOpened      CashSession[]          @relation("CashOpenedBy")
@@ -1769,4 +1775,38 @@ model BranchTransferItem {
   @@index([tenantId, transferId])
   @@index([tenantId, productId])
   @@map("branch_transfer_items")
+}
+
+/// Invitación para sumarse a un negocio.
+///
+/// El enlace lleva un token aleatorio de un solo uso; aquí se guarda solo su
+/// HASH (SHA-256), igual que una contraseña: quien lea la base no puede
+/// aceptar invitaciones ajenas.
+model Invitation {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  email      String
+  role       Role
+  extraRoles Role[]   @default([])
+  /// Sucursales a las que quedará asignado al aceptar.
+  branchIds  String[] @default([])
+
+  tokenHash String   @unique
+  expiresAt DateTime
+
+  invitedById String
+  invitedBy   User   @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: Restrict)
+
+  acceptedAt     DateTime?
+  acceptedUserId String?
+  revokedAt      DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, id])
+  @@index([tenantId, email])
+  @@index([tenantId, acceptedAt, revokedAt, expiresAt])
+  @@map("invitations")
 }

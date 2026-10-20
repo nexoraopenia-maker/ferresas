@@ -88,6 +88,14 @@ export const NAV_ITEMS: NavItem[] = [
     permisos: ['sucursales.gestionar'],
   },
   {
+    href: '/usuarios',
+    label: 'Equipo',
+    short: 'Equipo',
+    // Personas
+    icon: 'M16 11a3 3 0 1 0-6 0 3 3 0 0 0 6 0ZM4 20a6 6 0 0 1 12 0M18 8a2.5 2.5 0 1 1 0 5M20 20a5 5 0 0 0-3-4.6',
+    permisos: ['usuarios.gestionar'],
+  },
+  {
     href: '/facturacion',
     label: 'Mi plan',
     short: 'Plan',

@@ -74,6 +74,8 @@ export type RouteDecision =
 const PUBLIC_PREFIXES = [
   '/login',
   '/registro',
+  // Aceptar una invitación: la persona todavía no tiene cuenta.
+  '/invitacion',
   '/api/auth',
   '/api/webhooks',
   // Vercel Cron invoca sin cookie. Se autentica con CRON_SECRET dentro del
@@ -143,6 +145,7 @@ const SKIP_SESSION_PREFIXES = [
    */
   '/api',
   '/registro',
+  '/invitacion',
   '/legal',
 ]
 
