@@ -38,7 +38,9 @@ export const PERMISOS = [
   'productos.crear',
   'stock.entrada',
   'stock.ajustar',
+  'stock.merma_solicitar',
   'stock.transferir_despachar',
+  'stock.transferir_aprobar',
   'stock.transferir_recibir',
   'reportes.ver',
   'comprobantes.emitir',
@@ -120,6 +122,18 @@ export const MATRIZ: Record<Role, readonly Permiso[]> = {
   ALMACENERO: [
     'productos.crear',
     'stock.entrada',
+    /*
+     * SOLICITAR una merma, no aplicarla.
+     *
+     * Una merma reduce inventario a criterio de quien la registra, y eso es
+     * exactamente lo que no debe hacer nadie sin supervisión: es la forma más
+     * fácil de tapar un faltante. Así que el almacenero la pide —con
+     * cantidad, motivo y opcionalmente una foto— y el stock NO se mueve hasta
+     * que alguien con `stock.ajustar` la aprueba.
+     *
+     * Misma regla que en transferencias: quien pide no autoriza.
+     */
+    'stock.merma_solicitar',
     'stock.transferir_despachar',
     'stock.transferir_recibir',
   ],
@@ -179,8 +193,10 @@ export const ETIQUETAS: Record<Permiso, string> = {
   'productos.editar_precio': 'Cambiar precios de venta',
   'productos.crear': 'Crear productos',
   'stock.entrada': 'Registrar entradas de mercadería',
-  'stock.ajustar': 'Ajustar stock por conteo',
+  'stock.ajustar': 'Ajustar stock y aprobar mermas',
+  'stock.merma_solicitar': 'Solicitar mermas (requieren aprobación)',
   'stock.transferir_despachar': 'Despachar transferencias',
+  'stock.transferir_aprobar': 'Aprobar transferencias',
   'stock.transferir_recibir': 'Recibir transferencias',
   'reportes.ver': 'Ver reportes',
   'comprobantes.emitir': 'Emitir boletas y facturas',

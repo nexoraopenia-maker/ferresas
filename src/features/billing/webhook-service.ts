@@ -54,6 +54,14 @@ async function resolverSuscripcion(evento: NormalizedEvent) {
     pastDueSince: true,
     externalSubscriptionId: true,
     externalCustomerId: true,
+    /*
+     * El plan y su moneda entran al select para poder REGISTRARLOS en la
+     * auditoría. El registro ya existía pero solo guardaba el estado, así
+     * que al revisar un cobro no se podía saber de qué plan a cuál se movió
+     * ni por cuánto — y eso es justo lo que se consulta cuando un cliente
+     * reclama.
+     */
+    plan: { select: { code: true, name: true, currency: true, priceMonthly: true } },
   } as const
 
   if (evento.externalSubscriptionId) {
@@ -260,8 +268,26 @@ export async function processBillingEvent(params: {
           entityType: 'Subscription',
           entityId: suscripcion.id,
           reason: evento.rawType,
-          before: { status: suscripcion.status },
-          after: { status: (data.status as string) ?? suscripcion.status },
+          /*
+           * Antes solo guardaba el estado. Con eso, revisar un cobro no decía
+           * de qué plan a cuál se movió, por cuánto ni con qué proveedor —
+           * exactamente los tres datos que se buscan cuando un cliente
+           * reclama un cargo. El plan no cambia en un webhook de cobro, así
+           * que va igual en `before` y `after`: lo que importa es saber CUÁL
+           * estaba vigente.
+           */
+          before: {
+            status: suscripcion.status,
+            plan: suscripcion.plan?.code ?? null,
+          },
+          after: {
+            status: (data.status as string) ?? suscripcion.status,
+            plan: suscripcion.plan?.code ?? null,
+            proveedor: provider,
+            monto: evento.amount ?? suscripcion.plan?.priceMonthly?.toString() ?? null,
+            moneda: suscripcion.plan?.currency ?? null,
+            referencia: evento.externalSubscriptionId ?? null,
+          },
         },
       }),
     ])

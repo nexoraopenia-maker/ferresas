@@ -1,5 +1,6 @@
 import type { Role, SubscriptionStatus } from '@/generated/prisma/enums'
 import { BusinessError } from './errors'
+import type { Permiso } from './permisos'
 
 /**
  * Nivel de acceso efectivo del tenant (§5.2 — bloqueo progresivo).
@@ -27,6 +28,21 @@ export interface TenantContext {
    * `requireBranch()` y fallan claro si falta, en vez de inventar una.
    */
   branchId?: string
+  /**
+   * Permisos OPCIONALES que el dueño activó para este usuario.
+   *
+   * Existen porque hay decisiones de confianza, no de puesto: en una
+   * ferretería el cajero puede descontar y en otra no, y acertar por defecto
+   * es imposible. Van apagados de fábrica porque conceder de más es peor que
+   * tener que pedirlo.
+   */
+  permisosExtra?: readonly Permiso[]
+  /**
+   * Permisos quitados a este usuario concreto, pese a su rol.
+   *
+   * Permite restringir a una persona sin inventar un rol nuevo para ella.
+   */
+  permisosDenegados?: readonly Permiso[]
   /** Presente solo si un SUPERADMIN está impersonando (§5.3). */
   impersonationId?: string
 }

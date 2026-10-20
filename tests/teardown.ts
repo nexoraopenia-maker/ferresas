@@ -29,8 +29,21 @@ import { prisma } from '@/lib/prisma'
  * pasar desapercibido.
  */
 
-/** Momento en que arrancó este fichero de pruebas. */
-const INICIO = new Date()
+/**
+ * Momento en que este fichero empezó a CREAR datos.
+ *
+ * No es el momento en que arrancó el proceso: se reinicia al conseguir el
+ * lock (ver `correr`). Si fuera el del arranque, esperar el lock contaría
+ * como "tiempo propio" y el teardown podría llevarse tenants ajenos creados
+ * mientras esperábamos.
+ */
+let INICIO = new Date()
+
+/**
+ * Clave del lock de Postgres que serializa las ejecuciones de la suite.
+ * Cualquier entero de 64 bits vale mientras sea siempre el mismo.
+ */
+const LOCK_KEY = 7_424_001_001
 
 /** Nunca se tocan, ni estando dentro de la ventana. */
 const INTOCABLES = new Set(['sol', 'luna'])
@@ -88,6 +101,8 @@ export async function limpiarResiduo(): Promise<ResultadoTeardown> {
  */
 export async function correr(main: () => Promise<number | void>): Promise<never> {
   let codigo = 1
+  const liberar = await tomarLock()
+  INICIO = new Date()
   try {
     const fallos = await main()
     codigo = typeof fallos === 'number' && fallos > 0 ? 1 : 0
@@ -115,6 +130,68 @@ export async function correr(main: () => Promise<number | void>): Promise<never>
       console.error('  ⚠ el teardown falló:', e instanceof Error ? e.message : e)
     }
     await prisma.$disconnect()
+    await liberar()
   }
   process.exit(codigo)
+}
+
+/**
+ * Serializa las ejecuciones de la suite contra la misma base.
+ *
+ * ─── EL BUG QUE ESTO ARREGLA ─────────────────────────────────────────────
+ *
+ * El teardown borra por VENTANA DE TIEMPO: todo tenant creado desde que
+ * arrancó el fichero. Con dos ejecuciones simultáneas contra la misma base,
+ * cada una veía los tenants de la otra como suyos y se los llevaba por
+ * delante. Resultado: `product-express` fallaba (el producto "no existía")
+ * pasando perfectamente en solitario, porque el teardown de OTRA suite había
+ * borrado su tenant a mitad de la prueba.
+ *
+ * Pasó de verdad: lancé dos `npm test` a la vez sin darme cuenta. Y no era un
+ * descuido aislado — dos terminales, dos personas o un CI y un portátil lo
+ * provocan igual.
+ *
+ * ─── POR QUÉ UN LOCK Y NO EL ENFOQUE POR PREFIJO O POR ID ────────────────
+ *
+ * Rastrear los ids creados por cada proceso sería lo preciso, pero los tests
+ * crean tenants con `prisma.tenant.create` directo en decenas de sitios, y
+ * obligarlos a registrarse es justo el tipo de convención que se olvida —
+ * que es como se llegó a 280 tenants de residuo.
+ *
+ * El lock no exige nada a los tests: cada fichero es exclusivo, y la ventana
+ * de tiempo vuelve a ser fiable porque nadie más escribe mientras corre.
+ *
+ * Es un lock a nivel de SESIÓN en una conexión dedicada, no del pool de
+ * Prisma: un lock de sesión sobre una conexión que el pool reparte entre
+ * consultas se soltaría —o se heredaría— de forma impredecible. Si el
+ * proceso muere, Postgres cierra la conexión y libera el lock solo.
+ */
+async function tomarLock(): Promise<() => Promise<void>> {
+  const { Client } = await import('pg')
+  const url = process.env.DIRECT_URL ?? process.env.DATABASE_URL
+  if (!url) return async () => {}
+
+  // Se quita lo que el `pg` crudo no entiende de la cadena de Prisma.
+  const conexion = url.replace(/[?&]pgbouncer=true/, '').replace(/[?&]connection_limit=\d+/, '')
+  const cliente = new Client({ connectionString: conexion })
+  await cliente.connect()
+
+  const t0 = Date.now()
+  const libre = await cliente.query<{ ok: boolean }>(
+    'SELECT pg_try_advisory_lock($1) AS ok',
+    [LOCK_KEY],
+  )
+  if (!libre.rows[0]?.ok) {
+    console.log('  ⏳ otra ejecución de la suite está usando esta base; esperando turno…')
+    await cliente.query('SELECT pg_advisory_lock($1)', [LOCK_KEY])
+    console.log(`  ▶ turno conseguido tras ${Math.round((Date.now() - t0) / 1000)} s`)
+  }
+
+  return async () => {
+    try {
+      await cliente.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY])
+    } finally {
+      await cliente.end().catch(() => {})
+    }
+  }
 }

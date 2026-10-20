@@ -180,6 +180,21 @@ enum CustomerDocType {
   SIN_DOCUMENTO
 }
 
+/**
+ * Estado de una merma solicitada.
+ * Existe porque una merma reduce inventario a criterio de quien la registra,
+ * y eso es la forma más fácil de tapar un faltante. Se pide y se aprueba por
+ * separado: misma regla que en transferencias — quien pide no autoriza.
+ */
+enum MermaStatus {
+  /// Solicitada. El stock NO se ha movido.
+  PENDIENTE
+  /// Aprobada: el stock ya se descontó.
+  APROBADA
+  /// Rechazada con motivo. El stock nunca se movió.
+  RECHAZADA
+}
+
 /// Estado del turno de caja de una sucursal.
 enum CashSessionStatus {
   ABIERTA
@@ -340,6 +355,7 @@ model Tenant {
   branches       Branch[]
   userBranches   UserBranch[]
   cashSessions   CashSession[]
+  mermas         Merma[]
   transfers      BranchTransfer[]
   transferItems  BranchTransferItem[]
   warehouses     Warehouse[]
@@ -482,6 +498,8 @@ model User {
   sessions        Session[]
   branches        UserBranch[]
   managedBranches Branch[]               @relation("BranchManager")
+  mermasPedidas   Merma[]                @relation("MermaRequestedBy")
+  mermasResueltas Merma[]                @relation("MermaResolvedBy")
   cashOpened      CashSession[]          @relation("CashOpenedBy")
   cashClosed      CashSession[]          @relation("CashClosedBy")
   transfersAsked  BranchTransfer[]       @relation("TransferRequestedBy")
@@ -579,6 +597,7 @@ model Warehouse {
   sales     Sale[]
   quotes    Quote[]
   purchases Purchase[]
+  mermas    Merma[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -731,6 +750,7 @@ model Product {
   quoteItems    QuoteItem[]
   purchaseItems PurchaseItem[]
   transferItems BranchTransferItem[]
+  mermas        Merma[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, sku])
@@ -774,6 +794,7 @@ model ProductVariant {
   quoteItems    QuoteItem[]
   purchaseItems PurchaseItem[]
   transferItems BranchTransferItem[]
+  mermas        Merma[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, sku])
@@ -1426,6 +1447,77 @@ model Ubigeo {
   @@map("ubigeos")
 }
 
+/**
+ * Merma solicitada, pendiente de aprobación.
+ * ─── POR QUÉ NO ES UN StockMovement DIRECTO ──────────────────────────────
+ * Porque mientras está PENDIENTE **el stock no se ha movido**. Un
+ * StockMovement es el asiento de algo que ya pasó; esto es una petición.
+ * Mezclarlas obligaría a tener movimientos que no cuentan para el saldo, y
+ * entonces `SUM(movimientos) = stock` —el invariante que sostiene todo el
+ * inventario— dejaría de cumplirse.
+ * Al aprobarse SÍ se crea el StockMovement, y es ese asiento el que mueve el
+ * saldo.
+ */
+model Merma {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  branchId String
+  branch   Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [tenantId, warehouseId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  productId String
+  product   Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  variantId String?
+  variant   ProductVariant? @relation(fields: [tenantId, variantId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  /// Congelados al solicitar: el catálogo puede cambiar antes de aprobarse.
+  nameSnapshot String
+  skuSnapshot  String
+  unitType     UnitType @default(UNIDAD)
+
+  quantity Decimal @db.Decimal(14, 4)
+  /// Motivo OBLIGATORIO: una merma sin explicación no es auditable.
+  reason   String
+
+  /**
+   * Foto opcional como evidencia. Se guarda la URL, no el binario: meter
+   * imágenes en Postgres infla la base y las copias de seguridad por un dato
+   * que un almacén de objetos sirve mejor.
+   */
+  photoUrl String?
+
+  status MermaStatus @default(PENDIENTE)
+
+  requestedById String
+  requestedBy   User    @relation("MermaRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  resolvedById  String?
+  resolvedBy    User?   @relation("MermaResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  /// Motivo del rechazo. Rechazar sin explicar no le sirve a quien la pidió.
+  rejectReason String?
+
+  /// Movimiento que se creó al aprobarla. NULL mientras esté pendiente.
+  movementId String?
+
+  requestedAt DateTime  @default(now())
+  resolvedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, id])
+  /// El contador del panel consulta por aquí: (tenant, estado).
+  @@index([tenantId, status, requestedAt])
+  @@index([tenantId, branchId, status])
+  @@index([tenantId, productId])
+  @@map("mermas")
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  SUCURSALES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1495,6 +1587,7 @@ model Branch {
   cashSessions CashSession[]
   transfersOut BranchTransfer[]  @relation("TransferFrom")
   transfersIn  BranchTransfer[]  @relation("TransferTo")
+  mermas       Merma[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])

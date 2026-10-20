@@ -153,8 +153,30 @@ function buildTenantClient(ctx: TenantContext) {
 
           const isWrite = !READ_OPERATIONS.has(operation)
 
+          /*
+           * El REGISTRO DE AUDITORÍA se exceptúa del bloqueo por estado de
+           * cuenta, y es deliberado.
+           *
+           * Un AuditLog no es una mutación de negocio: es la constancia de
+           * algo que ya pasó. Bloquearlo tiene dos consecuencias malas y
+           * ninguna buena:
+           *
+           *   1. Rompe el pago. Los checkouts declaran que NO escriben en la
+           *      BD precisamente para que un moroso en READ_ONLY pueda
+           *      pagar. Auditarlos —que es lo correcto, porque mueven dinero
+           *      del dueño— volvería a bloquear a quien más necesita pagar.
+           *   2. Pierde el rastro justo cuando más interesa. Las acciones de
+           *      una cuenta suspendida o morosa son las que uno quiere poder
+           *      reconstruir después, no las que conviene dejar sin registro.
+           *
+           * El riesgo es nulo: la tabla es de solo-añadir, los campos los
+           * escribe nuestro código y el `tenantId` lo sigue inyectando y
+           * verificando el mismo guard de aislamiento de arriba.
+           */
+          const esAuditoria = model === 'AuditLog'
+
           // 2. Enforcement del estado de pago sobre TODA escritura (§5.2).
-          if (isWrite) {
+          if (isWrite && !esAuditoria) {
             if (access === 'BLOCKED') {
               throw new BusinessError(
                 'SUBSCRIPTION_BLOCKED',
@@ -173,9 +195,12 @@ function buildTenantClient(ctx: TenantContext) {
                   : 'Tu suscripción no está al día. Puedes consultar información, pero no registrar cambios.',
               )
             }
-            if (isGlobalRead) {
-              throw new TenantIsolationError('Recurso de solo lectura.')
-            }
+          }
+
+          // Esto sí se aplica a TODO, auditoría incluida: un modelo global de
+          // solo lectura nunca se escribe, pase lo que pase.
+          if (isWrite && isGlobalRead) {
+            throw new TenantIsolationError('Recurso de solo lectura.')
           }
 
           if (isGlobalRead) {

@@ -1,5 +1,6 @@
 import { BusinessError } from '@/lib/errors'
 import { hasRole, type TenantContext } from '@/lib/tenant-context'
+import { auditarFacturacion } from './audit'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import type { StripeClient } from './stripe-client'
 import type { MercadoPagoClient } from './mercadopago-client'
@@ -47,7 +48,10 @@ export async function createCheckoutSession(
   // precio del Básico — o a un precio de prueba de otra cuenta de Stripe.
   const plan = await db.plan.findFirst({
     where: { code: input.planCode, isActive: true },
-    select: { id: true, name: true, stripePriceMonthly: true },
+    select: {
+      id: true, code: true, name: true, stripePriceMonthly: true,
+      priceMonthly: true, currency: true,
+    },
   })
 
   if (!plan) {
@@ -67,6 +71,8 @@ export async function createCheckoutSession(
       externalCustomerId: true,
       externalSubscriptionId: true,
       trialEndsAt: true,
+      // Para que el registro diga de QUÉ plan a cuál se movió.
+      plan: { select: { code: true } },
     },
   })
 
@@ -104,6 +110,23 @@ export async function createCheckoutSession(
     // reutiliza la misma sesión de Stripe en vez de abrir dos.
     idempotencyKey: idempotencyFor(ctx.tenantId, plan.id),
   })
+
+  /*
+   * Se audita DESPUÉS de crear la sesión: antes registraría intentos que el
+   * proveedor rechazó, y eso ensucia el rastro con ruido que no ocurrió.
+   *
+   * Y es `.iniciado`, no `.aprobado`: aquí solo se ha abierto la pasarela.
+   * Que el pago salga bien lo confirma el webhook, y lo registra aparte.
+   */
+  await auditarFacturacion(db, ctx.tenantId, 'billing.checkout.iniciado', {
+    proveedor: 'STRIPE',
+    planNuevo: plan.code,
+    planAnterior: suscripcion.plan?.code ?? null,
+    monto: plan.priceMonthly.toString(),
+    moneda: plan.currency,
+    referenciaExterna: session.id,
+    estadoAnterior: suscripcion.status,
+  }, ctx)
 
   return { url: session.url, sessionId: session.id }
 }
@@ -148,6 +171,7 @@ export async function createMercadoPagoCheckout(
     where: { code: input.planCode, isActive: true },
     select: {
       id: true,
+      code: true,
       name: true,
       priceMonthly: true,
       currency: true,
@@ -160,7 +184,11 @@ export async function createMercadoPagoCheckout(
   }
 
   const suscripcion = await db.subscription.findFirst({
-    select: { status: true, externalSubscriptionId: true },
+    select: {
+      status: true,
+      externalSubscriptionId: true,
+      plan: { select: { code: true } },
+    },
   })
 
   if (!suscripcion) {
@@ -199,6 +227,18 @@ export async function createMercadoPagoCheckout(
     preapprovalPlanId: plan.mercadoPagoPlanId ?? undefined,
     idempotencyKey: idempotencyFor(ctx.tenantId, plan.id),
   })
+
+  // Mismo criterio que en Stripe: se audita el INICIO tras crear el
+  // preapproval, y el resultado lo registra el webhook.
+  await auditarFacturacion(db, ctx.tenantId, 'billing.checkout.iniciado', {
+    proveedor: 'MERCADOPAGO',
+    planNuevo: plan.code,
+    planAnterior: suscripcion.plan?.code ?? null,
+    monto: plan.priceMonthly.toString(),
+    moneda: plan.currency,
+    referenciaExterna: id,
+    estadoAnterior: suscripcion.status,
+  }, ctx)
 
   return { url: initPoint, sessionId: id }
 }
