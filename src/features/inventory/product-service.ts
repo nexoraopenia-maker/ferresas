@@ -100,6 +100,10 @@ export async function createProductExpress(
         }
       }
 
+      if (input.costPrice !== undefined && !puede(ctx, 'productos.ver_costo')) {
+        throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para registrar costos.')
+      }
+
       const warehouse = await t.warehouse.findFirst({
         where: { id: input.warehouseId, isActive: true, deletedAt: null },
         select: { id: true },

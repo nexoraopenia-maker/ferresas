@@ -130,8 +130,8 @@ async function main() {
   check('stock negativo se avisa y se deja en 0',
     a4.filas[4]?.datos.stock === 0 &&
     a4.filas[4]?.avisos.some((x) => /negativo/.test(x)) === true)
-  check('unidad inventada se avisa y cae a UNIDAD',
-    a4.filas[4]?.datos.unitType === 'UNIDAD' &&
+  check('unidad inventada se avisa y se ignora (null; al CREAR cae a UNIDAD)',
+    a4.filas[4]?.datos.unitType === null &&
     a4.filas[4]?.avisos.some((x) => /No se reconoce la unidad/.test(x)) === true)
   check('el número de línea apunta al Excel (cabecera = 1)',
     a4.filas[1]?.linea === 3, String(a4.filas[1]?.linea))
@@ -196,6 +196,52 @@ async function main() {
   check('>>> para otro tenant son productos NUEVOS, no actualizaciones',
     aOtro.resumen.crear === 4 && aOtro.resumen.actualizar === 0,
     `crear=${aOtro.resumen.crear} act=${aOtro.resumen.actualizar}`)
+
+  console.log('\n10b) productos.ver_costo / productos.editar_precio en la importación')
+  const alm: TenantContext = { ...ctx, role: 'ALMACENERO' }
+  const dbAlm = getTenantPrisma(alm)
+  const aAlm = await analyzeImport(dbAlm, alm, ARCHIVO)
+  check('>>> ALMACENERO: archivo con columna de costo se RECHAZA entero',
+    aAlm.bloqueos.some((b) => /costo/i.test(b)), aAlm.bloqueos.join(' | '))
+  check('no se puede confirmar ese análisis',
+    await commitImport(dbAlm, alm, aAlm, w.id).then(() => null).catch((e) => e.code) === 'INVALID_DOCUMENT')
+
+  // Análisis FALSIFICADO: el cliente quita los bloqueos y deja el costo.
+  // (el análisis del almacenero no trae filas por el bloqueo: se toma el del OWNER.)
+  const falso = { ...(await analyzeImport(db, ctx, ARCHIVO)), bloqueos: [] }
+  const costoAntes = (await db.product.findFirstOrThrow({ where: { barcode: `771${M}001` } })).costPrice.toNumber()
+  check('>>> análisis falsificado con costo: el commit lo rechaza',
+    await commitImport(dbAlm, alm, falso, w.id).then(() => null).catch((e) => e.code) === 'FORBIDDEN_ROLE')
+
+  const SIN_COSTO = [
+    'Nombre;Código de barras;P. Venta',
+    `"Cemento Sol 42.5 kg";771${M}001;99,00`,
+  ].join('\n')
+  const aPre = await analyzeImport(dbAlm, alm, SIN_COSTO)
+  check('>>> cambiar el precio de un producto existente sin editar_precio es error de fila',
+    aPre.filas[0]?.estado === 'error' && aPre.filas[0].errores.some((e) => /precios/.test(e)),
+    JSON.stringify(aPre.filas[0]?.errores))
+  const aPreFalso = { ...aPre, filas: aPre.filas.map((f) => ({ ...f, estado: 'actualizar' as const, errores: [] })) }
+  check('>>> y el commit falsificado también lo rechaza',
+    await commitImport(dbAlm, alm, aPreFalso, w.id).then(() => null).catch((e) => e.code) === 'FORBIDDEN_ROLE')
+  check('el precio no cambió',
+    (await db.product.findFirstOrThrow({ where: { barcode: `771${M}001` } })).salePrice.toNumber() === 32.5)
+
+  const aMisma = await analyzeImport(dbAlm, alm, SIN_COSTO.replace('99,00', '32,50'))
+  check('mismo precio, sin costo: el almacenero sí puede reimportar', aMisma.filas[0]?.estado === 'actualizar')
+
+  console.log('   reimportar SIN columna de costo no borra el costo')
+  const SIN_OTROS = ['Nombre;Código de barras;P. Venta', `"Cemento Sol 42.5 kg";771${M}001;34,50`].join('\n')
+  await prisma.product.updateMany({ where: { barcode: `771${M}001`, tenantId: t.id }, data: { minStock: 20, costPrice: 28 } })
+  const aSin = await analyzeImport(db, ctx, SIN_OTROS)
+  check('campos ausentes llegan como null',
+    aSin.filas[0]?.datos.costPrice === null && aSin.filas[0]?.datos.minStock === null && aSin.filas[0]?.datos.unitType === null)
+  await commitImport(db, ctx, aSin, w.id)
+  const trasSin = await db.product.findFirstOrThrow({ where: { barcode: `771${M}001` } })
+  check('>>> el precio SÍ cambió (OWNER)', trasSin.salePrice.toNumber() === 34.5)
+  check('>>> el costo se conserva (antes se ponía a 0)', trasSin.costPrice.toNumber() === 28, String(trasSin.costPrice))
+  check('el mínimo y la unidad se conservan', trasSin.minStock.toNumber() === 20 && trasSin.unitType === 'BOLSA')
+  void costoAntes
 
   console.log('\n11) Limpieza')
   await prisma.tenant.delete({ where: { id: otro.id } })

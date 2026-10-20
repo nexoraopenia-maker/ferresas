@@ -290,7 +290,7 @@ function Fila({ f }: { f: FilaAnalizada }) {
       <td className="px-3 py-2 font-mono text-xs text-ink-muted">{f.linea}</td>
       <td className="px-3 py-2">
         <p className="font-semibold text-ink">{f.datos.name || <em className="text-stock-out">sin nombre</em>}</p>
-        <p className="text-xs text-ink-muted">{unitLabel(f.datos.unitType)}</p>
+        <p className="text-xs text-ink-muted">{f.datos.unitType ? unitLabel(f.datos.unitType) : 'unidad sin cambios'}</p>
       </td>
       <td className="px-3 py-2 font-mono text-xs text-ink-muted">
         {f.datos.barcode && <p>EAN {f.datos.barcode}</p>}
@@ -302,15 +302,15 @@ function Fila({ f }: { f: FilaAnalizada }) {
         {/* El valor INTERPRETADO, no el del archivo: así se detecta si
             "1.200" se leyó como 1.20 cuando debía ser 1200. */}
         <p className="font-bold text-ink">S/ {f.datos.salePrice.toFixed(2)}</p>
-        {f.datos.costPrice > 0 && (
+        {f.datos.costPrice !== null && f.datos.costPrice > 0 && (
           <p className="text-xs text-ink-muted">costo {f.datos.costPrice.toFixed(2)}</p>
         )}
       </td>
       <td className="px-3 py-2 text-ink">
-        {formatQuantity(f.datos.stock, f.datos.unitType)}
-        {f.datos.minStock > 0 && (
+        {formatQuantity(f.datos.stock, f.datos.unitType ?? 'UNIDAD')}
+        {f.datos.minStock !== null && f.datos.minStock > 0 && (
           <span className="block text-xs text-ink-muted">
-            mín {formatQuantity(f.datos.minStock, f.datos.unitType)}
+            mín {formatQuantity(f.datos.minStock, f.datos.unitType ?? 'UNIDAD')}
           </span>
         )}
       </td>

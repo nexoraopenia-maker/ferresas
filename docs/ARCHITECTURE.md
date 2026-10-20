@@ -389,6 +389,25 @@ permiso nombra?»*:
 
 ---
 
+### `productos.ver_costo`: qué protege hoy
+
+Hoy el costo entra por tres caminos y los tres lo exigen en el servidor:
+alta exprés (`costPrice`), entrada de stock (`unitCost`) e importación CSV
+(columna de costo; se revalida en `commitImport`, que no se fía del análisis
+que manda el cliente). Quien no puede ver costos registra solo cantidades:
+la entrada queda `costPending` y no alimenta ningún costo promedio hasta que
+alguien con el permiso la completa (`completarCostoEntrada`, auditada).
+
+`commitImport` tampoco cambia precios de productos existentes sin
+`productos.editar_precio`, y un campo ausente del archivo ya no se pone a 0
+(`null` = «no tocar»; antes reimportar sin columna de costo lo borraba).
+
+Aún **no existen** cálculo de costo promedio, exportación de costos ni
+informe de margen. La prueba `tests/costo.ts` fija por AST qué archivos
+pueden nombrar `costPrice`/`unitCost` y que ningún acceso a Product o
+StockMovement fuera de ellos omita `select`; cuando se construyan esas
+superficies, deben nacer con `puede(ctx, 'productos.ver_costo')`.
+
 ## 12. Pruebas estructurales: por AST, nunca por texto
 
 Hay invariantes que ninguna prueba de comportamiento alcanza. El principal:

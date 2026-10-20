@@ -41,11 +41,13 @@ export interface FilaAnalizada {
     sku: string | null
     barcode: string | null
     qrCode: string | null
-    unitType: string
+    /** `null` = el archivo no dice nada: al actualizar NO se toca el valor actual. */
+    unitType: string | null
     salePrice: number
-    costPrice: number
+    /** `null` = sin dato en el archivo. Nunca se interpreta como 0 al actualizar. */
+    costPrice: number | null
     stock: number
-    minStock: number
+    minStock: number | null
   }
 }
 
@@ -149,12 +151,23 @@ export async function analyzeImport(
     )
   }
 
+  // El costo es información restringida: un archivo que lo trae solo lo
+  // puede importar quien puede verlo. Se rechaza el archivo entero (y no la
+  // columna en silencio) para que nadie crea que el costo quedó cargado.
+  const puedeEditarPrecio = puede(ctx, 'productos.editar_precio')
+  if (columnas.indices.costPrice !== undefined && !puede(ctx, 'productos.ver_costo')) {
+    bloqueos.push(
+      'El archivo trae una columna de costo y no tienes permiso para ver ni cargar costos. ' +
+        'Quita esa columna e inténtalo de nuevo.',
+    )
+  }
+
   // --- Productos existentes, en UNA consulta ----------------------------
   // Traer el catálogo de golpe y cruzar en memoria. Con dos mil filas, una
   // consulta por fila serían dos mil viajes a la base.
   const existentes = bloqueos.length > 0 ? [] : await db.product.findMany({
     where: { deletedAt: null },
-    select: { id: true, sku: true, barcode: true, name: true },
+    select: { id: true, sku: true, barcode: true, name: true, salePrice: true },
   })
   const porBarcode = new Map(
     existentes.filter((p) => p.barcode).map((p) => [p.barcode!, p]),
@@ -207,11 +220,11 @@ export async function analyzeImport(
 
     const costPriceRaw = parseAmount(col(fila, 'costPrice'), 'money')
     if (col(fila, 'costPrice')?.trim() && costPriceRaw === null) {
-      avisos.push('El costo no es un número; se deja en 0.')
+      avisos.push('El costo no es un número; se ignora.')
     }
-    const costPrice = costPriceRaw !== null && costPriceRaw >= 0 ? costPriceRaw : 0
+    const costPrice = costPriceRaw !== null && costPriceRaw >= 0 ? costPriceRaw : null
 
-    if (salePrice !== null && costPrice > salePrice && costPrice > 0) {
+    if (salePrice !== null && costPrice !== null && costPrice > salePrice && costPrice > 0) {
       // No se bloquea: hay negocios que venden bajo costo para liquidar. Pero
       // es casi siempre un error de columnas invertidas, y conviene decirlo.
       avisos.push('El costo es mayor que el precio de venta. ¿Están cambiadas las columnas?')
@@ -227,14 +240,13 @@ export async function analyzeImport(
     }
 
     const minRaw = parseAmount(col(fila, 'minStock'), 'quantity')
-    const minStock = minRaw !== null && minRaw >= 0 ? redondear(minRaw) : 0
+    const minStock = minRaw !== null && minRaw >= 0 ? redondear(minRaw) : null
 
     const unidadTexto = col(fila, 'unitType')
     let unitType = normalizeUnit(unidadTexto)
     if (unidadTexto?.trim() && unitType === null) {
-      avisos.push(`No se reconoce la unidad «${unidadTexto.trim()}»; se usa UNIDAD.`)
+      avisos.push(`No se reconoce la unidad «${unidadTexto.trim()}»; se ignora.`)
     }
-    unitType = unitType ?? 'UNIDAD'
 
     const limpiar = (v: string | undefined) => {
       const s = (v ?? '').trim()
@@ -293,6 +305,13 @@ export async function analyzeImport(
     if (existente && stock > 0) {
       // El stock NUNCA se sobreescribe al actualizar: ver commitImport.
       avisos.push('El stock del archivo se ignora: este producto ya existe.')
+    }
+
+    if (
+      existente && salePrice !== null && !puedeEditarPrecio &&
+      redondear(Number(existente.salePrice)) !== redondear(salePrice)
+    ) {
+      errores.push('Este producto ya existe y no tienes permiso para cambiar precios.')
     }
 
     filas.push({
@@ -376,6 +395,31 @@ export async function commitImport(
     throw new BusinessError('INVALID_DOCUMENT', 'No hay ninguna fila importable.')
   }
 
+  // El análisis llega del cliente: no es de fiar. Los permisos se vuelven a
+  // comprobar aquí, contra la base y ANTES de escribir nada.
+  if (!puede(ctx, 'productos.ver_costo') && importables.some((f) => f.datos.costPrice !== null)) {
+    throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para cargar costos.')
+  }
+  if (!puede(ctx, 'productos.editar_precio')) {
+    const catalogo = await db.product.findMany({
+      where: { deletedAt: null },
+      select: { sku: true, barcode: true, name: true, salePrice: true },
+    })
+    const bc = new Map(catalogo.filter((p) => p.barcode).map((p) => [p.barcode!, p]))
+    const sk = new Map(catalogo.map((p) => [p.sku, p]))
+    const nm = new Map(catalogo.map((p) => [p.name, p]))
+    for (const f of importables) {
+      const d = f.datos
+      const ex =
+        (d.barcode ? bc.get(d.barcode) : undefined) ??
+        sk.get(d.sku ?? skuDesdeNombre(d.name)) ??
+        (!d.barcode && !d.sku ? nm.get(d.name) : undefined)
+      if (ex && redondear(Number(ex.salePrice)) !== redondear(d.salePrice)) {
+        throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para cambiar precios de productos existentes.')
+      }
+    }
+  }
+
   const warehouse = await db.warehouse.findFirst({
     where: { id: warehouseId, isActive: true, deletedAt: null },
     select: { id: true },
@@ -430,9 +474,10 @@ export async function commitImport(
             data: {
               name: d.name,
               salePrice: d.salePrice,
-              costPrice: d.costPrice,
-              minStock: d.minStock,
-              unitType: d.unitType as 'UNIDAD',
+              // Solo lo que el archivo dice: un campo ausente no se pone a 0.
+              ...(d.costPrice !== null ? { costPrice: d.costPrice } : {}),
+              ...(d.minStock !== null ? { minStock: d.minStock } : {}),
+              ...(d.unitType !== null ? { unitType: d.unitType as 'UNIDAD' } : {}),
               // barcode y qrCode solo se RELLENAN si faltaban: sobreescribir
               // el código de un producto ya etiquetado rompería su escaneo.
               ...(d.barcode ? { barcode: d.barcode } : {}),
@@ -453,10 +498,10 @@ export async function commitImport(
             barcode: d.barcode,
             qrCode: d.qrCode,
             name: d.name,
-            unitType: d.unitType as 'UNIDAD',
+            unitType: (d.unitType ?? 'UNIDAD') as 'UNIDAD',
             salePrice: d.salePrice,
-            costPrice: d.costPrice,
-            minStock: d.minStock,
+            costPrice: d.costPrice ?? 0,
+            minStock: d.minStock ?? 0,
           },
           select: { id: true },
         })
@@ -486,6 +531,7 @@ export async function commitImport(
               quantity: d.stock,
               balanceAfter: d.stock,
               unitCost: d.costPrice || undefined,
+              costPending: !d.costPrice,
               reason: 'Importación masiva de catálogo',
               referenceType: 'MANUAL',
             },

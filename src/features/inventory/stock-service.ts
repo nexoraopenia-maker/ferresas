@@ -116,7 +116,7 @@ export async function applyStockMovement(
   //    aislado) y llevar control de stock.
   const product = await t.product.findFirst({
     where: { id: input.productId, deletedAt: null },
-    select: { id: true, name: true, trackStock: true, isActive: true, costPrice: true },
+    select: { id: true, name: true, trackStock: true, isActive: true },
   })
 
   if (!product) {
@@ -240,6 +240,10 @@ export async function applyStockMovement(
         input.type === 'ENTRADA' && input.unitCost !== undefined
           ? input.unitCost
           : undefined,
+      // Entrada manual sin costo: queda «costo pendiente» y no alimenta
+      // ningún costo promedio hasta que alguien con `productos.ver_costo` la completa.
+      costPending:
+        input.type === 'ENTRADA' && !typeOverride && input.unitCost === undefined,
       reason: input.reason ?? null,
       referenceType: 'MANUAL',
       idempotencyKey: input.idempotencyKey ?? null,
@@ -341,6 +345,15 @@ export async function createStockMovement(
     )
   }
 
+  // Teclear un costo es VER el costo: quien no tiene `productos.ver_costo`
+  // registra cantidades, y la entrada queda «costo pendiente».
+  if (input.type === 'ENTRADA' && input.unitCost !== undefined && !puede(ctx, 'productos.ver_costo')) {
+    throw new BusinessError(
+      'FORBIDDEN_ROLE',
+      'No tienes permiso para registrar costos. Registra solo la cantidad: el costo lo completa quien tenga acceso.',
+    )
+  }
+
   const variantId = input.variantId ?? null
 
   try {
@@ -384,4 +397,52 @@ export async function createStockMovement(
     }
     throw e
   }
+}
+
+/**
+ * Completa el costo de una entrada marcada «costo pendiente».
+ *
+ * Solo quien tiene `productos.ver_costo`. Solo entradas manuales aún
+ * pendientes: un costo ya fijado no se reescribe por aquí. Queda auditado.
+ */
+export async function completarCostoEntrada(
+  db: TenantPrismaClient,
+  ctx: TenantContext,
+  movementId: string,
+  unitCost: number,
+): Promise<void> {
+  if (!puede(ctx, 'productos.ver_costo')) {
+    throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para registrar costos.')
+  }
+  if (!Number.isFinite(unitCost) || unitCost < 0) {
+    throw new RangeError('El costo debe ser un número mayor o igual a 0.')
+  }
+
+  await db.$transaction(async (tx) => {
+    const t = tx as unknown as TenantPrismaClient
+    const mov = await t.stockMovement.findFirst({
+      where: { id: movementId, type: 'ENTRADA', costPending: true },
+      select: { id: true, productId: true },
+    })
+    if (!mov) {
+      throw new BusinessError('NOT_FOUND', 'La entrada no existe o ya tiene costo.')
+    }
+    await t.stockMovement.update({
+      where: { id: mov.id },
+      data: { unitCost, costPending: false },
+    })
+    await t.auditLog.create({
+      data: {
+        tenantId: ctx.tenantId,
+        actorId: ctx.userId,
+        actorRole: ctx.role,
+        action: 'stock.completar_costo',
+        entityType: 'StockMovement',
+        entityId: mov.id,
+        before: { costPending: true },
+        after: { unitCost, costPending: false },
+        impersonationId: ctx.impersonationId ?? null,
+      },
+    })
+  })
 }
