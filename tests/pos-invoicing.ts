@@ -9,6 +9,7 @@ import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { registerSale, ensureCounter, claimNextNumber } from '@/features/pos/sale-service'
 import { registerSaleSchema } from '@/features/pos/schemas'
 import { issueTaxDocument, updateTaxStatus } from '@/features/invoicing/service'
+import { updateTaxStatusSchema } from '@/features/invoicing/schemas'
 import { formatFullNumber, SERIE_POR_DEFECTO } from '@/features/invoicing/schemas'
 import { createProductExpress } from '@/features/inventory/product-service'
 import { createProductExpressSchema } from '@/features/inventory/schemas'
@@ -307,22 +308,68 @@ async function main() {
   check('el número reservado se devuelve al rollback', antes === despues, `${antes} -> ${despues}`)
 
   console.log('\n12) Transiciones de estado tributario')
-  await updateTaxStatus(db, ctx, { taxDocumentId: b1.id, status: 'ENVIADO' })
+  await updateTaxStatus(db, ctx, { taxDocumentId: b1.id, status: 'ENVIADO', motivo: 'Prueba automatizada del cambio de estado' })
   check('PENDIENTE -> ENVIADO',
     (await db.taxDocument.findFirstOrThrow({ where: { id: b1.id } })).status === 'ENVIADO')
   check('ENVIADO -> PENDIENTE se rechaza',
-    await updateTaxStatus(db, ctx, { taxDocumentId: b1.id, status: 'ENVIADO' as any })
+    await updateTaxStatus(db, ctx, { taxDocumentId: b1.id, status: 'ENVIADO' as any, motivo: 'Prueba automatizada del cambio de estado' })
       .then(() => null).catch((e) => e.code) === 'DUPLICATE_CODE')
-  await updateTaxStatus(db, ctx, { taxDocumentId: b1.id, status: 'ACEPTADO' })
+  await updateTaxStatus(db, ctx, { taxDocumentId: b1.id, status: 'ACEPTADO', motivo: 'Prueba automatizada del cambio de estado' })
   const aceptado = await db.taxDocument.findFirstOrThrow({ where: { id: b1.id } })
   check('ENVIADO -> ACEPTADO', aceptado.status === 'ACEPTADO')
   check('marca acceptedAt', aceptado.acceptedAt !== null)
   check('>>> ACEPTADO es terminal: no se puede degradar',
-    await updateTaxStatus(db, ctx, { taxDocumentId: b1.id, status: 'RECHAZADO' })
+    await updateTaxStatus(db, ctx, { taxDocumentId: b1.id, status: 'RECHAZADO', motivo: 'Prueba automatizada del cambio de estado' })
       .then(() => null).catch((e) => e.code) === 'DUPLICATE_CODE')
   check('un VENDEDOR no puede cambiar el estado tributario',
     await updateTaxStatus(getTenantPrisma({ ...ctx, role: 'VENDEDOR' }), { ...ctx, role: 'VENDEDOR' },
-      { taxDocumentId: f1.id, status: 'ENVIADO' }).then(() => null).catch((e) => e.code) === 'FORBIDDEN_ROLE')
+      { taxDocumentId: f1.id, status: 'ENVIADO', motivo: 'Prueba automatizada del cambio de estado' }).then(() => null).catch((e) => e.code) === 'FORBIDDEN_ROLE')
+
+  console.log('\n12b) >>> ESTADO MANUAL: motivo obligatorio y auditoría completa')
+  /*
+   * Cambiar a mano el estado tributario es DECLARAR algo que el sistema no ha
+   * comprobado. Sin motivo escrito y sin rastro del antes y el después, el día
+   * que una fiscalización pregunte por qué este comprobante figura ACEPTADO
+   * no habría nada que responder.
+   */
+  check('>>> el esquema EXIGE motivo',
+    !updateTaxStatusSchema.safeParse({ taxDocumentId: f1.id, status: 'ENVIADO' }).success)
+  check('un motivo de una palabra no vale (mínimo 10 caracteres)',
+    !updateTaxStatusSchema.safeParse({ taxDocumentId: f1.id, status: 'ENVIADO', motivo: 'ok' }).success)
+  check('con motivo suficiente pasa',
+    updateTaxStatusSchema.safeParse({
+      taxDocumentId: f1.id, status: 'ENVIADO', motivo: 'Reenvío tras corregir el RUC del cliente',
+    }).success)
+
+  await updateTaxStatus(db, ctx, {
+    taxDocumentId: f1.id, status: 'ENVIADO',
+    motivo: 'Reenvío tras corregir el RUC del cliente',
+  })
+  const rastro = await db.auditLog.findFirstOrThrow({
+    where: { action: 'taxdocument.status.manual', entityId: f1.id },
+    orderBy: { createdAt: 'desc' },
+    select: { actorId: true, actorRole: true, reason: true, before: true, after: true },
+  })
+  check('>>> queda auditado con QUIÉN', rastro.actorId === owner.id)
+  check('>>> con el MOTIVO', rastro.reason === 'Reenvío tras corregir el RUC del cliente')
+  check('>>> con el estado ANTERIOR', (rastro.before as { status?: string }).status === 'PENDIENTE')
+  check('>>> y el estado NUEVO', (rastro.after as { status?: string }).status === 'ENVIADO')
+  check('con el número del comprobante',
+    String((rastro.after as { comprobante?: string }).comprobante).startsWith('F001-'))
+  check('>>> el listado dice que el cambio fue MANUAL y por qué',
+    ((await db.taxDocument.findFirstOrThrow({ where: { id: f1.id } })).statusMessage ?? '')
+      .startsWith('Cambio manual:'))
+
+  const ctxCajero: TenantContext = { ...ctx, role: 'CAJERO' }
+  check('>>> un CAJERO emite comprobantes pero NO declara su estado a mano',
+    await updateTaxStatus(getTenantPrisma(ctxCajero), ctxCajero, {
+      taxDocumentId: f1.id, status: 'ACEPTADO', motivo: 'Intento de un cajero sin permiso',
+    }).then(() => null).catch((e) => e.code) === 'FORBIDDEN_ROLE')
+  const ctxAdm: TenantContext = { ...ctx, role: 'ADMIN' }
+  check('un ADMIN sí puede',
+    await updateTaxStatus(getTenantPrisma(ctxAdm), ctxAdm, {
+      taxDocumentId: f1.id, status: 'ACEPTADO', motivo: 'SUNAT respondió aceptado; CDR guardado aparte',
+    }).then(() => 'ok').catch((e) => e.code) === 'ok')
 
   console.log('\n13) Aislamiento y suscripción')
   const otro = await prisma.tenant.create({ data: { slug: `ot-${M}`, name: 'Otro', planId: plan.id } })

@@ -44,6 +44,21 @@ export type IssueTaxDocumentInput = z.infer<typeof issueTaxDocumentSchema>
 export const updateTaxStatusSchema = z.object({
   taxDocumentId: id,
   status: z.enum(['ENVIADO', 'ACEPTADO', 'RECHAZADO']),
+  /**
+   * Motivo del cambio, OBLIGATORIO.
+   *
+   * Cambiar a mano el estado tributario de un comprobante es declarar algo
+   * que el sistema no ha comprobado: que SUNAT lo aceptó, o lo rechazó. Sin
+   * una explicación escrita, el día que una fiscalización pregunte por qué
+   * este comprobante figura como ACEPTADO no habrá nada que responder.
+   * El mínimo de 10 caracteres impide el motivo de una letra que convierte
+   * el campo en decorativo.
+   */
+  motivo: z
+    .string()
+    .trim()
+    .min(10, 'Explica por qué cambias el estado a mano: al menos 10 caracteres.')
+    .max(500),
   statusMessage: z.string().trim().max(500).optional(),
   externalTicket: z.string().trim().max(120).optional(),
   responseCode: z.string().trim().max(40).optional(),

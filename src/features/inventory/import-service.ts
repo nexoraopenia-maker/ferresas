@@ -1,9 +1,10 @@
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
-import { hasRole, type TenantContext } from '@/lib/tenant-context'
+import { type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { redondear } from '@/lib/quantity'
 import { createHash } from 'node:crypto'
+import { puede } from '@/lib/puede'
 import { mapColumns, normalizeUnit, parseAmount, parseCsv } from './csv'
 
 /**
@@ -121,7 +122,7 @@ export async function analyzeImport(
   ctx: TenantContext,
   contenido: string,
 ): Promise<AnalisisImport> {
-  if (!hasRole(ctx.role, 'ALMACENERO')) {
+  if (!puede(ctx, 'productos.crear')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para importar catálogo.')
   }
 
@@ -362,7 +363,7 @@ export async function commitImport(
   warehouseId: string,
   now: Date = new Date(),
 ): Promise<ResultadoImport> {
-  if (!hasRole(ctx.role, 'ALMACENERO')) {
+  if (!puede(ctx, 'productos.crear')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para importar catálogo.')
   }
 

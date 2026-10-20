@@ -1,13 +1,14 @@
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
 import { redondearCentimos } from '@/lib/dinero'
-import { hasRole, requireBranch, type TenantContext } from '@/lib/tenant-context'
+import { requireBranch, type TenantContext } from '@/lib/tenant-context'
 import { cargarSucursalOperativa, serieDe } from '@/features/branches/queries'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import {
   claimNextNumber, ensureCounter, overrideKey, registerSale,
   type PriceOverrides,
 } from './sale-service'
+import { puede } from '@/lib/puede'
 import type { ConvertQuoteInput, RegisterQuoteInput } from './schemas'
 
 function num(d: Prisma.Decimal | number | null | undefined): number {
@@ -51,7 +52,7 @@ export async function registerQuote(
   input: RegisterQuoteInput,
   now: Date = new Date(),
 ): Promise<QuoteResult> {
-  if (!hasRole(ctx.role, 'VENDEDOR')) {
+  if (!puede(ctx, 'cotizaciones.crear')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para cotizar.')
   }
 
@@ -197,7 +198,7 @@ export async function convertQuoteToSale(
   input: ConvertQuoteInput,
   now: Date = new Date(),
 ): Promise<{ saleId: string; number: string; total: number; quoteNumber: string }> {
-  if (!hasRole(ctx.role, 'VENDEDOR')) {
+  if (!puede(ctx, 'ventas.cobrar')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para vender.')
   }
 

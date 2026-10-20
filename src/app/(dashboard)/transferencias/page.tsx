@@ -1,9 +1,9 @@
 import { notFound } from 'next/navigation'
 import { requireTenantContext } from '@/lib/session'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
-import { hasRole } from '@/lib/tenant-context'
 import { TransferList } from '@/features/branches/components/TransferList'
 import { NewTransfer } from '@/features/branches/components/NewTransfer'
+import { puede, puedeAlguno } from '@/lib/puede'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic'
  */
 export default async function TransferenciasPage() {
   const ctx = await requireTenantContext()
-  if (!hasRole(ctx.role, 'ALMACENERO')) notFound()
+  if (!puedeAlguno(ctx, 'stock.transferir_solicitar', 'stock.transferir_despachar', 'stock.transferir_recibir', 'stock.transferir_aprobar')) notFound()
 
   const db = getTenantPrisma(ctx)
 
@@ -100,7 +100,7 @@ export default async function TransferenciasPage() {
         <Contador label="Por recibir aquí" value={porRecibir} aviso={porRecibir > 0} />
       </section>
 
-      {(ctx.access === 'FULL' || ctx.access === 'WARN') && (
+      {(ctx.access === 'FULL' || ctx.access === 'WARN') && puede(ctx, 'stock.transferir_solicitar') && (
         <NewTransfer
           almacenes={misAlmacenes}
           destinos={otrasSucursales
@@ -115,7 +115,9 @@ export default async function TransferenciasPage() {
       )}
 
       <TransferList
-        puedeAprobar={hasRole(ctx.role, 'ADMIN')}
+        puedeAprobar={puede(ctx, 'stock.transferir_aprobar')}
+        puedeDespachar={puede(ctx, 'stock.transferir_despachar')}
+        puedeRecibir={puede(ctx, 'stock.transferir_recibir')}
         zonaHoraria={tenant?.timezone ?? 'America/Lima'}
         puedeOperar={ctx.access === 'FULL' || ctx.access === 'WARN'}
         transferencias={transferencias.map((t) => ({

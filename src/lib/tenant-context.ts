@@ -29,6 +29,16 @@ export interface TenantContext {
    */
   branchId?: string
   /**
+   * Roles ADICIONALES del usuario, además de `role`. Sus permisos se UNEN.
+   *
+   * Hoy ninguna parte lo rellena —`User.role` es uno solo—, pero el modelo
+   * aprobado es «un usuario puede tener varios roles» y la autorización ya
+   * tiene que comportarse bien con eso. Existe para poder PROBARLO: la
+   * frontera entre permisos se rompe justo con la unión, y no se puede
+   * comprobar una unión que el contexto no sabe representar.
+   */
+  roles?: readonly Role[]
+  /**
    * Permisos OPCIONALES que el dueño activó para este usuario.
    *
    * Existen porque hay decisiones de confianza, no de puesto: en una
@@ -109,44 +119,6 @@ export function computeAccessLevel(
     default:
       return 'READ_ONLY'
   }
-}
-
-/**
- * Jerarquía de roles para las comprobaciones de autorización (§6.4).
- *
- * EXPORTADA a propósito: `nav-items.ts` tenía su propia copia, y una copia
- * de esta tabla es una bomba de relojería — el día que se añade un rol, el
- * menú le asigna rango 0 en silencio y el usuario nuevo no ve ninguna
- * sección sin que nada falle.
- */
-export const ROLE_RANK: Record<Role, number> = {
-  SUPERADMIN: 100,
-  OWNER: 80,
-  ADMIN: 60,
-  ALMACENERO: 40,
-  VENDEDOR: 20,
-  /*
-   * CAJERO y CONTADOR entran a 0, y es deliberado.
-   *
-   * No caben en una escalera: el CONTADOR ve reportes y comprobantes pero no
-   * vende ni toca stock — no está «por encima» ni «por debajo» del cajero,
-   * está al lado. Cualquier número sería mentira, y esa mentira es justo lo
-   * que motivó sustituir esta tabla por permisos nombrados
-   * (`src/lib/permisos.ts`).
-   *
-   * Cero significa «denegar todo» en `hasRole`, que es el valor SEGURO
-   * mientras la escalera siga viva: un rol sin rango legítimo no obtiene
-   * nada por descuido. Y hoy no afecta a nadie, porque todavía no hay forma
-   * de asignar estos roles.
-   *
-   * Esta tabla y `hasRole` se eliminan al cablear `puede()` en los 29 sitios.
-   */
-  CAJERO: 0,
-  CONTADOR: 0,
-}
-
-export function hasRole(actual: Role, minimum: Role): boolean {
-  return ROLE_RANK[actual] >= ROLE_RANK[minimum]
 }
 
 /**

@@ -1,9 +1,9 @@
 import { notFound } from 'next/navigation'
 import { requireTenantContext } from '@/lib/session'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
-import { hasRole } from '@/lib/tenant-context'
 import { planVigente } from '@/lib/plan-limits'
 import { BranchManager } from '@/features/branches/components/BranchManager'
+import { puede } from '@/lib/puede'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic'
  */
 export default async function SucursalesPage() {
   const ctx = await requireTenantContext()
-  if (!hasRole(ctx.role, 'ADMIN')) notFound()
+  if (!puede(ctx, 'sucursales.gestionar')) notFound()
 
   const db = getTenantPrisma(ctx)
 

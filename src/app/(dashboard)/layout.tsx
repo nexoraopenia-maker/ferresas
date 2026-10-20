@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { guardDashboard } from '@/lib/dashboard-guard'
+import { permisosDe } from '@/lib/puede'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { logoutAction } from '../(auth)/actions'
 import { AccountBannerBar } from '@/features/billing/components/AccountBannerBar'
@@ -79,7 +80,7 @@ export default async function DashboardLayout({
         </div>
 
         <nav aria-label="Navegación principal" className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
-          <NavLinks variant="sidebar" role={ctx.role} />
+          <NavLinks variant="sidebar" permisos={[...permisosDe(ctx)]} />
         </nav>
 
         <div className="border-t border-hairline p-2">
@@ -129,7 +130,7 @@ export default async function DashboardLayout({
           aria-label="Navegación principal"
           className="safe-bottom sticky bottom-0 z-30 flex items-stretch gap-1 border-t border-hairline bg-surface px-2 pt-1.5 lg:hidden"
         >
-          <NavLinks variant="bottom" role={ctx.role} />
+          <NavLinks variant="bottom" permisos={[...permisosDe(ctx)]} />
           <form action={logoutAction} className="flex min-w-0 flex-1">
             <button
               type="submit"

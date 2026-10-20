@@ -1,13 +1,14 @@
 import { Prisma } from '@/generated/prisma/client'
 import { camposDeColision, esColisionUnica } from '@/lib/prisma-errors'
 import { BusinessError } from '@/lib/errors'
-import { hasRole, type TenantContext } from '@/lib/tenant-context'
+import { type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { exigirLimitePlan } from '@/lib/plan-limits'
 import { siguienteSeriesNumber } from './series'
 import type {
   AssignBranchesInput, CreateBranchInput, DeleteBranchInput, UpdateBranchInput,
 } from './schemas'
+import { puede } from '@/lib/puede'
 
 export interface BranchResult {
   id: string
@@ -30,7 +31,7 @@ export async function createBranch(
   ctx: TenantContext,
   input: CreateBranchInput,
 ): Promise<BranchResult> {
-  if (!hasRole(ctx.role, 'ADMIN')) {
+  if (!puede(ctx, 'sucursales.gestionar')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para crear sucursales.')
   }
 
@@ -131,7 +132,7 @@ export async function updateBranch(
   ctx: TenantContext,
   input: UpdateBranchInput,
 ): Promise<{ id: string }> {
-  if (!hasRole(ctx.role, 'ADMIN')) {
+  if (!puede(ctx, 'sucursales.gestionar')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para editar sucursales.')
   }
 
@@ -200,7 +201,7 @@ export async function deleteBranch(
   ctx: TenantContext,
   input: DeleteBranchInput,
 ): Promise<{ id: string }> {
-  if (!hasRole(ctx.role, 'ADMIN')) {
+  if (!puede(ctx, 'sucursales.gestionar')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para dar de baja sucursales.')
   }
 
@@ -293,7 +294,7 @@ export async function assignBranches(
   ctx: TenantContext,
   input: AssignBranchesInput,
 ): Promise<{ userId: string; asignadas: number }> {
-  if (!hasRole(ctx.role, 'ADMIN')) {
+  if (!puede(ctx, 'usuarios.gestionar')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para asignar sucursales.')
   }
 

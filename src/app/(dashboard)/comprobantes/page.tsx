@@ -3,7 +3,7 @@ import { requireTenantContext } from '@/lib/session'
 import { TaxDocumentList } from '@/features/invoicing/components/TaxDocumentList'
 import { SeriesPanel } from '@/features/invoicing/components/SeriesPanel'
 import { listarSeriesConfigurables } from '@/features/invoicing/counter-service'
-import { hasRole } from '@/lib/tenant-context'
+import { puede } from '@/lib/puede'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,7 +42,7 @@ export default async function ComprobantesPage() {
    * gestionarlas: a un cajero no le sirve de nada y el panel invita a tocar
    * algo irreversible.
    */
-  const puedeSeries = hasRole(ctx.role, 'ADMIN')
+  const puedeSeries = puede(ctx, 'config.fiscal')
   const [series, sucursal] = ctx.branchId && puedeSeries
     ? await Promise.all([
         listarSeriesConfigurables(db, ctx, ctx.branchId),
@@ -86,7 +86,7 @@ export default async function ComprobantesPage() {
       )}
 
       <TaxDocumentList
-        canManage={ctx.role === 'OWNER' || ctx.role === 'ADMIN'}
+        canManage={puede(ctx, 'comprobantes.anular')}
         zonaHoraria={tenant?.timezone ?? 'America/Lima'}
         docs={docs.map((d) => ({
           id: d.id,

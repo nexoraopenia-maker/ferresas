@@ -220,3 +220,58 @@ export function esValorCalculado(sf: SourceFile, fragmento: string): boolean {
   const enLiteral = cadenas(sf).some((c) => c.includes(fragmento))
   return enPlantilla && !enLiteral
 }
+
+/**
+ * Literales con los que el código COMPARA una propiedad `.role`.
+ *
+ * Cubre las tres formas en que se suele decidir por rol sin pasar por el
+ * sistema de permisos:
+ *
+ *   · `x.role === 'ADMIN'`            (y !==, ==, !=)
+ *   · `switch (x.role) { case 'ADMIN': … }`
+ *   · `['ADMIN', 'OWNER'].includes(x.role)`
+ *
+ * Devuelve cada hallazgo como `{ valor, linea }`. Un comentario o una cadena
+ * que mencione `ctx.role === 'ADMIN'` no produce ningún nodo de estos tipos,
+ * que es justo la razón de hacerlo por AST.
+ */
+export function comparacionesDeRol(sf: SourceFile): { valor: string; linea: number }[] {
+  const out: { valor: string; linea: number }[] = []
+  const esRol = (texto: string) => /(^|\.)role$/.test(texto)
+  const literal = (n: import('ts-morph').Node): string | null =>
+    n.getKind() === SyntaxKind.StringLiteral
+      ? (n as import('ts-morph').StringLiteral).getLiteralValue()
+      : null
+
+  for (const b of sf.getDescendantsOfKind(SyntaxKind.BinaryExpression)) {
+    const op = b.getOperatorToken().getKind()
+    if (
+      op !== SyntaxKind.EqualsEqualsEqualsToken && op !== SyntaxKind.ExclamationEqualsEqualsToken &&
+      op !== SyntaxKind.EqualsEqualsToken && op !== SyntaxKind.ExclamationEqualsToken
+    ) continue
+    const [izq, der] = [b.getLeft(), b.getRight()]
+    const l = literal(der), r = literal(izq)
+    if (esRol(izq.getText()) && l !== null) out.push({ valor: l, linea: b.getStartLineNumber() })
+    else if (esRol(der.getText()) && r !== null) out.push({ valor: r, linea: b.getStartLineNumber() })
+  }
+
+  for (const sw of sf.getDescendantsOfKind(SyntaxKind.SwitchStatement)) {
+    if (!esRol(sw.getExpression().getText())) continue
+    for (const c of sw.getClauses()) {
+      if (c.getKind() === SyntaxKind.CaseClause) {
+        const v = literal((c as import('ts-morph').CaseClause).getExpression())
+        if (v !== null) out.push({ valor: v, linea: c.getStartLineNumber() })
+      }
+    }
+  }
+
+  for (const call of sf.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const e = call.getExpression()
+    if (e.getKind() !== SyntaxKind.PropertyAccessExpression) continue
+    if (!e.getText().endsWith('.includes')) continue
+    if (call.getArguments().some((a) => esRol(a.getText()))) {
+      out.push({ valor: '(includes)', linea: call.getStartLineNumber() })
+    }
+  }
+  return out
+}

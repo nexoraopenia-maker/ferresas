@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
-import { hasRole, type TenantContext } from '@/lib/tenant-context'
+import { type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { camposDeColision, esColisionUnica } from '@/lib/prisma-errors'
+import { puede } from '@/lib/puede'
 import type { CreateProductExpressInput } from './schemas'
 
 const P2002_UNIQUE = 'P2002'
@@ -38,7 +39,7 @@ export async function createProductExpress(
 ): Promise<ExpressProductResult> {
   // El almacenero es justamente quien está en el pasillo con el escáner:
   // si no pudiera crear, el flujo exprés no tendría sentido.
-  if (!hasRole(ctx.role, 'ALMACENERO')) {
+  if (!puede(ctx, 'productos.crear')) {
     throw new BusinessError(
       'FORBIDDEN_ROLE',
       'No tienes permiso para crear productos.',

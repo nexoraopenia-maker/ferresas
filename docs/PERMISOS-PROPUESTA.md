@@ -1,5 +1,15 @@
 # Fase B — Permisos, roles y sesiones
 
+> **Estado:** la matriz está **aprobada e implementada** (`src/lib/permisos.ts`,
+> 26 permisos). Este documento conserva el razonamiento. Los tres permisos
+> añadidos tras la aprobación inicial:
+>
+> | Permiso | Quién | Por qué |
+> |---|---|---|
+> | `caja.cerrar_ajeno` | DUEÑO, ADMIN | Sustituye a la intersección `abrir_cerrar` ∩ `arqueo`, que con roles múltiples dejaba cerrar el cajón ajeno a un CAJERO + CONTADOR |
+> | `comprobantes.estado_manual` | DUEÑO, ADMIN | Declarar a mano la respuesta de SUNAT no es lo mismo que anular. Motivo obligatorio y auditoría |
+> | `stock.transferir_solicitar` | todos menos CONTADOR | Pedir ≠ despachar. Ciclo: solicitar → aprobar → despachar → recibir |
+
 Actualizado con tus decisiones. **Nada de esto está implementado**: es para tu
 OK antes de programar.
 

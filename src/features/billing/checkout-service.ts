@@ -1,9 +1,10 @@
 import { BusinessError } from '@/lib/errors'
-import { hasRole, type TenantContext } from '@/lib/tenant-context'
+import { type TenantContext } from '@/lib/tenant-context'
 import { auditarFacturacion } from './audit'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import type { StripeClient } from './stripe-client'
 import type { MercadoPagoClient } from './mercadopago-client'
+import { puede } from '@/lib/puede'
 
 /**
  * Creación de la sesión de pago.
@@ -36,10 +37,10 @@ export async function createCheckoutSession(
   input: { planCode: string; appUrl: string },
 ): Promise<CheckoutResult> {
   // Contratar y pagar es decisión del dueño, no del almacenero de turno.
-  if (!hasRole(ctx.role, 'ADMIN')) {
+  if (!puede(ctx, 'plan.gestionar')) {
     throw new BusinessError(
       'FORBIDDEN_ROLE',
-      'Solo el dueño o un administrador puede gestionar la suscripción.',
+      'Solo el dueño puede gestionar la suscripción.',
     )
   }
 
@@ -160,10 +161,10 @@ export async function createMercadoPagoCheckout(
   mp: MercadoPagoClient,
   input: { planCode: string; appUrl: string },
 ): Promise<CheckoutResult> {
-  if (!hasRole(ctx.role, 'ADMIN')) {
+  if (!puede(ctx, 'plan.gestionar')) {
     throw new BusinessError(
       'FORBIDDEN_ROLE',
-      'Solo el dueño o un administrador puede gestionar la suscripción.',
+      'Solo el dueño puede gestionar la suscripción.',
     )
   }
 

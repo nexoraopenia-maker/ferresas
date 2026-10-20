@@ -57,6 +57,10 @@ export function TaxDocumentList({
   const guardar = () => {
     if (!editando) return
     setError(null)
+    if (mensaje.trim().length < 10) {
+      setError('Explica por qué cambias el estado a mano: al menos 10 caracteres.')
+      return
+    }
     startTransition(async () => {
       const res = await fetch('/api/invoices/status', {
         method: 'PATCH',
@@ -65,7 +69,7 @@ export function TaxDocumentList({
         body: JSON.stringify({
           taxDocumentId: editando.id,
           status: nuevoEstado,
-          statusMessage: mensaje.trim() || undefined,
+          motivo: mensaje.trim(),
         }),
       })
       const d = await res.json().catch(() => null)
@@ -198,10 +202,16 @@ export function TaxDocumentList({
 
             <label className="mt-3 flex flex-col gap-1">
               <span className="text-sm font-medium text-ink-muted">
-                Observación {nuevoEstado === 'RECHAZADO' ? '(el motivo del rechazo)' : '(opcional)'}
+                Motivo del cambio <span className="font-bold text-stock-out">(obligatorio)</span>
               </span>
-              <textarea value={mensaje} onChange={(e) => setMensaje(e.target.value)} rows={2}
+              <textarea value={mensaje} onChange={(e) => setMensaje(e.target.value)} rows={3}
+                placeholder="Ej.: SUNAT respondió aceptado por el portal; CDR guardado fuera del sistema"
                 className="rounded-xl border border-hairline bg-surface px-3 py-2 text-base text-ink" />
+              <span className="text-xs text-ink-muted">
+                Estás declarando a mano lo que respondió la administración
+                tributaria. Queda registrado quién, cuándo, el estado anterior y
+                este motivo.
+              </span>
             </label>
 
             {error && (
@@ -215,7 +225,7 @@ export function TaxDocumentList({
                 className="h-touch-lg flex-1 rounded-xl border border-hairline font-semibold text-ink">
                 Cancelar
               </button>
-              <button type="button" onClick={guardar} disabled={pendiente}
+              <button type="button" onClick={guardar} disabled={pendiente || mensaje.trim().length < 10}
                 className="h-touch-lg flex-1 rounded-xl bg-industrial-600 font-bold text-white disabled:opacity-40">
                 {pendiente ? 'Guardando…' : 'Guardar'}
               </button>

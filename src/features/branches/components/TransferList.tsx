@@ -52,11 +52,20 @@ const ESTADO: Record<string, { texto: string; cls: string }> = {
 export function TransferList({
   transferencias,
   puedeAprobar,
+  puedeDespachar,
+  puedeRecibir,
   puedeOperar,
   zonaHoraria,
 }: {
   transferencias: TransferRow[]
+  /**
+   * Un permiso por paso del ciclo solicitar → aprobar → despachar → recibir.
+   * Los botones se pintan según cada uno; que el servidor valide es lo que
+   * protege, y esto evita ofrecer a un vendedor un botón que va a rechazar.
+   */
   puedeAprobar: boolean
+  puedeDespachar: boolean
+  puedeRecibir: boolean
   puedeOperar: boolean
   /** Zona del negocio: ver la nota en CashPanel. */
   zonaHoraria: string
@@ -159,7 +168,7 @@ export function TransferList({
                       Aprobar
                     </button>
                   )}
-                  {t.status === 'APROBADA' && t.esMiOrigen && (
+                  {t.status === 'APROBADA' && t.esMiOrigen && puedeDespachar && (
                     <button
                       type="button"
                       onClick={() => correr(() => shipTransfer({ transferId: t.id }))}
@@ -169,7 +178,7 @@ export function TransferList({
                       Despachar
                     </button>
                   )}
-                  {t.status === 'EN_TRANSITO' && t.esMiDestino && (
+                  {t.status === 'EN_TRANSITO' && t.esMiDestino && puedeRecibir && (
                     <>
                       <button
                         type="button"

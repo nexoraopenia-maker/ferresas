@@ -4,6 +4,7 @@ import { requireTenantContext } from '@/lib/session'
 import { GatewayButtons } from '@/features/billing/components/GatewayButtons'
 import { PortalButton } from '@/features/billing/components/PortalButton'
 import { getAvailableGateways } from '@/features/billing/actions'
+import { puede } from '@/lib/puede'
 
 /**
  * Portal de pago. Accesible con la cuenta en mora (§5.2): cortarle a un
@@ -39,7 +40,7 @@ export default async function FacturacionPage({
     getAvailableGateways(),
   ])
 
-  const puedeGestionar = ctx.role === 'OWNER' || ctx.role === 'ADMIN'
+  const puedeGestionar = puede(ctx, 'plan.gestionar')
 
   return (
     <main className="mx-auto flex max-w-lg flex-col gap-6 p-4">

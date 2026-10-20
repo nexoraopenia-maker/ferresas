@@ -1,5 +1,6 @@
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { requireTenantContext } from '@/lib/session'
+import { puede } from '@/lib/puede'
 import { getAccountBanner, type AccountBanner } from './account-status'
 
 export interface DashboardAccountState {
@@ -57,6 +58,6 @@ export async function getDashboardAccountState(): Promise<DashboardAccountState>
     }),
     planCode: sub.plan?.code ?? null,
     // Un almacenero no debe ver un botón de pagar que no puede usar.
-    canManageBilling: ctx.role === 'OWNER' || ctx.role === 'ADMIN',
+    canManageBilling: puede(ctx, 'plan.gestionar'),
   }
 }

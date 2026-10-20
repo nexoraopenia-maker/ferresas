@@ -1,12 +1,13 @@
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
 import { redondearCentimos } from '@/lib/dinero'
-import { hasRole, requireBranch, type TenantContext } from '@/lib/tenant-context'
+import { requireBranch, type TenantContext } from '@/lib/tenant-context'
 import {
   cargarSucursalOperativa, serieDe, turnoAbiertoId,
 } from '@/features/branches/queries'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { applyStockMovement } from '@/features/inventory/stock-service'
+import { puede } from '@/lib/puede'
 import type { RegisterSaleInput } from './schemas'
 
 const P2002_UNIQUE = 'P2002'
@@ -143,8 +144,8 @@ export async function registerSale(
   input: RegisterSaleInput,
   priceOverrides?: PriceOverrides,
 ): Promise<RegisterSaleResult> {
-  if (!hasRole(ctx.role, 'VENDEDOR')) {
-    throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para registrar ventas.')
+  if (!puede(ctx, 'ventas.cobrar')) {
+    throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para cobrar ventas.')
   }
 
   const branchId = requireBranch(ctx)

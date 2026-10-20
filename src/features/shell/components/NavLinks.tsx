@@ -30,14 +30,23 @@ import { isActive, visibleItems } from '../nav-items'
  */
 export function NavLinks({
   variant,
-  role,
+  permisos,
 }: {
   variant: 'sidebar' | 'bottom'
-  role: string
+  /**
+   * Permisos del usuario, calculados en el SERVIDOR.
+   *
+   * Se pasan ya resueltos en lugar de el rol porque este componente es de
+   * cliente: si recibiera el rol tendría que importar la matriz de permisos
+   * al bundle del navegador, y entonces la autorización viviría duplicada en
+   * dos sitios. Aquí solo decide qué enlaces PINTAR; quien impide entrar a la
+   * página es el servidor.
+   */
+  permisos: readonly string[]
 }) {
   const pathname = usePathname()
   const router = useRouter()
-  const items = visibleItems(role)
+  const items = visibleItems(permisos)
   const [pending, startTransition] = useTransition()
   const [destino, marcarDestino] = useOptimistic(pathname)
 

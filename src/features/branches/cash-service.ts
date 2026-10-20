@@ -1,9 +1,10 @@
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
-import { hasRole, requireBranch, type TenantContext } from '@/lib/tenant-context'
+import { requireBranch, type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { redondearCentimos } from '@/lib/dinero'
 import type { CloseCashInput, OpenCashInput } from './cash-schemas'
+import { puede } from '@/lib/puede'
 
 const P2002_UNIQUE = 'P2002'
 const num = (v: unknown): number => Number(v ?? 0)
@@ -44,7 +45,7 @@ export async function openCashSession(
   input: OpenCashInput,
 ): Promise<CashSessionResult> {
   // El cajero es justamente quien abre su propia caja.
-  if (!hasRole(ctx.role, 'VENDEDOR')) {
+  if (!puede(ctx, 'caja.abrir_cerrar')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para abrir caja.')
   }
   const branchId = requireBranch(ctx)
@@ -110,7 +111,7 @@ export async function closeCashSession(
   ctx: TenantContext,
   input: CloseCashInput,
 ): Promise<CashCloseResult> {
-  if (!hasRole(ctx.role, 'VENDEDOR')) {
+  if (!puede(ctx, 'caja.abrir_cerrar')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para cerrar caja.')
   }
 
@@ -133,10 +134,10 @@ export async function closeCashSession(
      * Un cajero cierra SU turno; un ADMIN puede cerrar el de cualquiera —hace
      * falta para el turno que alguien se dejó abierto al irse a casa.
      */
-    if (sesion.openedById !== ctx.userId && !hasRole(ctx.role, 'ADMIN')) {
+    if (sesion.openedById !== ctx.userId && !puede(ctx, 'caja.cerrar_ajeno')) {
       throw new BusinessError(
         'FORBIDDEN_ROLE',
-        'Solo quien abrió el turno, o un administrador, puede cerrarlo.',
+        'Solo quien abrió el turno, o quien supervisa la caja, puede cerrarlo.',
       )
     }
 

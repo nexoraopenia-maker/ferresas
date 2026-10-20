@@ -1,7 +1,8 @@
 import { BusinessError } from '@/lib/errors'
-import { hasRole, type TenantContext } from '@/lib/tenant-context'
+import { type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { serieDeSucursal, type CounterScope } from '@/features/branches/series'
+import { puede } from '@/lib/puede'
 import { ensureCounter } from '@/features/pos/sale-service'
 
 /**
@@ -135,10 +136,10 @@ export async function fijarArranqueSerie(
   ctx: TenantContext,
   input: FijarArranqueInput,
 ): Promise<FijarArranqueResultado> {
-  if (!hasRole(ctx.role, 'ADMIN')) {
+  if (!puede(ctx, 'config.fiscal')) {
     throw new BusinessError(
       'FORBIDDEN_ROLE',
-      'Solo un administrador puede fijar el correlativo inicial.',
+      'Solo el dueño puede fijar el correlativo inicial.',
     )
   }
   if (!SCOPES_FISCALES.includes(input.scope)) {

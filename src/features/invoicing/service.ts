@@ -1,6 +1,6 @@
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
-import { hasRole, type TenantContext } from '@/lib/tenant-context'
+import { type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { claimNextNumber, ensureCounter } from '@/features/pos/sale-service'
 import { cargarSucursalOperativa, serieDe } from '@/features/branches/queries'
@@ -10,6 +10,7 @@ import {
   type IssueTaxDocumentInput,
   type UpdateTaxStatusInput,
 } from './schemas'
+import { puede } from '@/lib/puede'
 
 const P2002_UNIQUE = 'P2002'
 
@@ -55,7 +56,7 @@ export async function issueTaxDocument(
 ): Promise<IssuedDocument> {
   // Emitir un comprobante compromete al negocio ante la administración
   // tributaria: no es tarea del almacenero de turno.
-  if (!hasRole(ctx.role, 'VENDEDOR')) {
+  if (!puede(ctx, 'comprobantes.emitir')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para emitir comprobantes.')
   }
 
@@ -286,16 +287,25 @@ export async function updateTaxStatus(
   ctx: TenantContext,
   input: UpdateTaxStatusInput,
 ): Promise<{ id: string; status: string }> {
-  if (!hasRole(ctx.role, 'ADMIN')) {
+  /*
+   * `comprobantes.estado_manual`, no `comprobantes.anular`. Son poderes
+   * distintos que antes se confundían: anular es emitir una nota de crédito;
+   * esto es DECLARAR a mano lo que respondió la administración tributaria.
+   *
+   * ⚠️ Mientras no exista el adaptador del PSE, este es el único camino para
+   * reflejar un ACEPTADO. Cuando exista, pasar a ACEPTADO a mano debe exigir
+   * el CDR o desaparecer: ver docs/COMPLIANCE.md.
+   */
+  if (!puede(ctx, 'comprobantes.estado_manual')) {
     throw new BusinessError(
       'FORBIDDEN_ROLE',
-      'Solo un administrador puede cambiar el estado tributario.',
+      'No tienes permiso para cambiar a mano el estado tributario.',
     )
   }
 
   const doc = await db.taxDocument.findFirst({
     where: { id: input.taxDocumentId },
-    select: { id: true, status: true, fullNumber: true },
+    select: { id: true, status: true, statusMessage: true, fullNumber: true },
   })
 
   if (!doc) {
@@ -330,7 +340,9 @@ export async function updateTaxStatus(
       where: { id: doc.id },
       data: {
         status: input.status,
-        statusMessage: input.statusMessage ?? null,
+        // Si no hay mensaje del OSE, queda constancia visible en el listado de
+        // que el cambio fue MANUAL y por qué.
+        statusMessage: input.statusMessage ?? `Cambio manual: ${input.motivo}`,
         externalTicket: input.externalTicket ?? undefined,
         responseCode: input.responseCode ?? undefined,
         ...marca,
@@ -342,12 +354,21 @@ export async function updateTaxStatus(
         tenantId: ctx.tenantId,
         actorId: ctx.userId,
         actorRole: ctx.role,
-        action: 'taxdocument.status',
+        action: 'taxdocument.status.manual',
         entityType: 'TaxDocument',
         entityId: doc.id,
-        reason: input.statusMessage ?? null,
-        before: { status: doc.status },
-        after: { status: input.status, comprobante: doc.fullNumber },
+        // Motivo obligatorio: es lo que se consulta cuando se pregunta por qué
+        // este comprobante figura con este estado.
+        reason: input.motivo,
+        // Estado ANTERIOR y NUEVO, y el mensaje que se sustituye.
+        before: { status: doc.status, mensaje: doc.statusMessage ?? null },
+        after: {
+          status: input.status,
+          comprobante: doc.fullNumber,
+          mensaje: input.statusMessage ?? null,
+          ticket: input.externalTicket ?? null,
+          codigoRespuesta: input.responseCode ?? null,
+        },
       },
     }),
   ])

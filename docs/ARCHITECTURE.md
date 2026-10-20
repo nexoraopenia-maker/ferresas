@@ -351,6 +351,44 @@ src/
 
 ---
 
+## 11b. Permisos: un poder = un permiso nombrado
+
+`puede(ctx, 'permiso')` es la **única** función que decide (`src/lib/puede.ts`);
+la matriz rol → permisos vive en `src/lib/permisos.ts`.
+
+### Por qué no existe `puedeTodo`
+
+Exigir dos permisos a la vez para autorizar UNA operación parece una forma
+cómoda de afinar, y deja de serlo en cuanto un usuario puede tener varios
+roles: **los permisos se unen**. Un `CAJERO + CONTADOR` suma `caja.abrir_cerrar`
+y `caja.arqueo`, cumple la «intersección» sin que ninguno de sus roles
+quisiera ese poder, y cierra el cajón del compañero.
+
+Era exactamente lo que hacía «cerrar el turno de otro». Ahora es
+`caja.cerrar_ajeno`, solo DUEÑO y ADMIN.
+
+**Regla:** si una operación necesita una combinación, **la combinación se
+nombra** y se concede a los roles que toque. `puedeAlguno` sobrevive solo para
+decidir qué PINTAR (páginas y menú), nunca para autorizar en un servicio.
+
+### Lo que la revisión encontró además de los `puedeTodo`
+
+La misma enfermedad aparece de formas que ningún lint de «combinaciones»
+detecta, así que se busca preguntando *«¿esta operación hace más de lo que su
+permiso nombra?»*:
+
+- **`commitImport`** actualiza `salePrice` y `costPrice` de productos
+  EXISTENTES, guardado solo con `productos.crear`. Un almacenero podía cambiar
+  precios y costos subiendo un CSV.
+- **`createTransfer`** (pedir mercadería) se guardaba con `despachar`. Solo
+  coincidía porque el almacenero tenía los dos. Ahora es `solicitar`, y el
+  ciclo `solicitar → aprobar → despachar → recibir` tiene un permiso por paso.
+- **`searchForTransfer`** no exigía NINGÚN permiso: cualquier usuario con
+  sesión consultaba nombre y saldo de cualquier almacén de su negocio, y una
+  Server Action es un endpoint HTTP que se puede invocar a mano.
+
+---
+
 ## 12. Pruebas estructurales: por AST, nunca por texto
 
 Hay invariantes que ninguna prueba de comportamiento alcanza. El principal:

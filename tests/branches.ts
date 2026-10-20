@@ -12,6 +12,7 @@ import {
 import { createBranch, updateBranch, deleteBranch, assignBranches } from '@/features/branches/branch-service'
 import { createBranchSchema, deleteBranchSchema, assignBranchesSchema, updateBranchSchema } from '@/features/branches/schemas'
 import { openCashSession, closeCashSession, currentCashSession } from '@/features/branches/cash-service'
+import { puede } from '@/lib/puede'
 import { openCashSchema, closeCashSchema } from '@/features/branches/cash-schemas'
 import {
   createTransfer, approveTransfer, shipTransfer, receiveTransfer, rejectTransfer,
@@ -278,6 +279,44 @@ async function main() {
   check('el arqueo quedó CONGELADO en la fila',
     Number((await db.cashSession.findFirstOrThrow({ where: { id: caja.id } })).difference) === -5.8)
 
+  console.log('\n   >>> Cerrar el turno de OTRO: un poder = un permiso')
+  /*
+   * El caso que motivó `caja.cerrar_ajeno`. Antes se exigía la INTERSECCIÓN
+   * de `caja.abrir_cerrar` y `caja.arqueo`, y con usuarios de varios roles los
+   * permisos se UNEN: un CAJERO + CONTADOR cumple las dos sin que ninguno de
+   * sus roles quisiera ese poder, y cierra el cajón del compañero.
+   */
+  const turnoAjeno = await currentCashSession(db, ctx) // abierto por el DUEÑO
+  const multi = await prisma.user.create({
+    data: { email: `cc-${M}@x.com`, name: 'Cajero y contador', role: 'CAJERO', tenantId: t.id },
+  })
+  await asignarSucursal(t.id, multi.id, matriz.id)
+  const ctxMulti: TenantContext = {
+    tenantId: t.id, userId: multi.id, role: 'CAJERO', roles: ['CONTADOR'],
+    access: 'FULL', branchId: matriz.id,
+  }
+  const dbMulti = getTenantPrisma(ctxMulti)
+  check('el turno lo abrió OTRA persona', turnoAjeno !== null)
+  check('>>> CAJERO + CONTADOR tiene los dos permisos de la antigua intersección',
+    puede(ctxMulti, 'caja.abrir_cerrar') && puede(ctxMulti, 'caja.arqueo'))
+  check('>>> y es RECHAZADO al intentar cerrar el cajón ajeno',
+    await code(() => closeCashSession(dbMulti, ctxMulti, closeCashSchema.parse({
+      sessionId: turnoAjeno!.id, countedAmount: 0,
+    }))) === 'FORBIDDEN_ROLE')
+  check('el turno sigue ABIERTO tras el intento',
+    (await db.cashSession.findFirstOrThrow({ where: { id: turnoAjeno!.id } })).status === 'ABIERTA')
+  check('un VENDEDOR tampoco', await code(() => closeCashSession(
+    getTenantPrisma({ ...ctx, userId: multi.id, role: 'VENDEDOR' }),
+    { ...ctx, userId: multi.id, role: 'VENDEDOR' },
+    closeCashSchema.parse({ sessionId: turnoAjeno!.id, countedAmount: 0 }),
+  )) === 'FORBIDDEN_ROLE')
+  const ctxAdmin: TenantContext = { ...ctx, userId: multi.id, role: 'ADMIN' }
+  check('>>> un ADMIN SÍ puede cerrar el turno de otro',
+    (await closeCashSession(getTenantPrisma(ctxAdmin), ctxAdmin, closeCashSchema.parse({
+      sessionId: turnoAjeno!.id, countedAmount: 0, notes: 'Cierre por supervisión',
+    }))).status === 'CERRADA')
+  await openCashSession(db, ctx, openCashSchema.parse({ openingAmount: 0 })) // se restituye el turno
+
   // ═══════════════════════════════════════════════════════════════════════
   console.log('\n8) TRANSFERENCIAS entre sucursales')
   const stockAntes = Number((await db.stock.findFirstOrThrow({
@@ -410,6 +449,42 @@ async function main() {
   check('>>> SUM(movimientos) del origen = stock real', suma === real, `${suma} vs ${real}`)
 
   // ═══════════════════════════════════════════════════════════════════════
+  console.log('\n   >>> El ciclo SEPARADO: solicitar → aprobar → despachar → recibir')
+  /*
+   * Antes `createTransfer` exigía `despachar`, y solo funcionaba porque el
+   * almacenero tenía los dos. Son dos momentos y dos responsabilidades: un
+   * vendedor o cajero puede pedir reposición, pero solo el almacenero o el
+   * admin despacha.
+   */
+  const ctxVend: TenantContext = { ...ctx, userId: multi.id, role: 'VENDEDOR' }
+  const dbVend = getTenantPrisma(ctxVend)
+  const trV = await createTransfer(dbVend, ctxVend, createTransferSchema.parse({
+    fromWarehouseId: wMatriz.id, toBranchId: suc2.id, toWarehouseId: w2,
+    items: [{ productId: prod.productId, quantity: 1 }],
+  }))
+  check('>>> un VENDEDOR puede SOLICITAR una transferencia', trV.status === 'SOLICITADA')
+  check('>>> pero NO aprobarla', await code(() => approveTransfer(dbVend, ctxVend, { transferId: trV.id })) === 'FORBIDDEN_ROLE')
+  await approveTransfer(db, ctx, { transferId: trV.id })
+  check('>>> ni despacharla', await code(() => shipTransfer(dbVend, ctxVend, { transferId: trV.id })) === 'FORBIDDEN_ROLE')
+  check('>>> ni recibirla', await code(() => receiveTransfer(dbVend, ctxVend, receiveTransferSchema.parse({
+    transferId: trV.id, items: [{ itemId: 'x', quantityReceived: 1 }],
+  }))) === 'FORBIDDEN_ROLE')
+  const stockVend = Number((await db.stock.findFirstOrThrow({
+    where: { productId: prod.productId, warehouseId: wMatriz.id },
+  })).quantity)
+  check('el stock no se movió por haber solicitado ni por los intentos', stockVend === stockAntes - 50,
+    `${stockVend} (esperado ${stockAntes - 50}: solo salieron los 50 de la primera transferencia)`)
+  const ctxContador: TenantContext = { ...ctx, userId: multi.id, role: 'CONTADOR' }
+  check('el CONTADOR no puede ni solicitar', await code(() => createTransfer(
+    getTenantPrisma(ctxContador), ctxContador, createTransferSchema.parse({
+      fromWarehouseId: wMatriz.id, toBranchId: suc2.id, toWarehouseId: w2,
+      items: [{ productId: prod.productId, quantity: 1 }],
+    }))) === 'FORBIDDEN_ROLE')
+  // Se deja la transferencia resuelta para no contaminar la baja de sucursales.
+  await rejectTransfer(db2, ctx2, rejectTransferSchema.parse({
+    transferId: trV.id, reason: 'Solicitud de prueba del ciclo separado',
+  }))
+
   console.log('\n9) Asignación de usuarios a sucursales')
   const cajero = await prisma.user.create({
     data: { email: `c-${M}@x.com`, name: 'Cajero', role: 'VENDEDOR', tenantId: t.id },

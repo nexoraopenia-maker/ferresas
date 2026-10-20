@@ -1,5 +1,5 @@
 import { BusinessError } from '@/lib/errors'
-import { hasRole, requireBranch, type TenantContext } from '@/lib/tenant-context'
+import { requireBranch, type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { applyStockMovement } from '@/features/inventory/stock-service'
 import { claimNextNumber, ensureCounter } from '@/features/pos/sale-service'
@@ -8,6 +8,7 @@ import type {
   ApproveTransferInput, CreateTransferInput, ReceiveTransferInput,
   RejectTransferInput, ShipTransferInput,
 } from './transfer-schemas'
+import { puede } from '@/lib/puede'
 
 const num = (v: unknown): number => Number(v ?? 0)
 
@@ -43,8 +44,14 @@ export async function createTransfer(
   ctx: TenantContext,
   input: CreateTransferInput,
 ): Promise<TransferResult> {
-  // El almacenero es quien pide la mercadería que le falta.
-  if (!hasRole(ctx.role, 'ALMACENERO')) {
+  /*
+   * SOLICITAR, no despachar. Son dos momentos y dos responsabilidades: el
+   * ciclo es solicitar → aprobar → despachar → recibir, y cada paso lo da un
+   * permiso distinto. Un vendedor o cajero puede pedir reposición; solo el
+   * almacenero o el administrador despacha. Que antes `createTransfer`
+   * exigiera `despachar` solo funcionaba porque el almacenero tenía los dos.
+   */
+  if (!puede(ctx, 'stock.transferir_solicitar')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para solicitar transferencias.')
   }
   const fromBranchId = requireBranch(ctx)
@@ -164,7 +171,7 @@ export async function approveTransfer(
   ctx: TenantContext,
   input: ApproveTransferInput,
 ): Promise<TransferResult> {
-  if (!hasRole(ctx.role, 'ADMIN')) {
+  if (!puede(ctx, 'stock.transferir_aprobar')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'Solo un administrador aprueba transferencias.')
   }
 
@@ -197,7 +204,7 @@ export async function shipTransfer(
   ctx: TenantContext,
   input: ShipTransferInput,
 ): Promise<TransferResult> {
-  if (!hasRole(ctx.role, 'ALMACENERO')) {
+  if (!puede(ctx, 'stock.transferir_despachar')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para despachar transferencias.')
   }
 
@@ -206,7 +213,7 @@ export async function shipTransfer(
     const tr = await cargarTransferencia(t, input.transferId, ['APROBADA'])
 
     // Solo despacha quien está en la sucursal de origen.
-    if (ctx.branchId && ctx.branchId !== tr.fromBranchId && !hasRole(ctx.role, 'ADMIN')) {
+    if (ctx.branchId && ctx.branchId !== tr.fromBranchId && !puede(ctx, 'stock.transferir_aprobar')) {
       throw new BusinessError(
         'FORBIDDEN_ROLE',
         'Solo se despacha desde la sucursal de origen.',
@@ -256,7 +263,7 @@ export async function receiveTransfer(
   ctx: TenantContext,
   input: ReceiveTransferInput,
 ): Promise<TransferResult & { faltantes: number }> {
-  if (!hasRole(ctx.role, 'ALMACENERO')) {
+  if (!puede(ctx, 'stock.transferir_recibir')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para recibir transferencias.')
   }
 
@@ -264,7 +271,7 @@ export async function receiveTransfer(
     const t = tx as unknown as TenantPrismaClient
     const tr = await cargarTransferencia(t, input.transferId, ['EN_TRANSITO'])
 
-    if (ctx.branchId && ctx.branchId !== tr.toBranchId && !hasRole(ctx.role, 'ADMIN')) {
+    if (ctx.branchId && ctx.branchId !== tr.toBranchId && !puede(ctx, 'stock.transferir_aprobar')) {
       throw new BusinessError('FORBIDDEN_ROLE', 'Solo se recibe en la sucursal de destino.')
     }
 
@@ -373,7 +380,7 @@ export async function rejectTransfer(
   ctx: TenantContext,
   input: RejectTransferInput,
 ): Promise<TransferResult> {
-  if (!hasRole(ctx.role, 'ALMACENERO')) {
+  if (!puede(ctx, 'stock.transferir_recibir')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para rechazar transferencias.')
   }
 

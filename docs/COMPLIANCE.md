@@ -40,6 +40,34 @@ o se deja sin validar a propósito y aquí se dice por qué.
 | ⚠️ **Nota de crédito** | Es la ÚNICA forma de anular un comprobante ya emitido en Perú | No implementado. `TaxDocumentStatus.ANULADO` existe pero no hay documento que lo sustente |
 | ⚠️ **Plazos de envío** | SUNAT fija plazos máximos desde la emisión | No se controlan ni se avisa al vencerlos |
 
+### ⚠️ Cambio manual del estado tributario: DEUDA CON FECHA DE CADUCIDAD
+
+Hoy un comprobante puede pasar a `ACEPTADO` **a mano** (`updateTaxStatus`,
+permiso `comprobantes.estado_manual`, solo DUEÑO y ADMIN, con motivo
+obligatorio de 10+ caracteres y auditoría del estado anterior y el nuevo).
+
+Existe porque **no hay todavía adaptador del PSE**: sin él, es el único modo de
+reflejar lo que respondió SUNAT. Pero es **declarar algo que el sistema no ha
+comprobado**, y en cuanto exista el adaptador deja de tener justificación:
+
+> ⚠️ **Cuando se implemente el adaptador del PSE, pasar a `ACEPTADO` a mano
+> debe exigir el CDR (adjuntarlo o referenciarlo) o desaparecer.** Dejarlo tal
+> cual convertiría un puente provisional en una puerta permanente para marcar
+> como aceptado un comprobante que SUNAT nunca vio.
+
+Mientras tanto, lo que lo hace defendible:
+
+| Control | Dónde |
+|---|---|
+| Permiso propio, distinto de anular | `comprobantes.estado_manual` |
+| Motivo obligatorio | `updateTaxStatusSchema.motivo` (≥ 10 caracteres) |
+| Auditoría con estado anterior y nuevo | acción `taxdocument.status.manual` |
+| El listado dice que fue manual y por qué | `statusMessage = "Cambio manual: …"` |
+| `ACEPTADO` es terminal | no se puede degradar ni reabrir |
+
+**Lo que NO controla:** que el DUEÑO o el ADMIN digan la verdad. Una
+fiscalización contrasta con SUNAT, no con este registro.
+
 ### ⚠️ Supuestos sobre formatos
 
 - **Correlativo de 8 dígitos** (`B001-00000123`): es lo habitual y lo que

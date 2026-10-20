@@ -1,9 +1,10 @@
 import { Prisma } from '@/generated/prisma/client'
 import type { MovementSource, MovementType } from '@/generated/prisma/enums'
 import { BusinessError } from '@/lib/errors'
-import { hasRole, type TenantContext } from '@/lib/tenant-context'
+import { type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import type { CreateStockMovementInput } from './schemas'
+import { puede } from '@/lib/puede'
 
 /**
  * Lógica de inventario. Vive separada de la Server Action a propósito:
@@ -318,16 +319,25 @@ export async function createStockMovement(
   ctx: TenantContext,
   input: CreateStockMovementInput,
 ): Promise<StockMovementResult> {
-  // --- Autorización por rol (§6.4) ----------------------------------------
-  // Un AJUSTE reescribe el inventario sin contraparte física: se reserva a
-  // ADMIN. Entradas y salidas son el trabajo diario del almacenero.
-  const minimo = input.type === 'AJUSTE' ? 'ADMIN' : 'ALMACENERO'
-  if (!hasRole(ctx.role, minimo)) {
+  // --- Autorización por permiso (§6.4) -------------------------------------
+  /*
+   * ENTRADA es el trabajo diario del almacenero. AJUSTE y SALIDA reducen o
+   * reescriben el inventario a criterio de quien las registra —la forma más
+   * fácil de tapar un faltante— y exigen `stock.ajustar`.
+   *
+   * Que la SALIDA manual cueste más que la ENTRADA es decisión de producto,
+   * no accidente: para que el almacenero reporte una pérdida sin tocar el
+   * saldo existe la merma con aprobación (`merma-service.ts`).
+   */
+  const permiso = input.type === 'ENTRADA' ? 'stock.entrada' : 'stock.ajustar'
+  if (!puede(ctx, permiso)) {
     throw new BusinessError(
       'FORBIDDEN_ROLE',
-      input.type === 'AJUSTE'
-        ? 'Solo un administrador puede ajustar el inventario.'
-        : 'No tienes permiso para mover inventario.',
+      input.type === 'ENTRADA'
+        ? 'No tienes permiso para registrar entradas de mercadería.'
+        : input.type === 'AJUSTE'
+          ? 'No tienes permiso para ajustar el inventario.'
+          : 'No tienes permiso para dar salida al inventario. Si es una pérdida, solicita una merma.',
     )
   }
 

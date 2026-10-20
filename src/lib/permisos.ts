@@ -33,18 +33,21 @@ export const PERMISOS = [
   'cotizaciones.crear',
   'caja.abrir_cerrar',
   'caja.arqueo',
+  'caja.cerrar_ajeno',
   'productos.ver_costo',
   'productos.editar_precio',
   'productos.crear',
   'stock.entrada',
   'stock.ajustar',
   'stock.merma_solicitar',
-  'stock.transferir_despachar',
+  'stock.transferir_solicitar',
   'stock.transferir_aprobar',
+  'stock.transferir_despachar',
   'stock.transferir_recibir',
   'reportes.ver',
   'comprobantes.emitir',
   'comprobantes.anular',
+  'comprobantes.estado_manual',
   'usuarios.gestionar',
   'sucursales.gestionar',
   'config.fiscal',
@@ -98,7 +101,15 @@ export const MATRIZ: Record<Role, readonly Permiso[]> = {
    * Separar «armar» de «cobrar» es lo que permite el relevo vendedor → cajero
    * sin que el vendedor toque el dinero.
    */
-  VENDEDOR: ['ventas.crear', 'cotizaciones.crear'],
+  VENDEDOR: [
+    'ventas.crear',
+    'cotizaciones.crear',
+    // Pedir mercadería es solicitar, no despachar: el ciclo es
+    // solicitar → aprobar → despachar → recibir, y cada paso es de alguien
+    // distinto. Un vendedor o cajero puede pedir reposición para su tienda;
+    // solo el almacenero o el admin despacha.
+    'stock.transferir_solicitar',
+  ],
 
   /** Cobra, abre y cierra caja, emite comprobantes. NO ve costos. */
   CAJERO: [
@@ -107,6 +118,7 @@ export const MATRIZ: Record<Role, readonly Permiso[]> = {
     'cotizaciones.crear',
     'caja.abrir_cerrar',
     'comprobantes.emitir',
+    'stock.transferir_solicitar',
   ],
 
   /**
@@ -134,6 +146,7 @@ export const MATRIZ: Record<Role, readonly Permiso[]> = {
      * Misma regla que en transferencias: quien pide no autoriza.
      */
     'stock.merma_solicitar',
+    'stock.transferir_solicitar',
     'stock.transferir_despachar',
     'stock.transferir_recibir',
   ],
@@ -189,18 +202,21 @@ export const ETIQUETAS: Record<Permiso, string> = {
   'cotizaciones.crear': 'Cotizar',
   'caja.abrir_cerrar': 'Abrir y cerrar caja',
   'caja.arqueo': 'Ver arqueos y descuadres',
+  'caja.cerrar_ajeno': 'Cerrar el turno de caja de otra persona',
   'productos.ver_costo': 'Ver costos y márgenes',
   'productos.editar_precio': 'Cambiar precios de venta',
   'productos.crear': 'Crear productos',
   'stock.entrada': 'Registrar entradas de mercadería',
   'stock.ajustar': 'Ajustar stock y aprobar mermas',
   'stock.merma_solicitar': 'Solicitar mermas (requieren aprobación)',
+  'stock.transferir_solicitar': 'Solicitar transferencias entre sucursales',
   'stock.transferir_despachar': 'Despachar transferencias',
   'stock.transferir_aprobar': 'Aprobar transferencias',
   'stock.transferir_recibir': 'Recibir transferencias',
   'reportes.ver': 'Ver reportes',
   'comprobantes.emitir': 'Emitir boletas y facturas',
   'comprobantes.anular': 'Emitir notas de crédito',
+  'comprobantes.estado_manual': 'Cambiar a mano el estado tributario de un comprobante',
   'usuarios.gestionar': 'Gestionar usuarios',
   'sucursales.gestionar': 'Gestionar sucursales',
   'config.fiscal': 'Configurar series y datos fiscales',

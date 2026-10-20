@@ -5,6 +5,7 @@ import { cookies } from 'next/headers'
 import { z } from 'zod'
 import { getTenantPrisma, type TenantPrismaClient } from '@/lib/tenant-prisma'
 import { requireTenantContext } from '@/lib/session'
+import { exigir } from '@/lib/puede'
 import { isBusinessError, type ActionResult } from '@/lib/errors'
 import { BRANCH_COOKIE } from '@/lib/branch-selection'
 import type { TenantContext } from '@/lib/tenant-context'
@@ -257,7 +258,15 @@ export async function rejectTransfer(raw: unknown) {
  * estar a la vista en el momento de teclear la cantidad, no al despachar.
  */
 export async function searchForTransfer(q: string, fromWarehouseId: string) {
-  return withTenant('searchForTransfer', async (db) => {
+  return withTenant('searchForTransfer', async (db, ctx) => {
+    /*
+     * Faltaba el permiso. Cualquier usuario con sesión podía consultar
+     * nombre y saldo de cualquier producto de cualquier almacén de su negocio
+     * a través de este buscador, sin que ninguna pantalla se lo ofreciera —
+     * una Server Action es un endpoint HTTP y se puede invocar a mano. Lo
+     * detectó la revisión de qué acciones no pasaban por `puede()`.
+     */
+    exigir(ctx, 'stock.transferir_solicitar')
     const termino = q.trim()
     if (termino.length < 2) return { ok: true as const, data: [] }
 
