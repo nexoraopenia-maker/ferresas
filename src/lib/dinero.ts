@@ -26,3 +26,18 @@ export function aCentimos(monto: number): number {
 export function redondearCentimos(monto: number): number {
   return (monto < 0 ? -1 : 1) * aCentimos(monto) / 100
 }
+
+/**
+ * ¿Tiene `n` como máximo `decimales` decimales?
+ *
+ * NO se puede comprobar con `Math.round(n * 100) === n * 100`: en coma
+ * flotante `1.1 * 100` es `110.00000000000001`, así que 1,10; 2,30; 4,35;
+ * 8,20 o 19,99 —importes perfectamente normales— se rechazaban como «más de 2
+ * decimales». Se compara contra el propio número normalizado: `toFixed`
+ * produce la representación decimal más cercana, que es lo que el humano
+ * escribió, y `1.005` (que el binario guarda como 1.00499…) sigue siendo
+ * rechazado con razón.
+ */
+export function tieneMaxDecimales(n: number, decimales: number): boolean {
+  return Number.isFinite(n) && Number(n.toFixed(decimales)) === n
+}

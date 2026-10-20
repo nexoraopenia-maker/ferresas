@@ -1408,6 +1408,8 @@ model TaxDocument {
 
   // --- Pista de la integración fiscal (se rellena en la fase de firma) ---
   xmlHash        String?
+  /// Identificador del comprobante en el proveedor (PSE/OSE), para consultarlo o anularlo.
+  externalId     String?
   externalTicket String?
   responseCode   String?
 

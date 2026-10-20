@@ -130,3 +130,94 @@ Decidido con el dueño del producto; no son olvidos:
   cifrado del disco de Neon. Cuando entren los certificados digitales para
   firmar XML, esos **sí** tendrán que ir cifrados por tenant: una clave
   privada en claro en la base es una fuga de identidad tributaria.
+
+---
+
+## 6. Facturación electrónica: qué hay y qué falta
+
+Estado a 2026-10-20. **Ningún comprobante de FerreSaaS ha sido aceptado por
+SUNAT ni por un OSE.** Lo que existe es la tubería, probada contra un
+proveedor simulado.
+
+### Hecho (y probado)
+
+| Pieza | Dónde | Estado |
+|---|---|---|
+| Series y correlativos por sucursal y tipo, sin huecos | `counter-service.ts`, `claimNextNumber` | Real |
+| XML UBL 2.1 sin firmar de factura, boleta y nota de crédito | `ubl.ts` | Generado y bien formado; **no validado** ⚠️ |
+| Verificación de totales antes de generar (Σ líneas = totales) | `ubl.ts → verificarTotales` | Real |
+| Armado del comprobante desde la venta y el emisor | `envio.ts → cargarComprobanteFiscal` | Real |
+| Envío al proveedor, respuesta, estados, auditoría, reintentos | `envio.ts` | Real contra el proveedor **simulado** |
+| Interfaz agnóstica de proveedor (PSE/OSE) | `providers/types.ts` | Real |
+| Validación de RUC (largo, prefijo, dígito verificador) y DNI | `documentos.ts` | Real ⚠️ |
+| Consulta de padrón RUC/DNI | `padron.ts` | Interfaz + simulado; **sin fuente real** |
+| Representación impresa 80 mm | `printing/` | Real; **sin QR ni hash** ⚠️ |
+
+### Lo que NO se ha hecho y por qué
+
+1. ⚠️ **Firma digital (XMLDSig).** Hace falta el certificado digital de cada
+   negocio, o un PSE que firme por él. No hay ninguno. La firma iría en el
+   `ext:ExtensionContent` que `ubl.ts` deja vacío. Firmar localmente exigiría
+   además una librería de XMLDSig (dependencia nueva, por decidir).
+2. ⚠️ **Envío real.** Falta elegir proveedor, contratarlo y guardar las
+   credenciales de cada negocio **cifradas** (no hay tabla para ello todavía).
+   Hasta entonces `enviarComprobante` **se niega** a usar el simulado con un
+   negocio real: el comprobante queda PENDIENTE, que es la verdad.
+3. ⚠️ **Validación del XML.** Contrastarlo con el XSD y las reglas de
+   validación de SUNAT (o con el ambiente de pruebas del PSE/OSE elegido).
+   Cualquier campo, catálogo o regla de `ubl.ts` puede estar desactualizado.
+4. ⚠️ **Hash y QR del ticket.** El hash oficial es el que devuelve el
+   proveedor tras firmar (`TaxDocument.xmlHash`); el QR lleva datos que hay que
+   contrastar con la norma y exige una librería de generación. No se imprime
+   nada que no se pueda sostener.
+5. ⚠️ **CDR.** El proveedor devuelve el código de respuesta (`responseCode`);
+   no se guarda el archivo CDR ni el XML firmado (no hay dónde).
+6. **Resumen diario de boletas y comunicación de baja.** Casi siempre son
+   endpoints del proveedor; no se han construido.
+7. **Notas de crédito desde la aplicación.** El XML de nota de crédito existe;
+   el flujo para emitirla (motivo, comprobante relacionado, numeración propia)
+   no.
+
+### Catálogos usados (todos ⚠️ a contrastar con la versión vigente)
+
+- Tipo de documento (catálogo 01): `01` factura, `03` boleta, `07` nota de crédito.
+- Tipo de documento de identidad (catálogo 06): `0` sin documento, `1` DNI,
+  `4` carnet de extranjería, `6` RUC, `7` pasaporte.
+- Afectación del IGV (catálogo 07): `10` gravado, `20` exonerado, `30` inafecto.
+  **El producto no guarda su afectación**: una tasa del 0 % se declara
+  exonerada (`20`). Confirmar con el contador y añadir el campo si hace falta.
+- Tributos (catálogo 05): `1000` IGV/VAT, `9997` EXO/VAT, `9998` INA/FRE.
+- Unidades de medida (catálogo 03, códigos UN/ECE): `NIU`, `KGM`, `GRM`, `MTR`,
+  `CMT`, `LTR`, `GLL`, `BX`, `PK`, `DZN`, `MIL`, `RO`, `BG`, `SET`, `PR`, `ZZ`.
+  SUNAT admite solo un subconjunto; **PLANCHA** no tiene código propio claro y
+  va como `NIU`.
+- Descuentos: se informan **ya aplicados** al precio de la línea, no como cargo
+  o descuento aparte. Confirmar que el tratamiento es el que quiere el PSE.
+
+### Validación de documentos
+
+- **RUC**: módulo 11 con pesos `5,4,3,2,7,6,5,4,3,2` sobre los 10 primeros
+  dígitos y prefijos `10, 15, 16, 17, 20`. ⚠️ Se probó contra dos RUC públicos
+  (SUNAT y un supermercado) pero no contra una especificación oficial. Pasar la
+  validación **no** prueba que el RUC exista ni esté activo; eso lo dice el
+  padrón.
+- **DNI**: solo 8 dígitos; no se valida el dígito verificador de la tarjeta.
+- **Padrón**: ⚠️ las fuentes posibles (padrón reducido de SUNAT, RENIEC por
+  convenio, un servicio de terceros de pago) exigen una decisión comercial. En
+  producción `PADRON_PROVEEDOR` es `ninguno` y el cajero teclea el nombre.
+
+### Cuenta de demostración
+
+Los datos son ficticios (documentos tipo `00000001`, RUC de prueba con dígito verificador válido). La demo
+usa siempre el proveedor simulado y **sus comprobantes no tienen ningún valor**.
+El aviso permanente de la interfaz lo dice.
+
+### Deuda conocida
+
+- Estado manual: `updateTaxStatus` permite pasar un comprobante a ACEPTADO a
+  mano (con motivo y auditoría). Cuando haya proveedor real, eso debe exigir el
+  CDR o desaparecer.
+- Deriva cosmética: las columnas `updatedAt` de `branches`, `cash_sessions`,
+  `branch_transfers` y `mermas` llevan `DEFAULT CURRENT_TIMESTAMP` en la base y
+  Prisma no lo espera. No afecta al comportamiento; una migración
+  `DROP DEFAULT` lo limpiaría.

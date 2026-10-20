@@ -1,4 +1,5 @@
 import './guard'
+import { completarRuc } from '../src/lib/documentos'
 import { correr } from './teardown'
 import { randomUUID } from 'node:crypto'
 import { PrismaPg } from '@prisma/adapter-pg'
@@ -57,7 +58,7 @@ async function main() {
   const empresa = await db.customer.create({
     data: {
       tenantId: t.id, name: 'CLIENTE EMPRESA S.A.C.', docType: 'RUC',
-      docNumber: `20${Date.now()}`.slice(0, 11),
+      docNumber: completarRuc(`20${Date.now()}`.slice(0, 10)),
     },
   })
   const venta = (conRuc = false) => registerSale(db, ctx, registerSaleSchema.parse({

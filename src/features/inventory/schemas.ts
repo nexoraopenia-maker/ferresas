@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { tieneMaxDecimales } from '@/lib/dinero'
 
 /**
  * Validación de entrada del inventario (§6.3).
@@ -18,7 +19,7 @@ const cantidad = z
   .refine((n) => Number.isFinite(n * 10_000) && Math.abs(n) < 1e9, {
     message: 'La cantidad está fuera de rango.',
   })
-  .refine((n) => Math.round(n * 10_000) === n * 10_000, {
+  .refine((n) => tieneMaxDecimales(n, 4), {
     message: 'Máximo 4 decimales.',
   })
 

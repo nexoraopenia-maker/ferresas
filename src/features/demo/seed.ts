@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { BusinessError } from '@/lib/errors'
+import { completarRuc } from '@/lib/documentos'
 import { prisma } from '@/lib/prisma'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import type { TenantContext } from '@/lib/tenant-context'
@@ -8,6 +9,7 @@ import { createProductExpress } from '@/features/inventory/product-service'
 import { registerSale } from '@/features/pos/sale-service'
 import { convertQuoteToSale, registerQuote } from '@/features/pos/quote-service'
 import { issueTaxDocument } from '@/features/invoicing/service'
+import { enviarComprobante } from '@/features/invoicing/envio'
 import { closeCashSession, currentCashSession, openCashSession } from '@/features/branches/cash-service'
 
 /**
@@ -84,12 +86,22 @@ export const PRODUCTOS_DEMO: readonly ProductoDemo[] = [
   { name: 'Tornillo drywall 1" (caja 100)', sku: 'TOR-DW', barcode: '7750000100233', unitType: 'CAJA', salePrice: 8.0, stock: 0, minStock: 15 },
 ]
 
+/**
+ * RUC ficticios pero con dígito verificador VÁLIDO: el sistema valida los RUC
+ * de las facturas y uno inventado a mano (20000000000) se rechazaría. Son
+ * números de prueba construidos aquí, no empresas; pueden coincidir por azar
+ * con uno real, y por eso todo lo demo lleva «(demo)» y el aviso permanente.
+ */
+const RUC_EMISOR_DEMO = completarRuc('2099999990')
+const RUC_CLIENTE_1 = completarRuc('2000000001')
+const RUC_CLIENTE_2 = completarRuc('2000000002')
+
 const CLIENTES_DEMO = [
   { docType: 'DNI' as const, docNumber: '00000001', name: 'Juan Pérez (cliente demo)' },
   { docType: 'DNI' as const, docNumber: '00000002', name: 'María Quispe (cliente demo)' },
   { docType: 'DNI' as const, docNumber: '00000003', name: 'Carlos Huamán (cliente demo)' },
-  { docType: 'RUC' as const, docNumber: '20000000001', name: 'Constructora Los Andes S.A.C. (demo)' },
-  { docType: 'RUC' as const, docNumber: '20000000002', name: 'Inversiones El Roble E.I.R.L. (demo)' },
+  { docType: 'RUC' as const, docNumber: RUC_CLIENTE_1, name: 'Constructora Los Andes S.A.C. (demo)' },
+  { docType: 'RUC' as const, docNumber: RUC_CLIENTE_2, name: 'Inversiones El Roble E.I.R.L. (demo)' },
   { docType: 'DNI' as const, docNumber: '00000004', name: 'Rosa Mamani (cliente demo)' },
 ]
 
@@ -151,7 +163,7 @@ export async function prepararCuentaDemo(opts: {
         cashRequired: true,
         legalName: 'FERRETERIA DEMO S.A.C.',
         // Ficticio. Un RUC real aquí haría pasar la demo por una empresa de verdad.
-        taxId: '20000000000',
+        taxId: RUC_EMISOR_DEMO,
         address: 'Av. Ficticia 123, Lima',
         ubigeo: '150101',
       },
@@ -245,13 +257,13 @@ export async function sembrarDatosDemo(tenantId: string, ahora: Date = new Date(
   await openCashSession(db, ctx, { openingAmount: 100, notes: 'Apertura (demo)' } as never)
   const ventasDef: { dias: number; hora: number; cliente?: string; doc: 'NOTA_VENTA' | 'BOLETA' | 'FACTURA'; metodo: 'EFECTIVO' | 'YAPE' | 'TARJETA_DEBITO' | 'TRANSFERENCIA'; items: [string, number][] }[] = [
     { dias: 6, hora: 9, doc: 'BOLETA', metodo: 'EFECTIVO', items: [['CEM-SOL', 10], ['CLA-3', 2]] },
-    { dias: 6, hora: 15, cliente: '20000000001', doc: 'FACTURA', metodo: 'TRANSFERENCIA', items: [['FIE-38', 40], ['FIE-12', 20], ['CEM-AND', 30]] },
+    { dias: 6, hora: 15, cliente: RUC_CLIENTE_1, doc: 'FACTURA', metodo: 'TRANSFERENCIA', items: [['FIE-38', 40], ['FIE-12', 20], ['CEM-AND', 30]] },
     { dias: 5, hora: 10, doc: 'NOTA_VENTA', metodo: 'EFECTIVO', items: [['PVC-12', 4], ['COD-12', 8], ['PEG-PVC', 1]] },
     { dias: 4, hora: 11, cliente: '00000001', doc: 'BOLETA', metodo: 'YAPE', items: [['PIN-LB', 2], ['BRO-3', 2], ['ROD-9', 1]] },
     { dias: 4, hora: 17, doc: 'BOLETA', metodo: 'EFECTIVO', items: [['THW-14', 50], ['INT-S', 3], ['CIN-AIS', 2]] },
     { dias: 3, hora: 9, cliente: '00000002', doc: 'BOLETA', metodo: 'TARJETA_DEBITO', items: [['MAR-16', 1], ['ALI-8', 1], ['DES-P2', 2]] },
     { dias: 3, hora: 14, doc: 'NOTA_VENTA', metodo: 'EFECTIVO', items: [['LAD-KK', 400], ['ARE-GR', 2]] },
-    { dias: 2, hora: 10, cliente: '20000000002', doc: 'FACTURA', metodo: 'TRANSFERENCIA', items: [['CEM-SOL', 25], ['FIE-38', 30]] },
+    { dias: 2, hora: 10, cliente: RUC_CLIENTE_2, doc: 'FACTURA', metodo: 'TRANSFERENCIA', items: [['CEM-SOL', 25], ['FIE-38', 30]] },
     { dias: 2, hora: 16, doc: 'BOLETA', metodo: 'YAPE', items: [['LED-9', 6], ['TOM-D', 2]] },
     { dias: 1, hora: 9, doc: 'NOTA_VENTA', metodo: 'EFECTIVO', items: [['CLA-2', 3], ['ALA-16', 2], ['BIS-3', 2]] },
     { dias: 1, hora: 13, cliente: '00000003', doc: 'BOLETA', metodo: 'EFECTIVO', items: [['DIS-45', 4], ['CAN-40', 2]] },
@@ -290,7 +302,9 @@ export async function sembrarDatosDemo(tenantId: string, ahora: Date = new Date(
     } as never)
     ventas++
     if (v.doc !== 'NOTA_VENTA') {
-      await issueTaxDocument(db, ctx, { saleId: r.saleId, documentType: v.doc } as never)
+      const doc = await issueTaxDocument(db, ctx, { saleId: r.saleId, documentType: v.doc } as never)
+      // Al proveedor simulado: así la demo enseña comprobantes ACEPTADOS, no pendientes.
+      await enviarComprobante(db, ctx, doc.id)
       comprobantes++
     }
     await fechar(r.saleId, hace(v.dias, v.hora))
@@ -309,10 +323,10 @@ export async function sembrarDatosDemo(tenantId: string, ahora: Date = new Date(
 
   // ── Cotizaciones ───────────────────────────────────────────────────────
   const cotis: [string | undefined, [string, number][]][] = [
-    ['20000000001', [['CEM-SOL', 40], ['FIE-12', 60], ['LAD-KK', 2000]]],
+    [RUC_CLIENTE_1, [['CEM-SOL', 40], ['FIE-12', 60], ['LAD-KK', 2000]]],
     ['00000002', [['PIN-LB', 4], ['THI-1', 4], ['BRO-3', 4]]],
     [undefined, [['PVC-4D', 10], ['PEG-PVC', 3]]],
-    ['20000000002', [['THW-14', 300], ['THW-12', 200], ['INT-S', 20], ['TOM-D', 20]]],
+    [RUC_CLIENTE_2, [['THW-14', 300], ['THW-12', 200], ['INT-S', 20], ['TOM-D', 20]]],
   ]
   let cotizaciones = 0
   for (const [doc, its] of cotis) {

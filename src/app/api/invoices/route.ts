@@ -7,6 +7,7 @@ import { checkRateLimit, clientIp } from '@/lib/rate-limit'
 import { isBusinessError } from '@/lib/errors'
 import { issueTaxDocumentSchema } from '@/features/invoicing/schemas'
 import { issueTaxDocument } from '@/features/invoicing/service'
+import { enviarComprobante } from '@/features/invoicing/envio'
 
 /**
  * GET  /api/invoices           — comprobantes del negocio, con filtros.
@@ -131,6 +132,17 @@ export async function POST(req: NextRequest) {
   try {
     const db = getTenantPrisma(ctx)
     const doc = await issueTaxDocument(db, ctx, parsed.data)
+
+    // La cuenta de demostración envía sola (al proveedor simulado) para que se
+    // vea el ciclo completo. Un negocio real NO: lo envía a propósito, cuando
+    // hay un proveedor y credenciales de verdad.
+    if (!doc.alreadyIssued) {
+      const t = await db.tenant.findFirst({ select: { isDemo: true } })
+      if (t?.isDemo) {
+        await enviarComprobante(db, ctx, doc.id).catch((e) =>
+          console.warn('[api/invoices] envío automático de la demo falló', e instanceof Error ? e.message : e))
+      }
+    }
     // 200 y no 201 cuando ya existía: no se creó nada nuevo.
     return NextResponse.json(doc, { status: doc.alreadyIssued ? 200 : 201 })
   } catch (e) {

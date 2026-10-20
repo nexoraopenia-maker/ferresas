@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { tieneMaxDecimales } from '@/lib/dinero'
 
 const id = z.string().min(1).max(64)
 
@@ -7,7 +8,7 @@ const cantidad = z
   .finite()
   .positive('La cantidad debe ser mayor que cero.')
   .max(9_999_999)
-  .refine((n) => Number.isFinite(n) && Math.round(n * 10_000) === n * 10_000, {
+  .refine((n) => tieneMaxDecimales(n, 4), {
     message: 'Como máximo 4 decimales.',
   })
 

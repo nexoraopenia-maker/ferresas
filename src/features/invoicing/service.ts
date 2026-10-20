@@ -1,5 +1,6 @@
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
+import { validarRuc } from '@/lib/documentos'
 import { type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { claimNextNumber, ensureCounter } from '@/features/pos/sale-service'
@@ -157,11 +158,11 @@ export async function issueTaxDocument(
         'Una factura exige el RUC del cliente. Regístralo o emite una boleta.',
       )
     }
-    if (!/^\d{11}$/.test(receiverDocNumber)) {
-      throw new BusinessError(
-        'INVALID_DOCUMENT',
-        'El RUC debe tener 11 dígitos.',
-      )
+    // Largo, prefijo y dígito verificador: un RUC mal tecleado lo rechazaría
+    // SUNAT después, con el comprobante ya entregado al cliente.
+    const rucOk = validarRuc(receiverDocNumber)
+    if (!rucOk.valido) {
+      throw new BusinessError('INVALID_DOCUMENT', `RUC del cliente: ${rucOk.mensaje}`)
     }
     if (!receiverName) {
       throw new BusinessError(

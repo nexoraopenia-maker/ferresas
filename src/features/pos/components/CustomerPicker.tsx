@@ -62,6 +62,7 @@ export function CustomerPicker({
           <p className="font-mono text-xs text-ink-muted">
             {cliente.docType} {cliente.docNumber}
             {cliente.creado && ' · nuevo'}
+            {cliente.origen === 'PADRON' && ' · datos del padrón'}
           </p>
         </div>
         {/* Que se vea qué comprobante permite este documento evita el error

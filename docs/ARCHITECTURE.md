@@ -437,6 +437,28 @@ permisos que él no alcanza. Desactivar a alguien invalida sus sesiones abiertas
 `User.extraRoles` guarda los roles adicionales; `resolveTenantContext` los
 vuelca en `TenantContext.roles` y los permisos se **unen**.
 
+### Panel, demo y facturación (octubre 2026)
+
+- **Panel (`/panel`)** es la pantalla de aterrizaje. Cada bloque pide su permiso
+  al *servicio* (`reportes.ver` para ventas y ranking; `caja.arqueo` o
+  `reportes.ver` para caja; las alertas de stock, ninguno, igual que el POS).
+  «Hoy», «semana» y «mes» se calculan en la zona del negocio
+  (`src/lib/periodos.ts`), no en la del servidor. Sin costos ni márgenes.
+- **Alcance por sucursal en tablas hijas**: `SaleItem`, `Payment`, `TaxDocument`,
+  `QuoteItem` y `BranchTransferItem` heredan el filtro de su padre. Sin esto, un
+  `groupBy` (un informe) saltaba `ctx.branchIds`.
+- **Cuenta demo** (`src/features/demo`): `Tenant.isDemo`. Se crea con
+  `npm run demo:crear`; los datos pasan por los servicios reales del POS. El
+  sembrado es reanudable y el reclamo caduca (10 min), así que una función
+  cortada no deja la demo rota. No paga, no habla con un proveedor real.
+- **Caja obligatoria** (`Tenant.cashRequired`): cobrar en efectivo exige turno
+  abierto. Se consulta solo cuando no hay turno, para no encarecer la venta normal.
+- **Facturación**: ver `docs/COMPLIANCE.md` §6. El flujo es
+  `TaxDocument` → `ComprobanteFiscal` → UBL de comprobación → proveedor →
+  respuesta guardada. Un negocio real nunca usa el simulado.
+- **Decimales**: `tieneMaxDecimales` sustituye a `Math.round(n*100) === n*100`,
+  que rechazaba 1,10; 8,20 o 19,99 por error de coma flotante.
+
 ### `productos.ver_costo`: qué protege hoy
 
 Hoy el costo entra por tres caminos y los tres lo exigen en el servidor:

@@ -87,6 +87,7 @@ export default async function ComprobantesPage() {
 
       <TaxDocumentList
         canManage={puede(ctx, 'comprobantes.anular')}
+        puedeEnviar={puede(ctx, 'comprobantes.emitir') && (ctx.access === 'FULL' || ctx.access === 'WARN')}
         zonaHoraria={tenant?.timezone ?? 'America/Lima'}
         docs={docs.map((d) => ({
           id: d.id,

@@ -21,6 +21,7 @@ import {
 } from './schemas'
 import { filtroAlmacen } from '@/features/branches/queries'
 import { buscarProductos, MIN_CARACTERES } from './busqueda'
+import { resolverCliente } from './cliente-service'
 import { registerSale as runRegisterSale } from './sale-service'
 import {
   convertQuoteToSale as runConvertQuote,
@@ -229,6 +230,8 @@ export interface PosCustomer {
   name: string
   /** Se acaba de crear en esta llamada. */
   creado: boolean
+  /** Si es nuevo: de dónde salió el nombre. */
+  origen?: 'TECLEADO' | 'PADRON'
 }
 
 /**
@@ -248,30 +251,9 @@ export async function findOrCreateCustomerByDoc(
   if (!parsed.success) return validationFailure(parsed.error)
 
   return withTenant('findOrCreateCustomerByDoc', async (db, ctx) => {
-    const { docNumber, name } = parsed.data
-    const docType = docNumber.length === 11 ? 'RUC' : 'DNI'
-
-    const existente = await db.customer.findFirst({
-      where: { docType, docNumber, deletedAt: null },
-      select: { id: true, docType: true, docNumber: true, name: true },
-    })
-
-    if (existente) {
-      const dato: PosCustomer = { ...existente, creado: false }
-      return { ok: true, data: dato }
-    }
-
-    // Sin nombre no se crea: se devuelve null para que la UI lo pida. Crear
-    // un cliente llamado "20512345678" ensucia el padrón para siempre.
-    if (!name) return { ok: true, data: null }
-
-    const nuevo = await db.customer.create({
-      data: { tenantId: ctx.tenantId, docType, docNumber, name },
-      select: { id: true, docType: true, docNumber: true, name: true },
-    })
-
-    const dato: PosCustomer = { ...nuevo, creado: true }
-    return { ok: true, data: dato }
+    // Sin nombre y sin padrón devuelve null: la pantalla pide el nombre a mano.
+    const { cliente } = await resolverCliente(db, ctx, parsed.data)
+    return { ok: true, data: cliente }
   })
 }
 

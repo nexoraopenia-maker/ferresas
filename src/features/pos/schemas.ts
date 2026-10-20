@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { tieneMaxDecimales } from '@/lib/dinero'
 
 /**
  * Validación del Punto de Venta (§5.4).
@@ -14,14 +15,14 @@ const cantidad = z
   .number({ error: 'Ingresa una cantidad.' })
   .finite('La cantidad no es válida.')
   .positive('La cantidad debe ser mayor que cero.')
-  .refine((n) => Math.round(n * 10_000) === n * 10_000, 'Máximo 4 decimales.')
+  .refine((n) => tieneMaxDecimales(n, 4), 'Máximo 4 decimales.')
   .refine((n) => n < 1e9, 'La cantidad está fuera de rango.')
 
 const importe = z
   .number()
   .finite()
   .nonnegative('No puede ser negativo.')
-  .refine((n) => Math.round(n * 100) === n * 100, 'Máximo 2 decimales.')
+  .refine((n) => tieneMaxDecimales(n, 2), 'Máximo 2 decimales.')
 
 const id = z.string().min(1).max(64)
 

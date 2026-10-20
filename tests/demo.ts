@@ -65,6 +65,8 @@ async function main() {
   const dias = new Set(ventas.map((v) => diaLocal('America/Lima', v.completedAt!)))
   check('>>> repartidas en al menos 5 días distintos', dias.size >= 5, [...dias].sort().join(','))
   check('hay boletas y facturas con comprobante', (await prisma.taxDocument.count({ where: { tenantId: c.tenantId } })) >= 8)
+  check('>>> y salen ACEPTADOS (por el proveedor simulado), no pendientes',
+    (await prisma.taxDocument.count({ where: { tenantId: c.tenantId, status: 'ACEPTADO' } })) === (await prisma.taxDocument.count({ where: { tenantId: c.tenantId } })))
   check('los números de venta son únicos', new Set(ventas.map((v) => v.number)).size === ventas.length)
 
   console.log('\n6) >>> El libro de inventario cuadra')

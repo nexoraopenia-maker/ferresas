@@ -40,10 +40,13 @@ const SIGUIENTES: Record<string, string[]> = {
 export function TaxDocumentList({
   docs,
   canManage,
+  puedeEnviar = false,
   zonaHoraria,
 }: {
   docs: TaxDocRow[]
   canManage: boolean
+  /** Puede mandar comprobantes al proveedor de facturación. */
+  puedeEnviar?: boolean
   /** Zona del negocio: ver la nota en CashPanel. */
   zonaHoraria: string
 }) {
@@ -53,6 +56,23 @@ export function TaxDocumentList({
   const [mensaje, setMensaje] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [pendiente, startTransition] = useTransition()
+
+  const [aviso, setAviso] = useState<string | null>(null)
+  const enviar = (id: string) => {
+    setAviso(null)
+    startTransition(async () => {
+      const res = await fetch('/api/invoices/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ taxDocumentId: id }),
+      })
+      const d = await res.json().catch(() => null)
+      if (!res.ok) { setAviso(d?.message ?? 'No se pudo enviar el comprobante.'); return }
+      if (d?.reintentable) setAviso(d.mensaje ?? 'El proveedor no respondió; se puede reintentar.')
+      router.refresh()
+    })
+  }
 
   const guardar = () => {
     if (!editando) return
@@ -94,6 +114,11 @@ export function TaxDocumentList({
 
   return (
     <>
+      {aviso && (
+        <p role="alert" className="mb-3 rounded-xl bg-stock-low-soft px-3 py-2 text-sm font-semibold text-stock-low">
+          {aviso}
+        </p>
+      )}
       <div className="overflow-hidden rounded-2xl border border-hairline bg-surface">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[44rem] text-sm">
@@ -155,6 +180,14 @@ export function TaxDocumentList({
                       >
                         80 mm
                       </a>
+                      {puedeEnviar && (d.status === 'PENDIENTE' || d.status === 'ENVIADO') && (
+                        <button
+                          type="button" disabled={pendiente} onClick={() => enviar(d.id)}
+                          className="ml-2 h-touch rounded-lg bg-industrial-600 px-3 text-sm font-bold text-white disabled:opacity-50"
+                        >
+                          {d.status === 'ENVIADO' ? 'Consultar' : 'Enviar'}
+                        </button>
+                      )}
                     </td>
                     {canManage && (
                       <td className="px-3 py-3">

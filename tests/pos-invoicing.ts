@@ -1,4 +1,6 @@
 import './guard'
+import { completarRuc } from '../src/lib/documentos'
+const RUC_CLIENTE = completarRuc('2051234567')
 import { correr } from './teardown'
 import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
@@ -216,7 +218,7 @@ async function main() {
   check('el mensaje orienta a emitir boleta', /boleta/i.test(sinRuc?.message ?? ''))
 
   const cliente = await prisma.customer.create({
-    data: { tenantId: t.id, docType: 'RUC', docNumber: '20512345678', name: 'CONSTRUCTORA X S.A.C.' },
+    data: { tenantId: t.id, docType: 'RUC', docNumber: RUC_CLIENTE, name: 'CONSTRUCTORA X S.A.C.' },
   })
   const v3 = await registerSale(db, ctx, parse({
     warehouseId: w.id, customerId: cliente.id,
@@ -228,12 +230,26 @@ async function main() {
   check('en serie F001 y correlativo propio',
     f1.series === 'F001' && f1.correlativo === 1, `${f1.series}-${f1.correlativo}`)
   const fdoc = await db.taxDocument.findFirstOrThrow({ where: { id: f1.id } })
-  check('congela el RUC del receptor', fdoc.receiverDocNumber === '20512345678')
+  check('congela el RUC del receptor', fdoc.receiverDocNumber === RUC_CLIENTE)
   check('y su razón social', fdoc.receiverName === 'CONSTRUCTORA X S.A.C.')
+
+  const malRuc = await prisma.customer.create({
+    data: { tenantId: t.id, docType: 'RUC', docNumber: '20512345678', name: 'EMPRESA CON RUC MAL TECLEADO' },
+  })
+  const vMal = await registerSale(db, ctx, parse({
+    warehouseId: w.id, customerId: malRuc.id,
+    items: [{ productId: prod.productId, quantity: 1 }],
+    payments: [{ method: 'TRANSFERENCIA', amount: 11.8 }],
+  }))
+  const rechazoRuc = await issueTaxDocument(db, ctx, { saleId: vMal.saleId, documentType: 'FACTURA' })
+    .then(() => null).catch((e) => e)
+  check('>>> una factura con RUC de dígito verificador erróneo se rechaza ANTES de numerarse',
+    rechazoRuc?.code === 'INVALID_DOCUMENT' && /RUC del cliente/.test(rechazoRuc?.message ?? ''), rechazoRuc?.message)
+  check('y no gastó correlativo', (await db.taxDocument.count({ where: { documentType: 'FACTURA' } })) === 1)
 
   await prisma.customer.update({ where: { id: cliente.id }, data: { docNumber: '20500000000' } })
   check('cambiar el RUC del cliente NO altera la factura emitida',
-    (await db.taxDocument.findFirstOrThrow({ where: { id: f1.id } })).receiverDocNumber === '20512345678')
+    (await db.taxDocument.findFirstOrThrow({ where: { id: f1.id } })).receiverDocNumber === RUC_CLIENTE)
 
   console.log('\n9) Boletas y facturas llevan series INDEPENDIENTES')
   const b3 = await issueTaxDocument(db, ctx, { saleId: v2.saleId, documentType: 'BOLETA' })
