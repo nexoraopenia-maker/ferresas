@@ -4,7 +4,7 @@ import { requireBranch, type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { redondearCentimos } from '@/lib/dinero'
 import type { CloseCashInput, OpenCashInput } from './cash-schemas'
-import { puede } from '@/lib/puede'
+import { exigir, puede } from '@/lib/puede'
 
 const P2002_UNIQUE = 'P2002'
 const num = (v: unknown): number => Number(v ?? 0)
@@ -269,4 +269,37 @@ export async function currentCashSession(
     expectedAmount: redondearCentimos(num(s.openingAmount) + cash - vuelto),
     salesCount: s.sales.length,
   }
+}
+
+/**
+ * Activa o desactiva «caja obligatoria» para todo el negocio.
+ *
+ * Es política del negocio, no del cajero: la decide quien administra
+ * sucursales. Queda auditado con el valor anterior.
+ */
+export async function configurarCajaObligatoria(
+  db: TenantPrismaClient,
+  ctx: TenantContext,
+  activo: boolean,
+): Promise<void> {
+  exigir(ctx, 'sucursales.gestionar')
+  const antes = await db.tenant.findFirstOrThrow({ select: { id: true, cashRequired: true } })
+  if (antes.cashRequired === activo) return
+  await db.$transaction(async (tx) => {
+    const t = tx as unknown as TenantPrismaClient
+    await t.tenant.update({ where: { id: antes.id }, data: { cashRequired: activo } })
+    await t.auditLog.create({
+      data: {
+        tenantId: ctx.tenantId,
+        actorId: ctx.userId,
+        actorRole: ctx.role,
+        action: 'caja.obligatoria',
+        entityType: 'Tenant',
+        entityId: antes.id,
+        before: { cashRequired: antes.cashRequired },
+        after: { cashRequired: activo },
+        impersonationId: ctx.impersonationId ?? null,
+      },
+    })
+  })
 }

@@ -25,6 +25,17 @@ import { puede } from '@/lib/puede'
  * a mitad, no queda basura en nuestra BD.
  */
 
+/** La cuenta de demostración no contrata ni paga nada: no hay cobro real que hacer. */
+async function rechazarSiEsDemo(db: TenantPrismaClient) {
+  const t = await db.tenant.findFirst({ select: { isDemo: true } })
+  if (t?.isDemo) {
+    throw new BusinessError(
+      'FORBIDDEN_ROLE',
+      'Esta es una cuenta de demostración: no admite suscripciones ni pagos. Crea tu cuenta para contratar.',
+    )
+  }
+}
+
 export interface CheckoutResult {
   url: string
   sessionId: string
@@ -43,6 +54,7 @@ export async function createCheckoutSession(
       'Solo el dueño puede gestionar la suscripción.',
     )
   }
+  await rechazarSiEsDemo(db)
 
   // El PRECIO sale de nuestra tabla Plan, jamás del cliente. Si el navegador
   // pudiera mandar un priceId, cualquiera contrataría el plan Premium al
@@ -167,6 +179,7 @@ export async function createMercadoPagoCheckout(
       'Solo el dueño puede gestionar la suscripción.',
     )
   }
+  await rechazarSiEsDemo(db)
 
   const plan = await db.plan.findFirst({
     where: { code: input.planCode, isActive: true },

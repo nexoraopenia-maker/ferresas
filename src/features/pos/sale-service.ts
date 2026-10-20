@@ -174,6 +174,22 @@ export async function registerSale(
    */
   const cashSessionId = await turnoAbiertoId(db, branchId)
 
+  /*
+   * Caja obligatoria (opcional por negocio): el efectivo solo se cobra dentro
+   * de un turno abierto. Sin turno, ese dinero no entra en ningún arqueo y es
+   * justo el que se «pierde». Solo se consulta el ajuste cuando NO hay turno
+   * abierto, que es el caso raro: la venta normal no paga una consulta más.
+   */
+  if (!cashSessionId && input.payments.some((p) => p.method === 'EFECTIVO')) {
+    const ajustes = await db.tenant.findFirst({ select: { cashRequired: true } })
+    if (ajustes?.cashRequired) {
+      throw new BusinessError(
+        'INVALID_DOCUMENT',
+        'Abre la caja antes de cobrar en efectivo. Declara el monto con el que empiezas el turno.',
+      )
+    }
+  }
+
   return db.$transaction(async (tx) => {
       const t = tx as unknown as TenantPrismaClient
 

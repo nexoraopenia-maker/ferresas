@@ -19,7 +19,13 @@ const PROVEEDORES: Record<string, ProveedorFacturacion> = {
   mock: proveedorMock,
 }
 
-export function obtenerProveedor(nombre?: string): ProveedorFacturacion {
+export function obtenerProveedor(
+  nombre?: string,
+  opciones: { esDemo?: boolean } = {},
+): ProveedorFacturacion {
+  // Una cuenta de demostración NUNCA habla con un proveedor real, sea cual sea
+  // la configuración del entorno: sus comprobantes son de mentira.
+  if (opciones.esDemo) return PROVEEDORES.mock!
   const elegido = nombre ?? process.env.FACTURACION_PROVEEDOR ?? 'mock'
   const p = PROVEEDORES[elegido]
   if (!p) {

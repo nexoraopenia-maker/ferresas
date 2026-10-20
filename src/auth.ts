@@ -125,6 +125,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         if (r.ok) {
           console.info('[auth] OK', { correo: r.user.email, userId: r.user.id, ms })
+          // Import dinámico: el arranque de la demo no debe entrar en el grafo
+          // estático de este módulo, y para casi todos los correos no hace nada.
+          try {
+            const { alIniciarSesion } = await import('@/features/demo/arranque')
+            await alIniciarSesion(r.user.id, r.user.email)
+          } catch (e) {
+            console.error('[auth] arranque de la demo falló (no afecta al login)', e instanceof Error ? e.message : e)
+          }
           return r.user
         }
 

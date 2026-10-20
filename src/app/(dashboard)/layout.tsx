@@ -45,7 +45,7 @@ export default async function DashboardLayout({
   const { ctx } = await guardDashboard()
   const db = getTenantPrisma(ctx)
   const [tenant, asignadas] = await Promise.all([
-    db.tenant.findFirst({ select: { name: true } }),
+    db.tenant.findFirst({ select: { name: true, isDemo: true } }),
     /*
      * Sucursales que el usuario puede operar. Se consultan aquí, en el
      * armazón, para que el selector esté en todas las pantallas: equivocarse
@@ -97,6 +97,11 @@ export default async function DashboardLayout({
             soporte PRIMERO, porque si el superadmin ve «solo lectura» sin
             saber que está impersonando, diagnosticará un problema de
             suscripción que el cliente no tiene. */}
+        {tenant?.isDemo && (
+          <div role="status" className="bg-accent-100 px-4 py-2 text-center text-sm font-semibold text-accent-900">
+            Cuenta de demostración · los datos son ficticios y no se envía nada a SUNAT
+          </div>
+        )}
         <ImpersonationBanner />
         <AccountBannerBar />
 

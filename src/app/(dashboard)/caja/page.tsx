@@ -1,7 +1,9 @@
 import { requireTenantContext } from '@/lib/session'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { currentCashSession } from '@/features/branches/cash-service'
+import { puede } from '@/lib/puede'
 import { CashPanel } from '@/features/branches/components/CashPanel'
+import { CajaObligatoria } from '@/features/branches/components/CajaObligatoria'
 
 export const dynamic = 'force-dynamic'
 
@@ -41,7 +43,7 @@ export default async function CajaPage() {
         closedBy: { select: { name: true, email: true } },
       },
     }),
-    db.tenant.findFirst({ select: { timezone: true } }),
+    db.tenant.findFirst({ select: { timezone: true, cashRequired: true } }),
   ])
 
   const abiertoPor = turnoRaw
@@ -61,6 +63,10 @@ export default async function CajaPage() {
           Apertura, cierre y arqueo del cajón de {sucursal?.name ?? 'la sucursal'}.
         </p>
       </header>
+
+      {puede(ctx, 'sucursales.gestionar') && (
+        <CajaObligatoria inicial={tenant?.cashRequired ?? false} puedeOperar={ctx.access === 'FULL' || ctx.access === 'WARN'} />
+      )}
 
       <CashPanel
         sucursal={sucursal?.name ?? 'Sucursal'}
