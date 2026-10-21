@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { BusinessError } from '@/lib/errors'
 import { completarRuc } from '@/lib/documentos'
+import { periodos } from '@/lib/periodos'
 import { prisma } from '@/lib/prisma'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import type { TenantContext } from '@/lib/tenant-context'
@@ -240,10 +241,13 @@ export async function sembrarDatosDemo(tenantId: string, ahora: Date = new Date(
     await prisma.stockMovement.updateMany({ where: { tenantId, referenceId: saleId }, data: { createdAt: cuando } })
     await prisma.taxDocument.updateMany({ where: { saleId }, data: { issuedAt: cuando } })
   }
+  // Las fechas se reparten por el día civil de LIMA (no por el UTC del servidor):
+  // sembrar a las 00:30 de Lima con aritmética UTC dejaba las ventas «de hoy» en ayer.
+  const hoyLima = periodos(ahora, 'America/Lima').hoy.desde.getTime()
   const hace = (dias: number, hora: number) => {
-    const d = new Date(ahora.getTime() - dias * MS_DIA)
-    d.setUTCHours(hora + 5, 0, 0, 0) // hora de Lima → UTC
-    return d > ahora ? new Date(ahora.getTime() - 3_600_000) : d
+    const d = new Date(hoyLima - dias * MS_DIA + hora * 3_600_000)
+    // Lo de «hoy» no puede quedar en el futuro ni antes de la medianoche de hoy.
+    return d > ahora ? new Date(Math.max(ahora.getTime() - 60_000, hoyLima + 60_000)) : d
   }
 
   // Si una ejecución anterior se cortó a medias, los productos y clientes ya

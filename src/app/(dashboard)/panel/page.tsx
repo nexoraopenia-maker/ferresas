@@ -3,8 +3,10 @@ import { requireTenantContext } from '@/lib/session'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { puede } from '@/lib/puede'
 import { alertasDeStock, rendimientoDeCaja, resumenDeVentas } from '@/features/dashboard/service'
+import { contarMermasPendientes } from '@/features/inventory/merma-service'
+import { contarCostosPendientes } from '@/features/inventory/costos-service'
 import {
-  AlertasStockWidget, CajaWidget, GraficoSemana, KpiVentas, TopProductos,
+  AlertasStockWidget, CajaWidget, GraficoSemana, KpiVentas, PendientesWidget, TopProductos,
 } from '@/features/dashboard/components/Widgets'
 
 export const dynamic = 'force-dynamic'
@@ -25,11 +27,14 @@ export default async function PanelPage() {
   const verVentas = puede(ctx, 'reportes.ver')
   const verCaja = verVentas || puede(ctx, 'caja.arqueo')
 
-  const [ventas, caja, alertas, tenant] = await Promise.all([
+  const [ventas, caja, alertas, tenant, mermasPendientes, costosPendientes] = await Promise.all([
     verVentas ? resumenDeVentas(db, ctx) : null,
     verCaja ? rendimientoDeCaja(db, ctx) : null,
     alertasDeStock(db, ctx),
     db.tenant.findFirst({ select: { name: true } }),
+    // Cada contador solo para quien puede actuar sobre él; para los demás no se calcula ni se muestra.
+    puede(ctx, 'stock.ajustar') && ctx.branchId ? contarMermasPendientes(db, ctx.branchId) : Promise.resolve(null),
+    puede(ctx, 'productos.ver_costo') ? contarCostosPendientes(db, ctx) : Promise.resolve(null),
   ])
 
   return (
@@ -50,6 +55,8 @@ export default async function PanelPage() {
           </Link>
         )}
       </header>
+
+      <PendientesWidget mermas={mermasPendientes} costos={costosPendientes} />
 
       {ventas && (
         <section className="grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="Ventas">

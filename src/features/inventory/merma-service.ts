@@ -289,3 +289,60 @@ async function auditar(
     },
   })
 }
+
+export interface MermaFila {
+  id: string
+  estado: 'PENDIENTE' | 'APROBADA' | 'RECHAZADA'
+  producto: string
+  sku: string
+  unitType: string
+  cantidad: number
+  motivo: string
+  fotoUrl: string | null
+  solicitante: string
+  solicitadaEn: Date
+  resolvio: string | null
+  resueltaEn: Date | null
+  motivoRechazo: string | null
+  /** La pedí yo: no puedo aprobarla ni rechazarla (requisito de control). */
+  esMia: boolean
+}
+
+/**
+ * Mermas de la sucursal activa.
+ *
+ * Quien aprueba (`stock.ajustar`) ve todas las de la sucursal; quien solo
+ * solicita (`stock.merma_solicitar`) ve las SUYAS. Las pendientes primero.
+ */
+export async function listarMermas(
+  db: TenantPrismaClient,
+  ctx: TenantContext,
+  limite = 100,
+): Promise<MermaFila[]> {
+  const aprueba = puede(ctx, 'stock.ajustar')
+  if (!aprueba && !puede(ctx, 'stock.merma_solicitar')) {
+    throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para ver mermas.')
+  }
+  const branchId = requireBranch(ctx)
+
+  const filas = await db.merma.findMany({
+    where: { branchId, ...(aprueba ? {} : { requestedById: ctx.userId }) },
+    orderBy: [{ requestedAt: 'desc' }],
+    take: limite,
+    select: {
+      id: true, status: true, nameSnapshot: true, skuSnapshot: true, unitType: true, quantity: true,
+      reason: true, photoUrl: true, requestedAt: true, resolvedAt: true, rejectReason: true, requestedById: true,
+      requestedBy: { select: { name: true } },
+      resolvedBy: { select: { name: true } },
+    },
+  })
+  const orden = { PENDIENTE: 0, APROBADA: 1, RECHAZADA: 1 } as const
+  return filas
+    .map((f) => ({
+      id: f.id, estado: f.status, producto: f.nameSnapshot, sku: f.skuSnapshot, unitType: f.unitType,
+      cantidad: num(f.quantity), motivo: f.reason, fotoUrl: f.photoUrl, solicitante: f.requestedBy.name,
+      solicitadaEn: f.requestedAt, resolvio: f.resolvedBy?.name ?? null, resueltaEn: f.resolvedAt,
+      motivoRechazo: f.rejectReason, esMia: f.requestedById === ctx.userId,
+    }))
+    .sort((a, b) => orden[a.estado] - orden[b.estado])
+}

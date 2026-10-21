@@ -421,7 +421,11 @@ export async function completarCostoEntrada(
   await db.$transaction(async (tx) => {
     const t = tx as unknown as TenantPrismaClient
     const mov = await t.stockMovement.findFirst({
-      where: { id: movementId, type: 'ENTRADA', costPending: true },
+      where: {
+        id: movementId, type: 'ENTRADA', costPending: true,
+        // Solo entradas de almacenes de las sucursales que este usuario alcanza.
+        ...(ctx.branchIds ? { warehouse: { branchId: { in: [...ctx.branchIds] } } } : {}),
+      },
       select: { id: true, productId: true },
     })
     if (!mov) {

@@ -16,7 +16,9 @@ import {
   type CreateStockMovementInput,
   type FindProductByCodeInput,
 } from './schemas'
-import { createStockMovement as runCreateStockMovement } from './stock-service'
+import { completarCostoEntrada, createStockMovement as runCreateStockMovement } from './stock-service'
+import { resolverMerma as runResolverMerma, solicitarMerma as runSolicitarMerma } from './merma-service'
+import { resolverMermaSchema, solicitarMermaSchema } from './merma-schemas'
 import { createProductExpress as runCreateProductExpress } from './product-service'
 import {
   analyzeImport as runAnalyze,
@@ -372,5 +374,47 @@ export async function commitCatalogImport(
     const r = await runCommit(db, ctx, analisis, warehouseId)
     revalidatePath('/inventario')
     return { ok: true, data: r }
+  })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  MERMAS Y COSTOS PENDIENTES
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function solicitarMermaAction(raw: unknown) {
+  const parsed = solicitarMermaSchema.safeParse(raw)
+  if (!parsed.success) return validationFailure(parsed.error)
+  return withTenant('solicitarMerma', async (db, ctx) => {
+    const r = await runSolicitarMerma(db, ctx, parsed.data)
+    revalidatePath('/mermas')
+    revalidatePath('/panel')
+    return { ok: true as const, data: r }
+  })
+}
+
+export async function resolverMermaAction(raw: unknown) {
+  const parsed = resolverMermaSchema.safeParse(raw)
+  if (!parsed.success) return validationFailure(parsed.error)
+  return withTenant('resolverMerma', async (db, ctx) => {
+    const r = await runResolverMerma(db, ctx, parsed.data)
+    revalidatePath('/mermas')
+    revalidatePath('/panel')
+    revalidatePath('/inventario')
+    return { ok: true as const, data: r }
+  })
+}
+
+/** Completa el costo de una entrada registrada sin él. Solo quien ve costos. */
+export async function completarCostoAction(raw: unknown) {
+  const parsed = z.object({
+    movementId: z.string().min(1).max(64),
+    unitCost: z.number().finite().min(0).max(9_999_999.99),
+  }).safeParse(raw)
+  if (!parsed.success) return { ok: false as const, code: 'VALIDATION' as const, message: 'Escribe un costo válido (0 o más).' }
+  return withTenant('completarCosto', async (db, ctx) => {
+    await completarCostoEntrada(db, ctx, parsed.data.movementId, parsed.data.unitCost)
+    revalidatePath('/costos')
+    revalidatePath('/panel')
+    return { ok: true as const, data: null }
   })
 }

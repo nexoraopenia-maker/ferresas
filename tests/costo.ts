@@ -86,6 +86,7 @@ async function main() {
    *   import-service   exige ver_costo y revalida en commit
    *   schemas, csv     forma del dato y alias de columna
    *   CatalogImport    vista previa; el servidor ya rechazó el costo
+   *   actions + CostosPendientes   completar costos: exige productos.ver_costo en página y servicio
    */
   const PERMITIDOS = new Set([
     'src/features/pos/sale-service.ts',
@@ -95,6 +96,10 @@ async function main() {
     'src/features/inventory/schemas.ts',
     'src/features/inventory/csv.ts',
     'src/features/inventory/components/CatalogImport.tsx',
+    // Pantalla de costos pendientes: la página es 404 sin productos.ver_costo y
+    // el servicio también lo exige; la acción solo lleva el valor al servicio.
+    'src/features/inventory/actions.ts',
+    'src/features/inventory/components/CostosPendientes.tsx',
   ])
   const proj = proyecto()
   const fuentes = ficheros(join(RAIZ, 'src'), (f) => f.endsWith('.ts') || f.endsWith('.tsx'))

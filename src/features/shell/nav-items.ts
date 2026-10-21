@@ -97,6 +97,22 @@ export const NAV_ITEMS: NavItem[] = [
     permisos: ['caja.abrir_cerrar', 'caja.arqueo'],
   },
   {
+    href: '/mermas',
+    label: 'Mermas',
+    short: 'Mermas',
+    // Papelera
+    icon: 'M4 7h16M10 11v6m4-6v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3',
+    permisos: ['stock.merma_solicitar', 'stock.ajustar'],
+  },
+  {
+    href: '/costos',
+    label: 'Costos pendientes',
+    short: 'Costos',
+    // Etiqueta de precio
+    icon: 'M3 12V5a2 2 0 0 1 2-2h7l9 9-9 9-9-9Zm5-4h.01',
+    permisos: ['productos.ver_costo'],
+  },
+  {
     href: '/transferencias',
     label: 'Transferencias',
     short: 'Traslad.',

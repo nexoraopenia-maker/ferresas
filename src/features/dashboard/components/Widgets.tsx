@@ -197,3 +197,37 @@ export function AlertasStockWidget({
     </section>
   )
 }
+
+/**
+ * Lo que espera una decisión: mermas por revisar y costos por completar.
+ * Solo aparece para quien puede actuar sobre ello; un número en cero se queda
+ * en gris para no pedir atención por nada.
+ */
+export function PendientesWidget({
+  mermas, costos,
+}: { mermas: number | null; costos: number | null }) {
+  const tarjetas = [
+    mermas !== null && { href: '/mermas', titulo: 'Mermas por revisar', n: mermas, ayuda: 'Pérdidas que alguien pidió dar de baja' },
+    costos !== null && { href: '/costos', titulo: 'Costos por completar', n: costos, ayuda: 'Entradas registradas sin costo' },
+  ].filter(Boolean) as { href: string; titulo: string; n: number; ayuda: string }[]
+  if (tarjetas.length === 0) return null
+
+  return (
+    <section className="grid grid-cols-1 gap-3 sm:grid-cols-2" aria-label="Pendientes">
+      {tarjetas.map((t) => (
+        <Link
+          key={t.href} href={t.href}
+          className={`flex items-center justify-between gap-3 rounded-2xl border p-4 shadow-sm transition hover:shadow-md ${
+            t.n > 0 ? 'border-accent-500/50 bg-accent-50' : 'border-hairline bg-surface'
+          }`}
+        >
+          <span className="min-w-0">
+            <span className={`block text-xs font-bold uppercase tracking-wide ${t.n > 0 ? 'text-accent-800' : 'text-ink-muted'}`}>{t.titulo}</span>
+            <span className={`block text-xs ${t.n > 0 ? 'text-accent-900' : 'text-ink-muted'}`}>{t.ayuda}</span>
+          </span>
+          <span className={`shrink-0 text-3xl font-extrabold tabular-nums ${t.n > 0 ? 'text-accent-700' : 'text-ink-muted'}`}>{t.n}</span>
+        </Link>
+      ))}
+    </section>
+  )
+}
