@@ -500,6 +500,27 @@ configurado (401/403: no cambia el estado). `TaxDocumentStatus` incorpora
 plazo, caché de 6 h y cortacircuitos de 30 s; cualquier fallo vuelve a «teclea
 el nombre» y nunca frena una venta.
 
+### Venta por pedidos (cola de caja)
+
+`Quote.kind = PEDIDO`: una venta que arma quien vende (`ventas.crear`) y cobra
+quien tiene `ventas.cobrar`. Comparte tabla y líneas con las cotizaciones pero
+tiene **listado propio** (`/pedidos`; `/cotizaciones` filtra por tipo), serie
+propia (`O001-…`), nace `ENVIADA` y **no cuenta** para el límite de cotizaciones
+del plan. **No reserva stock**: la venta lo descuenta al cobrar, con el guard de
+siempre. Se cobra con los precios congelados al armarlo.
+
+- **Un cajero a la vez:** «tomarlo» es un `UPDATE` condicional (libre, mío o
+  reserva caducada), así que de cinco cajeros simultáneos gana uno. La reserva
+  dura 5 min y se renueva mientras la pantalla está abierta; si el cajero se
+  cae, otro lo toma. `convertQuoteToSale` rechaza cobrar un pedido que no se
+  tiene tomado: sin eso, la venta (transacción 1) y el marcado como convertido
+  (transacción 2) permitían un doble cobro.
+- **Cola por sucursal:** solo los de la sucursal activa (además del filtro por
+  `ctx.branchIds`). Quien solo vende ve únicamente los suyos.
+- **Vencen** al cerrar la caja de su sucursal, o al acabar el día del negocio
+  (`validUntil`, aplicado de forma perezosa en cada consulta: no hace falta un
+  cron). Un vencido no se toma ni se cobra.
+
 ### `productos.ver_costo`: qué protege hoy
 
 Hoy el costo entra por tres caminos y los tres lo exigen en el servidor:

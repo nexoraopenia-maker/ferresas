@@ -1,10 +1,16 @@
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { requireTenantContext } from '@/lib/session'
 import { PosTerminal } from '@/features/pos/components/PosTerminal'
+import { puede } from '@/lib/puede'
 
 export const dynamic = 'force-dynamic'
 
-export default async function PosPage() {
+export default async function PosPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ pedido?: string }>
+}) {
+  const { pedido } = await searchParams
   const ctx = await requireTenantContext()
   const db = getTenantPrisma(ctx)
 
@@ -47,6 +53,10 @@ export default async function PosPage() {
         <PosTerminal
           warehouseName={warehouse.name}
           zonaHoraria={tenant?.timezone ?? 'America/Lima'}
+          puedeCobrar={puede(ctx, 'ventas.cobrar')}
+          puedeArmarPedido={puede(ctx, 'ventas.crear')}
+          // Solo un id sencillo: el servidor valida de nuevo al tomarlo.
+          pedidoId={pedido && /^[\w-]{1,64}$/.test(pedido) ? pedido : undefined}
         />
       ) : (
         <p className="rounded-xl border border-stock-out/40 bg-stock-out-soft px-4 py-3 text-sm font-semibold text-stock-out">

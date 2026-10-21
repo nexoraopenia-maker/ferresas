@@ -139,6 +139,13 @@ enum SaleStatus {
   DEVUELTA
 }
 
+/// Una cotización informa un precio; un PEDIDO es una venta armada por un vendedor
+/// que espera en la cola de caja. Comparten tabla y líneas, no listado.
+enum QuoteKind {
+  COTIZACION
+  PEDIDO
+}
+
 enum QuoteStatus {
   BORRADOR
   ENVIADA
@@ -529,6 +536,7 @@ model User {
   branches        UserBranch[]
   managedBranches Branch[]               @relation("BranchManager")
   invitaciones    Invitation[]           @relation("InvitedBy")
+  pedidosCobrando Quote[]                @relation("PedidoCobrandoPor")
   mermasPedidas   Merma[]                @relation("MermaRequestedBy")
   mermasResueltas Merma[]                @relation("MermaResolvedBy")
   cashOpened      CashSession[]          @relation("CashOpenedBy")
@@ -1101,6 +1109,14 @@ model Quote {
   user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   number String
+  kind   QuoteKind @default(COTIZACION)
+
+  /// Pedido en caja: quién lo está cobrando y desde cuándo. El bloqueo CADUCA
+  /// (ver `PEDIDO_BLOQUEO_MS`), así que un cajero que se cae no lo retiene.
+  lockedById String?
+  lockedBy   User?     @relation("PedidoCobrandoPor", fields: [lockedById], references: [id], onDelete: SetNull)
+  lockedAt   DateTime?
+
   status QuoteStatus @default(BORRADOR)
 
   subtotal      Decimal @default(0) @db.Decimal(14, 2)
@@ -1124,6 +1140,7 @@ model Quote {
   @@index([tenantId, status, createdAt])
   @@index([tenantId, customerId])
   @@index([tenantId, branchId, status, createdAt])
+  @@index([tenantId, branchId, kind, status, createdAt])
   @@map("quotes")
 }
 

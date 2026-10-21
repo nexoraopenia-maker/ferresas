@@ -22,6 +22,11 @@ import {
 import { filtroAlmacen } from '@/features/branches/queries'
 import { buscarProductos, MIN_CARACTERES } from './busqueda'
 import { resolverCliente } from './cliente-service'
+import {
+  cancelarPedido as runCancelarPedido, cobrarPedido as runCobrarPedido, crearPedido as runCrearPedido,
+  listarPedidos as runListarPedidos, soltarPedido as runSoltarPedido, tomarPedido as runTomarPedido,
+  type PedidoTomado,
+} from './pedido-service'
 import { registerSale as runRegisterSale } from './sale-service'
 import {
   convertQuoteToSale as runConvertQuote,
@@ -322,6 +327,8 @@ export async function listQuotes(): Promise<ActionResult<QuoteListRow[]>> {
   return withTenant('listQuotes', async (db) => {
     const ahora = new Date()
     const quotes = await db.quote.findMany({
+      // Los pedidos a caja tienen su propio listado (/pedidos).
+      where: { kind: 'COTIZACION' },
       orderBy: { createdAt: 'desc' },
       take: 100,
       select: {
@@ -349,5 +356,92 @@ export async function listQuotes(): Promise<ActionResult<QuoteListRow[]>> {
         saleNumber: q.sale?.number ?? null,
       })),
     }
+  })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PEDIDOS A CAJA
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** El vendedor envía el carrito a la cola de caja. */
+export async function registerPedido(
+  raw: RegisterQuoteInput,
+): Promise<ActionResult<{ quoteId: string; number: string; total: number }>> {
+  const parsed = registerQuoteSchema.safeParse(raw)
+  if (!parsed.success) return validationFailure(parsed.error)
+
+  return withTenant('registerPedido', async (db, ctx) => {
+    const r = await runCrearPedido(db, ctx, parsed.data)
+    revalidatePath('/pedidos')
+    return { ok: true, data: { quoteId: r.quoteId, number: r.number, total: r.total } }
+  })
+}
+
+export interface PedidoColaRow {
+  id: string
+  number: string
+  total: number
+  lineas: number
+  creadoEn: string
+  creadoPor: string
+  cliente: string | null
+  cobrando: string | null
+  mio: boolean
+  esMio: boolean
+}
+
+export async function listarPedidosPendientes(): Promise<ActionResult<PedidoColaRow[]>> {
+  return withTenant('listarPedidosPendientes', async (db, ctx) => {
+    const filas = await runListarPedidos(db, ctx)
+    return {
+      ok: true,
+      data: filas.map((f) => ({
+        id: f.id, number: f.number, total: f.total, lineas: f.lineas, creadoEn: f.creadoEn.toISOString(),
+        creadoPor: f.creadoPor, cliente: f.cliente, cobrando: f.cobrando?.nombre ?? null, mio: f.mio, esMio: f.esMio,
+      })),
+    }
+  })
+}
+
+export type PedidoTomadoDto = Omit<PedidoTomado, 'reservadoHasta'> & { reservadoHasta: string }
+
+/** Reserva el pedido para cobrarlo (y la renueva si ya era tuya). */
+export async function tomarPedido(pedidoId: string): Promise<ActionResult<PedidoTomadoDto>> {
+  if (!z.string().min(1).max(64).safeParse(pedidoId).success) return { ok: false, code: 'VALIDATION', message: 'Pedido no válido.' }
+  return withTenant('tomarPedido', async (db, ctx) => {
+    const p = await runTomarPedido(db, ctx, pedidoId)
+    return { ok: true, data: { ...p, reservadoHasta: p.reservadoHasta.toISOString() } }
+  })
+}
+
+export async function soltarPedido(pedidoId: string): Promise<ActionResult<null>> {
+  if (!z.string().min(1).max(64).safeParse(pedidoId).success) return { ok: false, code: 'VALIDATION', message: 'Pedido no válido.' }
+  return withTenant('soltarPedido', async (db, ctx) => {
+    await runSoltarPedido(db, ctx, pedidoId)
+    revalidatePath('/pedidos')
+    return { ok: true, data: null }
+  })
+}
+
+export async function cancelarPedido(pedidoId: string): Promise<ActionResult<null>> {
+  if (!z.string().min(1).max(64).safeParse(pedidoId).success) return { ok: false, code: 'VALIDATION', message: 'Pedido no válido.' }
+  return withTenant('cancelarPedido', async (db, ctx) => {
+    await runCancelarPedido(db, ctx, pedidoId)
+    revalidatePath('/pedidos')
+    return { ok: true, data: null }
+  })
+}
+
+export async function cobrarPedido(
+  raw: ConvertQuoteInput,
+): Promise<ActionResult<{ saleId: string; number: string; total: number; quoteNumber: string }>> {
+  const parsed = convertQuoteSchema.safeParse(raw)
+  if (!parsed.success) return validationFailure(parsed.error)
+
+  return withTenant('cobrarPedido', async (db, ctx) => {
+    const r = await runCobrarPedido(db, ctx, parsed.data)
+    revalidatePath('/pedidos')
+    revalidatePath('/pos')
+    return { ok: true, data: r }
   })
 }

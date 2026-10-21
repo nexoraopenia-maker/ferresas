@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
+import Link from 'next/link'
 import { formatearFechaLocal } from '@/lib/fecha-local'
 import { redondearCentimos } from '@/lib/dinero'
 import { InventoryScannerModal } from '@/components/inventory/InventoryScannerModal'
@@ -14,7 +15,7 @@ import {
   unitLabel,
 } from '@/lib/quantity'
 import {
-  lookupForPos, registerQuote, registerSale, searchForPos,
+  cobrarPedido, lookupForPos, registerPedido, registerQuote, registerSale, searchForPos, soltarPedido, tomarPedido,
   type PosCustomer, type PosProduct,
 } from '../actions'
 import { CustomerPicker } from './CustomerPicker'
@@ -65,10 +66,19 @@ const money = (n: number) => `S/ ${n.toFixed(2)}`
 export function PosTerminal({
   warehouseName,
   zonaHoraria,
+  puedeCobrar = true,
+  puedeArmarPedido = false,
+  pedidoId,
 }: {
   warehouseName: string
   /** Zona del negocio: ver la nota en CashPanel. */
   zonaHoraria: string
+  /** Tiene `ventas.cobrar`. Sin él, el carrito se envía a caja en lugar de cobrarse. */
+  puedeCobrar?: boolean
+  /** Tiene `ventas.crear`: puede mandar el carrito a la cola de caja. */
+  puedeArmarPedido?: boolean
+  /** Pedido de la cola que se va a cobrar (llega por `?pedido=`). */
+  pedidoId?: string
 }) {
   const [carrito, setCarrito] = useState<LineaCarrito[]>([])
   const [escaneando, setEscaneando] = useState(false)
@@ -85,6 +95,10 @@ export function PosTerminal({
     { quoteId: string; number: string; validUntil: string } | null
   >(null)
   const [pendiente, startTransition] = useTransition()
+  const [pedido, setPedido] = useState<{ id: string; number: string } | null>(null)
+  const [pedidoEnviado, setPedidoEnviado] = useState<{ number: string; total: number } | null>(null)
+  const pedidoRef = useRef(pedido)
+  useEffect(() => { pedidoRef.current = pedido }, [pedido])
   const idemRef = useRef<string | null>(null)
   const buscadorRef = useRef<HTMLInputElement>(null)
 
@@ -94,6 +108,46 @@ export function PosTerminal({
     onCobrar: () => { if (carrito.length > 0 && !pendiente) cobrar() },
     onCotizar: () => { if (carrito.length > 0 && !pendiente) cotizar() },
   })
+
+  /*
+   * Pedido de la cola: se TOMA al abrir la pantalla (reserva atómica en el
+   * servidor), se renueva cada 2 min mientras siga abierta y se carga en el
+   * carrito con sus precios congelados. Si no se puede tomar (lo tiene otro
+   * cajero, venció, ya se cobró) se dice por qué y no se carga nada.
+   */
+  useEffect(() => {
+    if (!pedidoId) return
+    let vivo = true
+    ;(async () => {
+      const r = await tomarPedido(pedidoId)
+      if (!vivo) return
+      if (!r.ok) { setError(r.message); return }
+      const p = r.data
+      setPedido({ id: p.id, number: p.number })
+      setCliente(p.cliente ? { ...p.cliente, creado: false } : null)
+      setCarrito(p.lineas.map((l, i) => ({
+        key: `${l.productId}-${i}`,
+        quantity: l.cantidad,
+        discount: l.descuento,
+        producto: {
+          productId: l.productId, variantId: l.variantId, name: l.nombre, sku: l.sku, barcode: null, qrCode: null,
+          unitType: l.unitType, salePrice: l.precio, taxRate: l.taxRate, trackStock: false, stock: 0, minStock: 0,
+          stockStatus: 'OK', warehouseId: p.warehouseId, warehouseName,
+        },
+      })))
+    })()
+    const latido = setInterval(() => { void tomarPedido(pedidoId) }, 120_000)
+    return () => { vivo = false; clearInterval(latido) }
+  }, [pedidoId, warehouseName])
+
+  const devolverPedido = () => {
+    if (!pedido) return
+    startTransition(async () => {
+      await soltarPedido(pedido.id)
+      setPedido(null); setCarrito([]); setCliente(null)
+      window.location.assign('/pedidos')
+    })
+  }
 
   const totales = useMemo(() => {
     let bruto = 0
@@ -112,6 +166,7 @@ export function PosTerminal({
   }, [carrito])
 
   const agregar = useCallback((p: PosProduct) => {
+    if (pedidoRef.current) return   // un pedido tomado no se edita
     setError(null)
     setCarrito((prev) => {
       const i = prev.findIndex((l) => l.producto.productId === p.productId)
@@ -194,7 +249,7 @@ export function PosTerminal({
   }
 
   const fijarCantidad = (key: string, q: number) =>
-    setCarrito((prev) =>
+    pedido ? undefined : setCarrito((prev) =>
       prev.flatMap((l) => {
         if (l.key !== key) return [l]
         // Llegar a cero saca la línea: es lo que el cajero espera, en vez de
@@ -204,7 +259,7 @@ export function PosTerminal({
     )
 
   const sumarCantidad = (key: string, delta: number) =>
-    setCarrito((prev) =>
+    pedido ? undefined : setCarrito((prev) =>
       prev.flatMap((l) => {
         if (l.key !== key) return [l]
         const q = redondear(l.quantity + delta)
@@ -220,7 +275,16 @@ export function PosTerminal({
     const entregado = Number(recibido) || totales.total
 
     startTransition(async () => {
-      const res = await registerSale({
+      // Pedido de la cola: se cobra EL PEDIDO (sus líneas y precios congelados), no el carrito.
+      const res = pedido
+        ? await cobrarPedido({
+            quoteId: pedido.id,
+            payments: [{ method: metodo, amount: Math.max(entregado, totales.total) }],
+            documentType: 'NOTA_VENTA',
+            allowNegativeStock: forzarStock,
+            idempotencyKey: idemRef.current ?? undefined,
+          })
+        : await registerSale({
         warehouseId: carrito[0]!.producto.warehouseId,
         customerId: cliente?.id ?? null,
         items: carrito.map((l) => ({
@@ -246,6 +310,7 @@ export function PosTerminal({
       }
 
       setRecibo({ saleId: res.data.saleId, number: res.data.number, total: res.data.total })
+      setPedido(null)
       setCarrito([])
       setCliente(null)
       setForzarStock(false)
@@ -253,7 +318,7 @@ export function PosTerminal({
       setBusqueda('')
       setResultados([])
       idemRef.current = null
-      if (res.data.soldBelowStock) {
+      if ('soldBelowStock' in res.data && res.data.soldBelowStock) {
         setAviso('La venta se registró dejando stock en negativo. Revisa el inventario.')
       }
     })
@@ -292,6 +357,29 @@ export function PosTerminal({
     })
   }
 
+  /** El vendedor manda el carrito a la cola de caja; no cobra ni toca dinero. */
+  const enviarACaja = () => {
+    if (carrito.length === 0) return
+    setError(null)
+    setAviso(null)
+    startTransition(async () => {
+      const res = await registerPedido({
+        warehouseId: carrito[0]!.producto.warehouseId,
+        customerId: cliente?.id ?? null,
+        items: carrito.map((l) => ({
+          productId: l.producto.productId, variantId: l.producto.variantId, quantity: l.quantity, discount: l.discount,
+        })),
+        validDays: 1,
+        idempotencyKey: crypto.randomUUID(),
+      })
+      if (!res.ok) { setError(res.message); return }
+      setPedidoEnviado({ number: res.data.number, total: res.data.total })
+      // Se vacía: el pedido ya está en la cola y el siguiente cliente no debe heredarlo.
+      setCarrito([])
+      setCliente(null)
+    })
+  }
+
   const vuelto = Number(recibido) > 0 ? cent(Number(recibido) - totales.total) : 0
   const hayFaltaDeStock = carrito.some(
     (l) => l.producto.trackStock && l.quantity > l.producto.stock,
@@ -314,6 +402,22 @@ export function PosTerminal({
       {/* Avisos a ANCHO COMPLETO sobre las dos columnas.
           Sin `col-span-2` cada uno ocuparía una celda de la rejilla y
           desplazaría el carrito a una tercera fila. */}
+      {pedidoEnviado && (
+        <div className="rounded-2xl border-2 border-industrial-600 bg-industrial-50 p-4 lg:col-span-2 dark:bg-industrial-950">
+          <p className="font-bold text-industrial-700 dark:text-industrial-300">Pedido enviado a caja</p>
+          <p className="mt-1 text-sm text-ink">
+            <span className="font-mono font-semibold">{pedidoEnviado.number}</span> · {money(pedidoEnviado.total)}. El cajero lo cobra desde su cola.
+          </p>
+          <button type="button" onClick={() => setPedidoEnviado(null)} className="mt-2 text-sm font-semibold text-industrial-700 dark:text-industrial-300">Entendido</button>
+        </div>
+      )}
+      {pedido && (
+        <div className="rounded-2xl border-2 border-accent-500 bg-accent-50 p-4 lg:col-span-2">
+          <p className="font-bold text-accent-800">Cobrando el pedido <span className="font-mono">{pedido.number}</span></p>
+          <p className="mt-0.5 text-sm text-accent-900">Las líneas y los precios son los del vendedor y no se editan aquí. Nadie más puede cobrarlo mientras lo tengas abierto.</p>
+          <button type="button" onClick={devolverPedido} disabled={pendiente} className="mt-2 text-sm font-bold text-accent-800 underline">Devolver a la cola</button>
+        </div>
+      )}
       {(recibo || aviso || error) && (
         <div className="flex flex-col gap-3 lg:col-span-2">
           {recibo && (
@@ -372,7 +476,7 @@ export function PosTerminal({
       {/* ══════════ COLUMNA IZQUIERDA: entrada de productos ══════════ */}
       <div className="flex min-w-0 flex-col gap-4">
       {/* --- Entrada: escáner + búsqueda --------------------------------- */}
-      <div className="flex gap-2">
+      <div className={pedido ? 'hidden' : 'flex gap-2'}>
         <button
           type="button"
           onClick={() => { setAviso(null); setEscaneando(true) }}
@@ -382,7 +486,7 @@ export function PosTerminal({
         </button>
       </div>
 
-      <div>
+      <div className={pedido ? 'hidden' : undefined}>
         <input
           ref={buscadorRef}
           value={busqueda}
@@ -471,6 +575,11 @@ export function PosTerminal({
                     <p className="shrink-0 text-lg font-bold text-ink">{money(neto)}</p>
                   </div>
 
+                  {pedido ? (
+                    <p className="mt-2 text-sm text-ink-muted">
+                      {formatQuantity(l.quantity, l.producto.unitType)} {unitLabel(l.producto.unitType)} × {money(l.producto.salePrice)}
+                    </p>
+                  ) : (
                   <QuantityInput
                     value={l.quantity}
                     onChange={(q) => fijarCantidad(l.key, q)}
@@ -479,10 +588,11 @@ export function PosTerminal({
                     ariaLabel={`Cantidad de ${l.producto.name}`}
                     className="mt-2"
                   />
+                  )}
 
                   {/* Atajos adaptados a la unidad: para clavos al peso,
                       +25 no sirve de nada; +0.25 kg sí. */}
-                  <div className="mt-2 flex items-center gap-1.5">
+                  <div className={pedido ? 'hidden' : 'mt-2 flex items-center gap-1.5'}>
                     {stepsFor(l.producto.unitType).map((n) => (
                       <button
                         key={n}
@@ -537,6 +647,7 @@ export function PosTerminal({
               </div>
             </dl>
 
+            {puedeCobrar && (<>
             <div className="mt-2 flex gap-1 overflow-x-auto pb-1">
               {METODOS.map((m) => (
                 <button key={m.value} type="button" onClick={() => setMetodo(m.value)}
@@ -586,8 +697,22 @@ export function PosTerminal({
               </label>
             )}
 
+            </>)}
+
             <div className="mt-2 flex gap-2">
-              <button
+              {!pedido && puedeArmarPedido && (
+                <button
+                  type="button"
+                  onClick={enviarACaja}
+                  disabled={pendiente || carrito.some((l) => l.quantity <= 0)}
+                  className={`h-touch-xl rounded-2xl text-sm font-bold transition active:scale-95 disabled:opacity-40 ${
+                    puedeCobrar ? 'shrink-0 border border-graphite-900 px-4 text-ink dark:border-graphite-50' : 'min-w-0 flex-1 bg-industrial-600 text-lg text-white'
+                  }`}
+                >
+                  {pendiente && !puedeCobrar ? 'Enviando…' : 'Enviar a caja'}
+                </button>
+              )}
+              {!pedido && <button
                 type="button"
                 onClick={cotizar}
                 disabled={pendiente || carrito.some((l) => l.quantity <= 0)}
@@ -595,8 +720,8 @@ export function PosTerminal({
               >
                 Cotizar
                 <span className="hidden text-xs font-normal opacity-70 lg:block">Ctrl+G</span>
-              </button>
-              <button
+              </button>}
+              {puedeCobrar && <button
                 type="button"
                 onClick={cobrar}
                 disabled={pendiente || carrito.some((l) => l.quantity <= 0)}
@@ -604,7 +729,7 @@ export function PosTerminal({
               >
                 {pendiente ? 'Registrando…' : `Cobrar ${money(totales.total)}`}
                 <span className="hidden text-xs font-normal opacity-75 lg:block">F9</span>
-              </button>
+              </button>}
             </div>
 
             {/* Los atajos solo en escritorio y solo si hay carrito: un atajo

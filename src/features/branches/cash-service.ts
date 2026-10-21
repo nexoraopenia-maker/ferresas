@@ -5,6 +5,7 @@ import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { redondearCentimos } from '@/lib/dinero'
 import type { CloseCashInput, OpenCashInput } from './cash-schemas'
 import { exigir, puede } from '@/lib/puede'
+import { vencerPedidosDeSucursal } from '@/features/pos/pedido-expiracion'
 
 const P2002_UNIQUE = 'P2002'
 const num = (v: unknown): number => Number(v ?? 0)
@@ -188,6 +189,9 @@ export async function closeCashSession(
       select: { id: true, branchId: true, status: true, openedAt: true },
     })
 
+    // Los pedidos a caja que nadie cobró vencen con el cierre: no deben sobrevivir al turno.
+    const pedidosVencidos = await vencerPedidosDeSucursal(t, s.branchId)
+
     await t.auditLog.create({
       data: {
         tenantId: ctx.tenantId,
@@ -203,6 +207,7 @@ export async function closeCashSession(
           contado: input.countedAmount,
           diferencia: difference,
           ventas: ventas.length,
+          pedidosVencidos,
         },
         reason: input.notes ?? null,
         impersonationId: ctx.impersonationId ?? null,

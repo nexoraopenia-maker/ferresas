@@ -1,5 +1,7 @@
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
+import { periodos } from '@/lib/periodos'
+import { PEDIDO_BLOQUEO_MS } from './pedido-expiracion'
 import { redondearCentimos } from '@/lib/dinero'
 import { requireBranch, type TenantContext } from '@/lib/tenant-context'
 import { cargarSucursalOperativa, serieDe } from '@/features/branches/queries'
@@ -51,16 +53,29 @@ export async function registerQuote(
   ctx: TenantContext,
   input: RegisterQuoteInput,
   now: Date = new Date(),
+  /**
+   * COTIZACION (por defecto) o PEDIDO: una venta armada que espera en la cola
+   * de caja. Un pedido lo arma quien puede vender (`ventas.crear`), lleva su
+   * propia serie (O001-…), nace «enviado a caja» y VENCE al final del día del
+   * negocio en lugar de a los N días de una cotización. No reserva stock.
+   */
+  kind: 'COTIZACION' | 'PEDIDO' = 'COTIZACION',
 ): Promise<QuoteResult> {
-  if (!puede(ctx, 'cotizaciones.crear')) {
-    throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para cotizar.')
+  const esPedido = kind === 'PEDIDO'
+  if (!puede(ctx, esPedido ? 'ventas.crear' : 'cotizaciones.crear')) {
+    throw new BusinessError(
+      'FORBIDDEN_ROLE',
+      esPedido ? 'No tienes permiso para armar pedidos.' : 'No tienes permiso para cotizar.',
+    )
   }
 
   const branchId = requireBranch(ctx)
   const sucursal = await cargarSucursalOperativa(db, branchId)
-  const serie = serieDe(sucursal, 'QUOTE')
+  const scope = esPedido ? 'ORDER' : 'QUOTE'
+  const serie = serieDe(sucursal, scope)
 
-  await ensureCounter(db, ctx.tenantId, branchId, 'QUOTE', serie.series, serie.prefix)
+  await ensureCounter(db, ctx.tenantId, branchId, scope, serie.series, serie.prefix)
+  const zona = esPedido ? (await db.tenant.findFirstOrThrow({ select: { timezone: true } })).timezone : null
 
   return db.$transaction(async (tx) => {
     const t = tx as unknown as TenantPrismaClient
@@ -126,10 +141,12 @@ export async function registerQuote(
 
     const total = cent(subtotal + taxTotal)
     const { correlativo, prefix, series } = await claimNextNumber(
-      t, ctx.tenantId, 'QUOTE', serie.series,
+      t, ctx.tenantId, scope, serie.series,
     )
     const number = `${prefix}${series}-${String(correlativo).padStart(8, '0')}`
-    const validUntil = new Date(now.getTime() + input.validDays * 86_400_000)
+    const validUntil = zona
+      ? periodos(now, zona).hoy.hasta
+      : new Date(now.getTime() + input.validDays * 86_400_000)
 
     const quote = await t.quote.create({
       data: {
@@ -139,7 +156,8 @@ export async function registerQuote(
         customerId: input.customerId ?? null,
         userId: ctx.userId,
         number,
-        status: 'BORRADOR',
+        kind,
+        status: esPedido ? 'ENVIADA' : 'BORRADOR',
         subtotal, taxTotal, discountTotal, total,
         validUntil,
         notes: input.notes ?? null,
@@ -164,12 +182,15 @@ export async function registerQuote(
       })),
     })
 
-    const period = now.toISOString().slice(0, 7)
-    await t.usagePeriod.upsert({
-      where: { tenantId_period: { tenantId: ctx.tenantId, period } },
-      create: { tenantId: ctx.tenantId, period, quotesCount: 1 },
-      update: { quotesCount: { increment: 1 } },
-    })
+    // El contador del plan mide COTIZACIONES; un pedido a caja no es una cotización.
+    if (!esPedido) {
+      const period = now.toISOString().slice(0, 7)
+      await t.usagePeriod.upsert({
+        where: { tenantId_period: { tenantId: ctx.tenantId, period } },
+        create: { tenantId: ctx.tenantId, period, quotesCount: 1 },
+        update: { quotesCount: { increment: 1 } },
+      })
+    }
 
     return {
       quoteId: quote.id,
@@ -206,6 +227,7 @@ export async function convertQuoteToSale(
     where: { id: input.quoteId },
     select: {
       id: true, number: true, status: true, validUntil: true,
+      kind: true, lockedById: true, lockedAt: true,
       warehouseId: true, customerId: true,
       sale: { select: { id: true, number: true, total: true } },
       items: {
@@ -232,8 +254,34 @@ export async function convertQuoteToSale(
   if (quote.status === 'RECHAZADA') {
     throw new BusinessError(
       'DUPLICATE_CODE',
-      'Esta cotización fue rechazada. Crea una nueva.',
+      quote.kind === 'PEDIDO' ? 'Este pedido fue cancelado.' : 'Esta cotización fue rechazada. Crea una nueva.',
     )
+  }
+  if (quote.status === 'VENCIDA') {
+    throw new BusinessError(
+      'DUPLICATE_CODE',
+      quote.kind === 'PEDIDO'
+        ? `El pedido ${quote.number} venció (los pedidos valen hasta el cierre de caja o del día). Que lo arme de nuevo el vendedor.`
+        : `La cotización ${quote.number} venció. Vuelve a cotizar con los precios de hoy.`,
+    )
+  }
+
+  /*
+   * Un PEDIDO solo lo cobra quien lo TIENE TOMADO. Sin esto, dos cajeros que
+   * lo abrieran a la vez lo cobrarían los dos: la venta se crea en una
+   * transacción y el pedido se marca convertido en otra, así que el segundo
+   * descontaría el stock otra vez antes de enterarse.
+   */
+  if (quote.kind === 'PEDIDO') {
+    const vigente = quote.lockedAt && now.getTime() - quote.lockedAt.getTime() < PEDIDO_BLOQUEO_MS
+    if (quote.lockedById !== ctx.userId || !vigente) {
+      throw new BusinessError(
+        'DUPLICATE_CODE',
+        quote.lockedById && quote.lockedById !== ctx.userId && vigente
+          ? 'Este pedido lo está cobrando otra persona.'
+          : 'Toma el pedido antes de cobrarlo: tu reserva caducó o no lo habías tomado.',
+      )
+    }
   }
 
   // Una cotización vencida NO se convierte en silencio: sus precios son de
@@ -278,7 +326,7 @@ export async function convertQuoteToSale(
     }),
     db.quote.update({
       where: { id: quote.id },
-      data: { status: 'CONVERTIDA' },
+      data: { status: 'CONVERTIDA', lockedById: null, lockedAt: null },
     }),
   ])
 

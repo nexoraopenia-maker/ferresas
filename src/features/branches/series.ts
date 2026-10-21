@@ -27,6 +27,7 @@ import { BusinessError } from '@/lib/errors'
 export type CounterScope =
   | 'SALE'
   | 'QUOTE'
+  | 'ORDER'
   | 'PURCHASE'
   | 'TRANSFER'
   | 'TAX_BOLETA'
@@ -44,6 +45,8 @@ export type CounterScope =
 const CONFIG: Record<CounterScope, { letra: string; letraEnSerie: boolean }> = {
   SALE: { letra: 'V', letraEnSerie: false },
   QUOTE: { letra: 'C', letraEnSerie: false },
+  // Pedidos a caja. La «P» ya es de las compras.
+  ORDER: { letra: 'O', letraEnSerie: false },
   PURCHASE: { letra: 'P', letraEnSerie: false },
   TRANSFER: { letra: 'T', letraEnSerie: false },
   TAX_BOLETA: { letra: 'B', letraEnSerie: true },
