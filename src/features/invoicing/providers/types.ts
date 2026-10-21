@@ -135,6 +135,8 @@ export interface ResultadoEmision {
 
 export interface EstadoComprobante {
   estado: TaxDocumentStatus
+  /** DigestValue de la firma, si el proveedor ya lo devuelve al consultar. */
+  hashXml?: string | null
   codigoRespuesta: string | null
   mensaje: string | null
   aceptadoEn: string | null
@@ -181,6 +183,10 @@ export interface CredencialesProveedor {
   claveSol?: string
   /** Para apuntar al entorno de pruebas del proveedor. */
   modoPruebas: boolean
+  /** PSE por REST: URL base (https) del servicio. */
+  urlBase?: string
+  /** PSE por REST: token de acceso (se envía como `Authorization: Bearer`). */
+  token?: string
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

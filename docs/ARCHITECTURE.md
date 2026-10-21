@@ -484,6 +484,22 @@ dueño/administrador lo libera. Cada uso, fallo, bloqueo y desbloqueo se audita
 (sin el PIN). Un PIN son pocas cifras: el bloqueo y el límite por conexión son
 lo que lo protege, no el hash.
 
+### PSE, credenciales cifradas y padrón en vivo
+
+Los comprobantes se firman y envían por un **PSE** (REST), no con certificado del
+negocio. `Tenant.pseEndpointUrl` (host público, validado contra SSRF) y
+`pseTokenEnc` (AES-256-GCM, atado al `tenantId`, clave maestra `PSE_MASTER_KEY`)
+guardan la configuración; el token solo se descifra en el servidor. Las
+peticiones salen por `lib/http-seguro.ts`: tiempo total acotado, respuesta
+acotada, sin redirecciones y con la IP comprobada **al conectar** (anti DNS
+rebinding). El adaptador (`providers/pse-rest.ts`) distingue fallo transitorio
+(reintentable, nunca aceptado), rechazo del comprobante (RECHAZADO) y mal
+configurado (401/403: no cambia el estado). `TaxDocumentStatus` incorpora
+`OBSERVADO` (aceptado con observaciones). Detalle del contrato:
+`docs/PSE-CONTRATO.md`. El padrón RUC/DNI (`padron-http.ts`) tiene 2,5 s de
+plazo, caché de 6 h y cortacircuitos de 30 s; cualquier fallo vuelve a «teclea
+el nombre» y nunca frena una venta.
+
 ### `productos.ver_costo`: qué protege hoy
 
 Hoy el costo entra por tres caminos y los tres lo exigen en el servidor:

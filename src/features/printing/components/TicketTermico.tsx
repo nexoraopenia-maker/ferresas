@@ -169,12 +169,27 @@ export function TicketTermico({ doc }: { doc: DocumentoImprimible }) {
 
       <footer className="t-centro t-chico">
         {doc.tipo === 'comprobante' ? (
-          <p>
-            Representación impresa del comprobante electrónico.
-            {doc.emisor.ruc
-              ? ' Consulte su validez en www.sunat.gob.pe'
-              : ' Pendiente de declarar el RUC del emisor.'}
-          </p>
+          <>
+            <p>
+              Representación impresa del comprobante electrónico.
+              {doc.emisor.ruc
+                ? ' Consulte su validez en www.sunat.gob.pe'
+                : ' Pendiente de declarar el RUC del emisor.'}
+            </p>
+            {doc.qr ? (
+              <>
+                {/* SVG generado aquí mismo a partir de la trama; no hay nada del usuario en el marcado. */}
+                <div
+                  aria-label="Código QR del comprobante"
+                  style={{ width: '32mm', height: '32mm', margin: '2mm auto' }}
+                  dangerouslySetInnerHTML={{ __html: doc.qr.svg }}
+                />
+                {doc.hashXml && <p className="t-chico" style={{ wordBreak: 'break-all' }}>Hash: {doc.hashXml}</p>}
+              </>
+            ) : doc.estadoTributario !== 'ACEPTADO' && doc.estadoTributario !== 'OBSERVADO' ? (
+              <p className="t-fuerte">Pendiente de validación por SUNAT</p>
+            ) : null}
+          </>
         ) : (
           doc.avisoNoFiscal && <p>{doc.avisoNoFiscal}</p>
         )}

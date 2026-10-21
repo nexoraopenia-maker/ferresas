@@ -24,6 +24,7 @@ const ESTADO: Record<string, { texto: string; cls: string }> = {
   PENDIENTE: { texto: 'Pendiente', cls: 'bg-stock-low-soft text-stock-low' },
   ENVIADO: { texto: 'Enviado', cls: 'bg-industrial-100 text-industrial-800 dark:bg-industrial-950 dark:text-industrial-300' },
   ACEPTADO: { texto: 'Aceptado', cls: 'bg-stock-ok-soft text-stock-ok' },
+  OBSERVADO: { texto: 'Aceptado con observaciones', cls: 'bg-stock-low-soft text-stock-low' },
   RECHAZADO: { texto: 'Rechazado', cls: 'bg-stock-out-soft text-stock-out' },
   ANULADO: { texto: 'Anulado', cls: 'bg-surface-sunken text-ink-muted' },
 }
@@ -34,6 +35,7 @@ const SIGUIENTES: Record<string, string[]> = {
   ENVIADO: ['ACEPTADO', 'RECHAZADO'],
   RECHAZADO: ['ENVIADO', 'ACEPTADO'],
   ACEPTADO: [],
+  OBSERVADO: [],
   ANULADO: [],
 }
 

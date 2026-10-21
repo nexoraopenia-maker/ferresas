@@ -2,6 +2,9 @@ import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { BusinessError } from '@/lib/errors'
 import { montoALetras } from '@/lib/numero-a-letras'
 import { redondearCentimos } from '@/lib/dinero'
+import { diaLocal } from '@/lib/periodos'
+import { IDENTIDAD_SUNAT, tipoComprobante } from '@/features/invoicing/catalogos'
+import { construirTramaQr, llevaQr, qrSvg } from '@/features/invoicing/qr'
 
 /** Qué se está imprimiendo. Define de dónde salen los datos. */
 export type TipoImpresion = 'venta' | 'comprobante' | 'cotizacion'
@@ -78,6 +81,10 @@ export interface DocumentoImprimible {
   notas: string | null
   /** Estado tributario del comprobante, si aplica. */
   estadoTributario: string | null
+  /** Hash (DigestValue) que devolvió el proveedor; solo de comprobantes aceptados. */
+  hashXml: string | null
+  /** QR reglamentario: solo con el hash real de un comprobante aceptado. */
+  qr: { trama: string; svg: string } | null
   anulado: boolean
   /** Motivo de la anulación, para no imprimir un documento muerto en silencio. */
   motivoAnulacion: string | null
@@ -265,6 +272,8 @@ async function venta(db: TenantPrismaClient, id: string, emisor: Emisor, reloj: 
     validUntil: null,
     notas: sale.notes,
     estadoTributario: null,
+    hashXml: null,
+    qr: null,
     anulado: sale.voidedAt !== null,
     motivoAnulacion: sale.voidReason,
     avisoNoFiscal: conComprobante
@@ -279,6 +288,7 @@ async function comprobante(db: TenantPrismaClient, id: string, emisor: Emisor, r
     where: { id },
     select: {
       documentType: true, fullNumber: true, status: true, statusMessage: true,
+      series: true, correlativo: true, xmlHash: true,
       issuerTaxId: true, issuerLegalName: true,
       receiverDocType: true, receiverDocNumber: true, receiverName: true, receiverAddress: true,
       currency: true, subtotal: true, taxTotal: true, discountTotal: true, total: true,
@@ -344,11 +354,33 @@ async function comprobante(db: TenantPrismaClient, id: string, emisor: Emisor, r
     validUntil: null,
     notas: doc.sale.notes,
     estadoTributario: doc.status,
+    hashXml: llevaQr(doc.status, doc.xmlHash) ? doc.xmlHash : null,
+    qr: await qrDelComprobante(doc, reloj.zonaHoraria),
     anulado: doc.voidedAt !== null,
     motivoAnulacion: doc.voidReason,
     avisoNoFiscal: null,
     marcaAgua: doc.voidedAt ? 'ANULADO' : null,
   }
+}
+
+/** QR del comprobante, o `null` si todavía no hay un hash real que sostenerlo. */
+async function qrDelComprobante(
+  doc: {
+    documentType: string; status: string; series: string; correlativo: number; xmlHash: string | null
+    issuerTaxId: string | null; receiverDocType: keyof typeof IDENTIDAD_SUNAT; receiverDocNumber: string | null
+    taxTotal: unknown; total: unknown; issuedAt: Date
+  },
+  zona: string,
+): Promise<{ trama: string; svg: string } | null> {
+  const tipo = tipoComprobante(doc.documentType as 'BOLETA')
+  if (!tipo || !doc.issuerTaxId || !llevaQr(doc.status, doc.xmlHash)) return null
+  const trama = construirTramaQr({
+    ruc: doc.issuerTaxId, tipoComprobante: tipo, serie: doc.series, correlativo: doc.correlativo,
+    igv: num(doc.taxTotal), total: num(doc.total), fecha: diaLocal(zona, doc.issuedAt),
+    tipoDocCliente: IDENTIDAD_SUNAT[doc.receiverDocType], numDocCliente: doc.receiverDocNumber,
+    hash: doc.xmlHash!,
+  })
+  return { trama, svg: await qrSvg(trama) }
 }
 
 async function cotizacion(db: TenantPrismaClient, id: string, emisor: Emisor, reloj: Reloj) {
@@ -393,6 +425,8 @@ async function cotizacion(db: TenantPrismaClient, id: string, emisor: Emisor, re
     validUntil: quote.validUntil?.toISOString() ?? null,
     notas: quote.notes,
     estadoTributario: null,
+    hashXml: null,
+    qr: null,
     anulado: false,
     motivoAnulacion: null,
     avisoNoFiscal:

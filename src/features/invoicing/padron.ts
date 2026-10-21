@@ -1,4 +1,5 @@
 import { validarDocumento } from '@/lib/documentos'
+import { crearPadronHttp } from './padron-http'
 
 /**
  * Consulta de contribuyentes (padrón) por DNI o RUC.
@@ -65,11 +66,30 @@ export const padronMock: ProveedorPadron = {
 
 const PROVEEDORES: Record<string, ProveedorPadron> = { ninguno: sinPadron, mock: padronMock }
 
+let http: ProveedorPadron | null = null
+
+/**
+ * Qué fuente usar:
+ *   · `PADRON_PROVEEDOR` explícito (`ninguno` | `mock` | `http`), o
+ *   · si no, `http` cuando PADRON_API_URL y PADRON_API_TOKEN están definidas, o
+ *   · `ninguno`.
+ * `http` sin las dos variables degrada a `ninguno` (sin lanzar: es configuración,
+ * no un motivo para tumbar el mostrador).
+ */
 export function obtenerProveedorPadron(nombre?: string): ProveedorPadron {
-  const elegido = nombre ?? process.env.PADRON_PROVEEDOR ?? 'ninguno'
+  const url = process.env.PADRON_API_URL?.trim()
+  const token = process.env.PADRON_API_TOKEN?.trim()
+  const elegido = nombre ?? process.env.PADRON_PROVEEDOR ?? (url && token ? 'http' : 'ninguno')
+
+  if (elegido === 'http') {
+    if (!url || !token) return sinPadron
+    // Una sola instancia: guarda la caché y el cortacircuitos entre ventas.
+    http ??= crearPadronHttp({ url, token })
+    return http
+  }
   const p = PROVEEDORES[elegido]
   if (!p) {
-    throw new Error(`Proveedor de padrón desconocido: "${elegido}". Disponibles: ${Object.keys(PROVEEDORES).join(', ')}.`)
+    throw new Error(`Proveedor de padrón desconocido: "${elegido}". Disponibles: ninguno, mock, http.`)
   }
   return p
 }

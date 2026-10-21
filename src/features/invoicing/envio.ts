@@ -8,7 +8,8 @@ import { exigir } from '@/lib/puede'
 import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { IDENTIDAD_SUNAT, UNIDAD_SUNAT, tipoComprobante } from './catalogos'
-import { obtenerProveedor } from './providers'
+import { obtenerProveedor, ErrorConfiguracionProveedor } from './providers'
+import { credencialesPseDelNegocio } from './pse-config'
 import type {
   ComprobanteFiscal, CredencialesProveedor, LineaFiscal, ProveedorFacturacion,
 } from './providers/types'
@@ -154,25 +155,37 @@ export async function cargarComprobanteFiscal(
 
 async function elegirProveedor(
   db: TenantPrismaClient,
+  tenantId: string,
   deps: DependenciasEnvio,
 ): Promise<{ proveedor: ProveedorFacturacion; credenciales: CredencialesProveedor }> {
   const t = await db.tenant.findFirstOrThrow({ select: { isDemo: true } })
-  const proveedor = deps.proveedor ?? obtenerProveedor(undefined, { esDemo: t.isDemo })
-  if (t.isDemo) return { proveedor, credenciales: deps.credenciales ?? CREDENCIALES_DEMO }
+  if (t.isDemo) {
+    return { proveedor: deps.proveedor ?? obtenerProveedor(undefined, { esDemo: true }), credenciales: deps.credenciales ?? CREDENCIALES_DEMO }
+  }
 
-  if (proveedor.nombre === 'mock' && !deps.proveedor) {
+  // Inyectado (solo pruebas): el proveedor y las credenciales vienen de fuera.
+  if (deps.proveedor) {
+    if (!deps.credenciales) {
+      throw new BusinessError('INVALID_DOCUMENT', 'Faltan las credenciales del proveedor de facturación de este negocio.')
+    }
+    return { proveedor: deps.proveedor, credenciales: deps.credenciales }
+  }
+
+  // Lo normal: el PSE que el dueño configuró, con su token descifrado en el servidor.
+  const cred = await credencialesPseDelNegocio(db, tenantId)
+  if (!cred) {
     throw new BusinessError(
       'INVALID_DOCUMENT',
       'No hay un proveedor de facturación electrónica configurado. El comprobante queda pendiente de envío.',
     )
   }
-  if (!deps.credenciales) {
-    throw new BusinessError(
-      'INVALID_DOCUMENT',
-      'Faltan las credenciales del proveedor de facturación de este negocio.',
-    )
-  }
-  return { proveedor, credenciales: deps.credenciales }
+  return { proveedor: obtenerProveedor('pse-rest'), credenciales: cred }
+}
+
+/** Un problema de configuración del proveedor no es un rechazo del comprobante: no cambia su estado. */
+function comoError(e: unknown): never {
+  if (e instanceof ErrorConfiguracionProveedor) throw new BusinessError('INVALID_DOCUMENT', e.message)
+  throw e
 }
 
 export async function enviarComprobante(
@@ -197,8 +210,8 @@ export async function enviarComprobante(
   // Si los totales no cuadran, se corta AQUÍ y nada sale del sistema.
   construirXmlUbl(comprobante)
 
-  const { proveedor, credenciales } = await elegirProveedor(db, deps)
-  const r = await proveedor.emitir(comprobante, credenciales)
+  const { proveedor, credenciales } = await elegirProveedor(db, ctx.tenantId, deps)
+  const r = await proveedor.emitir(comprobante, credenciales).catch(comoError)
 
   // Fallo transitorio: no cambia el estado. Reintentar es seguro porque el
   // proveedor es idempotente por (serie, correlativo).
@@ -220,7 +233,7 @@ export async function enviarComprobante(
         externalId: r.idExterno,
         responseCode: r.codigoRespuesta,
         sentAt: ahora,
-        acceptedAt: r.estado === 'ACEPTADO' ? ahora : null,
+        acceptedAt: r.estado === 'ACEPTADO' || r.estado === 'OBSERVADO' ? ahora : null,
         rejectedAt: r.estado === 'RECHAZADO' ? ahora : null,
       },
     })
@@ -259,11 +272,11 @@ export async function refrescarEstado(
     return { estado: doc.status, reintentable: false, mensaje: null, codigoRespuesta: null }
   }
 
-  const { proveedor, credenciales } = await elegirProveedor(db, deps)
+  const { proveedor, credenciales } = await elegirProveedor(db, ctx.tenantId, deps)
   const e = await proveedor.consultarEstado(
     { idExterno: doc.externalId, ticket: doc.externalTicket, serie: doc.series, correlativo: doc.correlativo },
     credenciales,
-  )
+  ).catch(comoError)
   if (e.estado === 'ENVIADO') {
     return { estado: 'ENVIADO', reintentable: true, mensaje: e.mensaje, codigoRespuesta: e.codigoRespuesta }
   }
@@ -276,7 +289,8 @@ export async function refrescarEstado(
         status: e.estado,
         statusMessage: e.mensaje,
         responseCode: e.codigoRespuesta,
-        acceptedAt: e.estado === 'ACEPTADO' ? ahora : null,
+        ...(e.hashXml ? { xmlHash: e.hashXml } : {}),
+        acceptedAt: e.estado === 'ACEPTADO' || e.estado === 'OBSERVADO' ? ahora : null,
         rejectedAt: e.estado === 'RECHAZADO' ? ahora : null,
       },
     })

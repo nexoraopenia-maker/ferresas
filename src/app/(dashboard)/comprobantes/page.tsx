@@ -4,6 +4,8 @@ import { TaxDocumentList } from '@/features/invoicing/components/TaxDocumentList
 import { SeriesPanel } from '@/features/invoicing/components/SeriesPanel'
 import { listarSeriesConfigurables } from '@/features/invoicing/counter-service'
 import { puede } from '@/lib/puede'
+import { PseConfig } from '@/features/invoicing/components/PseConfig'
+import { estadoConfigPse } from '@/features/invoicing/pse-config'
 
 export const dynamic = 'force-dynamic'
 
@@ -50,6 +52,7 @@ export default async function ComprobantesPage() {
       ])
     : [null, null]
 
+  const pse = puedeSeries ? await estadoConfigPse(db) : null
   const porEstado = Object.fromEntries(resumen.map((r) => [r.status, r._count._all]))
 
   return (
@@ -64,9 +67,16 @@ export default async function ComprobantesPage() {
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Contador label="Pendientes" value={porEstado.PENDIENTE ?? 0} tono="warn" />
         <Contador label="Enviados" value={porEstado.ENVIADO ?? 0} tono="info" />
-        <Contador label="Aceptados" value={porEstado.ACEPTADO ?? 0} tono="ok" />
+        <Contador label="Aceptados" value={(porEstado.ACEPTADO ?? 0) + (porEstado.OBSERVADO ?? 0)} tono="ok" />
         <Contador label="Rechazados" value={porEstado.RECHAZADO ?? 0} tono="stop" />
       </section>
+
+      {pse && (
+        <PseConfig
+          configurado={pse.configurado} host={pse.host} claveMaestra={pse.claveMaestra}
+          puedeOperar={ctx.access === 'FULL' || ctx.access === 'WARN'}
+        />
+      )}
 
       {series && ctx.branchId && (
         <SeriesPanel

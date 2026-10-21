@@ -147,29 +147,35 @@ proveedor simulado.
 | XML UBL 2.1 sin firmar de factura, boleta y nota de crédito | `ubl.ts` | Generado y bien formado; **no validado** ⚠️ |
 | Verificación de totales antes de generar (Σ líneas = totales) | `ubl.ts → verificarTotales` | Real |
 | Armado del comprobante desde la venta y el emisor | `envio.ts → cargarComprobanteFiscal` | Real |
-| Envío al proveedor, respuesta, estados, auditoría, reintentos | `envio.ts` | Real contra el proveedor **simulado** |
+| Envío al proveedor, respuesta, estados (incl. OBSERVADO), auditoría, reintentos | `envio.ts` | Probado contra el proveedor simulado **y contra un PSE de pruebas** |
+| Adaptador REST de PSE (contrato propio, `docs/PSE-CONTRATO.md`) | `providers/pse-rest.ts` | Probado contra un servidor de pruebas; **sin PSE real** ⚠️ |
+| Credenciales del PSE por negocio, cifradas AES-256-GCM | `pse-config.ts`, `lib/cifrado.ts` | Real; necesita `PSE_MASTER_KEY` |
+| Defensa SSRF (URL del PSE, IP al conectar, sin redirecciones) | `url-segura.ts`, `lib/http-seguro.ts` | Real |
 | Interfaz agnóstica de proveedor (PSE/OSE) | `providers/types.ts` | Real |
 | Validación de RUC (largo, prefijo, dígito verificador) y DNI | `documentos.ts` | Real ⚠️ |
-| Consulta de padrón RUC/DNI | `padron.ts` | Interfaz + simulado; **sin fuente real** |
-| Representación impresa 80 mm | `printing/` | Real; **sin QR ni hash** ⚠️ |
+| Consulta de padrón RUC/DNI en vivo (2,5 s, caché, cortacircuitos) | `padron.ts`, `padron-http.ts` | Cliente probado contra un servidor de pruebas; **sin fuente real** ⚠️ |
+| Representación impresa 80 mm con QR y hash | `printing/`, `qr.ts` | Real; el QR solo sale con el hash real de un comprobante aceptado ⚠️ |
 
 ### Lo que NO se ha hecho y por qué
 
-1. ⚠️ **Firma digital (XMLDSig).** Hace falta el certificado digital de cada
-   negocio, o un PSE que firme por él. No hay ninguno. La firma iría en el
-   `ext:ExtensionContent` que `ubl.ts` deja vacío. Firmar localmente exigiría
-   además una librería de XMLDSig (dependencia nueva, por decidir).
-2. ⚠️ **Envío real.** Falta elegir proveedor, contratarlo y guardar las
-   credenciales de cada negocio **cifradas** (no hay tabla para ello todavía).
-   Hasta entonces `enviarComprobante` **se niega** a usar el simulado con un
-   negocio real: el comprobante queda PENDIENTE, que es la verdad.
+1. **Firma digital.** Se resuelve con el modelo PSE: el PSE firma con su
+   certificado y el negocio no sube ningún `.pfx`. Si algún día se firma en
+   local haría falta el certificado de cada negocio y una librería de XMLDSig.
+2. ⚠️ **Envío real.** El adaptador y el almacén cifrado de credenciales están;
+   falta **contratar un PSE** y escribir su *perfil* (traducir
+   `docs/PSE-CONTRATO.md` a su API) probándolo en su ambiente de pruebas.
+   Hasta entonces un negocio sin PSE configurado NO envía: el comprobante queda
+   PENDIENTE, que es la verdad.
 3. ⚠️ **Validación del XML.** Contrastarlo con el XSD y las reglas de
    validación de SUNAT (o con el ambiente de pruebas del PSE/OSE elegido).
    Cualquier campo, catálogo o regla de `ubl.ts` puede estar desactualizado.
-4. ⚠️ **Hash y QR del ticket.** El hash oficial es el que devuelve el
-   proveedor tras firmar (`TaxDocument.xmlHash`); el QR lleva datos que hay que
-   contrastar con la norma y exige una librería de generación. No se imprime
-   nada que no se pueda sostener.
+4. ⚠️ **Trama del QR.** Se implementó la pedida
+   (`RUC|TIPO_DOC|SERIE|NUMERO|IGV|TOTAL|FECHA|TIPO_DOC_CLIENTE|NUM_DOC_CLIENTE|HASH|`,
+   número a 8 cifras) y solo se imprime con el hash real de un comprobante
+   ACEPTADO u OBSERVADO. **No está contrastada con el anexo vigente** de la
+   resolución de comprobantes electrónicos: hay que verificarla antes de
+   entregar un ticket a un cliente. Dependencia añadida: `qrcode` (generación
+   del QR en el servidor).
 5. ⚠️ **CDR.** El proveedor devuelve el código de respuesta (`responseCode`);
    no se guarda el archivo CDR ni el XML firmado (no hay dónde).
 6. **Resumen diario de boletas y comunicación de baja.** Casi siempre son

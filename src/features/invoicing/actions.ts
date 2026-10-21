@@ -8,6 +8,7 @@ import { isBusinessError, type ActionResult } from '@/lib/errors'
 import type { TenantContext } from '@/lib/tenant-context'
 import { fijarArranqueSchema } from './schemas'
 import { fijarArranqueSerie, listarSeriesConfigurables } from './counter-service'
+import { guardarConfigPse, probarConexionPse, quitarConfigPse } from './pse-config'
 
 /**
  * Server Actions de comprobantes.
@@ -68,4 +69,35 @@ export async function setArranqueSerie(raw: unknown) {
     revalidatePath('/comprobantes')
     return { ok: true as const, data: r }
   })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PROVEEDOR DE FACTURACIÓN (PSE) — solo el dueño (config.fiscal)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function guardarProveedorPse(raw: unknown) {
+  const parsed = z.object({ url: z.string().trim().min(8).max(300), token: z.string().min(8).max(2000) }).safeParse(raw)
+  if (!parsed.success) {
+    return { ok: false as const, code: 'VALIDATION' as const, message: 'Escribe la URL y el token del proveedor.' }
+  }
+  return withTenant('guardarProveedorPse', async (db, ctx) => {
+    await guardarConfigPse(db, ctx, parsed.data)
+    revalidatePath('/comprobantes')
+    return { ok: true as const, data: null }
+  })
+}
+
+export async function quitarProveedorPse() {
+  return withTenant('quitarProveedorPse', async (db, ctx) => {
+    await quitarConfigPse(db, ctx)
+    revalidatePath('/comprobantes')
+    return { ok: true as const, data: null }
+  })
+}
+
+export async function probarProveedorPse() {
+  return withTenant('probarProveedorPse', async (db, ctx) => ({
+    ok: true as const,
+    data: await probarConexionPse(db, ctx),
+  }))
 }

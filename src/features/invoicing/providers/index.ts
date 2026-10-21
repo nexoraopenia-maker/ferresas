@@ -1,5 +1,6 @@
 import type { ProveedorFacturacion } from './types'
 import { proveedorMock } from './mock'
+import { crearProveedorPseRest } from './pse-rest'
 
 /**
  * Selección del proveedor de facturación.
@@ -17,6 +18,7 @@ import { proveedorMock } from './mock'
 
 const PROVEEDORES: Record<string, ProveedorFacturacion> = {
   mock: proveedorMock,
+  'pse-rest': crearProveedorPseRest(),
 }
 
 export function obtenerProveedor(
@@ -43,4 +45,5 @@ export function proveedoresDisponibles(): string[] {
 }
 
 export * from './types'
+export { crearProveedorPseRest, ErrorConfiguracionProveedor } from './pse-rest'
 export { reiniciarMock } from './mock'
