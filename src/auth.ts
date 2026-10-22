@@ -1,5 +1,5 @@
 import { headers } from 'next/headers'
-import NextAuth from 'next-auth'
+import NextAuth, { CredentialsSignin } from 'next-auth'
 import Credentials from 'next-auth/providers/credentials'
 import { verifyCredentialsDetailed } from '@/lib/credentials'
 import { checkRateLimit, clientIp, RATE_RULES } from '@/lib/rate-limit'
@@ -53,6 +53,14 @@ if (!process.env.AUTH_SECRET && !process.env.NEXTAUTH_SECRET) {
   })
 }
 
+/**
+ * Errores con código propio para el segundo factor. Solo se lanzan DESPUÉS de
+ * validar la contraseña, así que no revelan nada a quien no la tiene.
+ */
+export class SegundoFactorRequerido extends CredentialsSignin { code = 'mfa_required' }
+export class SegundoFactorInvalido extends CredentialsSignin { code = 'mfa_invalid' }
+export class SegundoFactorBloqueado extends CredentialsSignin { code = 'mfa_locked' }
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   session: {
     strategy: 'jwt',
@@ -70,6 +78,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       credentials: {
         email: { label: 'Correo', type: 'email' },
         password: { label: 'Contraseña', type: 'password' },
+        codigo: { label: 'Código de verificación', type: 'text' },
       },
       /**
        * El límite de intentos va AQUÍ y no solo en la Server Action de login.
@@ -126,6 +135,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const r = await verifyCredentialsDetailed(credentials)
         const ms = Date.now() - t0
 
+        if (r.ok && r.user.mfaActivo) {
+          /*
+           * Segundo factor, ANTES de abrir sesión o registrar nada. Va aquí y
+           * no solo en la Server Action porque este endpoint es público.
+           */
+          const codigo = typeof credentials?.codigo === 'string' ? credentials.codigo.trim() : ''
+          if (!codigo) throw new SegundoFactorRequerido()
+          const { verificarSegundoFactor } = await import('@/features/seguridad/mfa-service')
+          const f = await verificarSegundoFactor(r.user.id, codigo)
+          if (!f.ok) {
+            console.warn('[auth] RECHAZO: segundo factor', { correo: r.user.email, motivo: f.motivo })
+            throw f.motivo === 'BLOQUEADO' ? new SegundoFactorBloqueado() : new SegundoFactorInvalido()
+          }
+        }
+
         if (r.ok) {
           console.info('[auth] OK', { correo: r.user.email, userId: r.user.id, ms })
           // Import dinámico: el arranque de la demo no debe entrar en el grafo
@@ -145,7 +169,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           } catch (e) {
             console.error('[auth] no se pudo registrar el dispositivo', e instanceof Error ? e.message : e)
           }
-          return sid ? { ...r.user, sid } : r.user
+          const { mfaActivo: _m, ...usuario } = r.user
+          return sid ? { ...usuario, sid } : usuario
         }
 
         // Un fallo de base NO es culpa del usuario: se registra como error,

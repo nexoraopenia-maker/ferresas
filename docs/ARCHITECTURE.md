@@ -628,3 +628,13 @@ apoya en eso. Comprobado: `ts-morph` no añade ninguna vulnerabilidad al árbol.
 | `sesion_bd;dur=0` escrito a mano | El «detector» de regresiones no detectaba nada | Un literal nunca cambia. Hay que MEDIR el tramo |
 | `?? 'VENDEDOR'` para un rol ausente | Habría echado al login todas las sesiones abiertas al desplegar | Un dato ausente es «no se sabe», no «el mínimo» |
 | `includes()` sobre el archivo en una prueba estructural | **Tres** falsos positivos: la palabra estaba en un comentario que explicaba justo lo contrario | No se arregla filtrando comentarios: se arregla con AST (`tests/ast.ts`) |
+
+## Verificación en dos pasos (MFA)
+
+- **Quién**: obligatoria para OWNER y ADMIN, opcional para el resto (tabla `ROLES_CON_MFA_OBLIGATORIO` en `features/seguridad/mfa-reglas.ts`; con varios roles basta uno). El cajero no se frena en el mostrador.
+- **Cómo**: TOTP (RFC 6238, SHA-1, 6 dígitos, 30 s, ±1 paso) implementado con `node:crypto` en `lib/totp.ts` (sin dependencias; probado con los vectores del RFC) + 10 códigos de recuperación de un solo uso.
+- **Almacenamiento**: el secreto va cifrado con AES-256-GCM (`PSE_MASTER_KEY`, AAD `mfa:<userId>`); los códigos de recuperación, solo como SHA-256 atado al usuario. Columnas `mfa*` en `users`.
+- **Login**: `authorize` (el endpoint público) valida la contraseña y, si la cuenta tiene MFA, exige el código; lanza `CredentialsSignin` con código propio (`mfa_required`, `mfa_invalid`, `mfa_locked`) solo DESPUÉS de validar la contraseña. `loginAction` los traduce y el formulario pide el código.
+- **Anti fuerza bruta / repetición**: el intento se reserva con incremento atómico (5 fallos → bloqueo de 15 min, las peticiones en vuelo no ganan otra tanda); el paso TOTP usado se reclama atómicamente (`mfaLastStep`) y un código de recuperación se consume con `array_remove` atómico.
+- **Obligatoriedad**: `resolveTenantContext` marca `mfaPendiente`; `requireTenantContext` lanza `MFA_REQUIRED` (sirve también a las Server Actions) y el layout redirige a `/activar-mfa`, que vive fuera del panel y usa `requireIdentidad` (sin acceso a datos del negocio).
+- **Restablecer**: un administrador puede restablecer el MFA de quien tenga menos poder (nunca el del dueño ni el propio); cierra las sesiones y queda auditado (`mfa.restablecer`). Si el DUEÑO pierde teléfono y códigos, no hay vía dentro de la app: hay que hacerlo desde la base (limpiar las columnas `mfa*` de su fila).

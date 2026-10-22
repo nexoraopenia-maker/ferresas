@@ -11,6 +11,8 @@
 
 export type BusinessErrorCode =
   | 'UNAUTHENTICATED'
+  /** Contraseña correcta, falta el código del segundo factor. */
+  | 'MFA_REQUIRED'
   | 'RATE_LIMITED'
   | 'TENANT_MISMATCH'
   | 'SUBSCRIPTION_BLOCKED'

@@ -14,6 +14,7 @@ import { SUPPORT_COOKIE, verificarSupportToken } from './support-token'
 import { OPERATOR_COOKIE, verificarOperadorToken } from './operator-token'
 import { tocarDispositivo } from '@/features/seguridad/dispositivos'
 import { BusinessError, TenantIsolationError } from './errors'
+import { mfaObligatorio } from '@/features/seguridad/mfa-reglas'
 import type { RouteSession } from './route-access'
 
 /**
@@ -37,6 +38,7 @@ const USER_SELECT = {
   deletedAt: true,
   tenantId: true,
   passwordChangedAt: true,
+  mfaEnabledAt: true,
   /*
    * Sucursales asignadas. Van en la MISMA consulta que ya resolvía la sesión
    * en lugar de en una aparte: el proxy corre antes de cada petición y Neon
@@ -90,6 +92,7 @@ const CONTEXT_SELECT = {
   tenant: {
     select: {
       ...USER_SELECT.tenant.select,
+      isDemo: true,
       branches: {
         where: { isActive: true, deletedAt: null },
         select: { id: true, code: true, isDefault: true },
@@ -319,6 +322,9 @@ export async function resolveTenantContext(
     // El tope > 0 de un rol con `ventas.descuento` OPCIONAL (vendedor, cajero) lo activa.
     permisosExtra: extrasPorTopes([user.role, ...user.extraRoles], topes),
     topesDescuento: topes,
+    // Rol que exige segundo factor y aún sin activarlo: `requireTenantContext` lo corta.
+    // La cuenta demo es pública y de usar y tirar: no se le exige.
+    mfaPendiente: !user.tenant.isDemo && mfaObligatorio([user.role, ...user.extraRoles]) && user.mfaEnabledAt === null,
   }
 }
 
@@ -405,6 +411,13 @@ async function requireTenantContextSinCache(): Promise<TenantContext> {
    * sucursal) se ignora en silencio y se sigue con el usuario de la sesión: el
    * fallo seguro es «no hay operador», nunca «hay otro».
    */
+  if (base.mfaPendiente) {
+    throw new BusinessError(
+      'MFA_REQUIRED',
+      'Tu rol exige verificación en dos pasos. Actívala para continuar.',
+    )
+  }
+
   const op = session.sid ? verificarOperadorToken(jar.get(OPERATOR_COOKIE)?.value) : null
   if (op && op.sid === session.sid && op.sub === session.user.id) {
     const { aplicarOperador } = await import('@/features/seguridad/pin-service')
@@ -439,4 +452,33 @@ export async function requireSuperAdmin(): Promise<{ id: string; email: string }
   }
 
   return { id: user.id, email: user.email }
+}
+
+/**
+ * Identidad de la sesión SIN exigir el segundo factor ya activado.
+ *
+ * Existe para la pantalla de activación del MFA y sus acciones: quien aún no lo
+ * tiene activo no puede pasar `requireTenantContext` (lo corta), pero tiene que
+ * poder activarlo. Comprueba lo mismo que el resto —usuario vigente, sesión no
+ * revocada— y NO da acceso a ningún dato del negocio.
+ */
+export async function requireIdentidad(): Promise<{ userId: string }> {
+  const session = await auth()
+  if (!session?.user?.id) {
+    throw new BusinessError('UNAUTHENTICATED', 'Tu sesión expiró. Vuelve a iniciar sesión.')
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: {
+      isActive: true, deletedAt: true, passwordChangedAt: true,
+      deviceSessions: { where: { id: session.sid ?? '__sin_sid__' }, select: { revokedAt: true }, take: 1 },
+    },
+  })
+  if (!user || !user.isActive || user.deletedAt || sesionRevocada(user.passwordChangedAt, session.issuedAt)) {
+    throw new BusinessError('UNAUTHENTICATED', 'Tu sesión expiró. Vuelve a iniciar sesión.')
+  }
+  if (session.sid && (!user.deviceSessions[0] || user.deviceSessions[0].revokedAt)) {
+    throw new BusinessError('UNAUTHENTICATED', 'Esta sesión se cerró. Vuelve a iniciar sesión.')
+  }
+  return { userId: session.user.id }
 }

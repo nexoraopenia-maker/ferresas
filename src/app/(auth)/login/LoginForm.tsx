@@ -13,6 +13,9 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [verClave, setVerClave] = useState(false)
+  // Paso 2: la cuenta tiene verificación en dos pasos y falta el código.
+  const [pideCodigo, setPideCodigo] = useState(false)
+  const [codigo, setCodigo] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
 
@@ -20,8 +23,9 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
     e.preventDefault()
     setError(null)
     startTransition(async () => {
-      const res = await loginAction({ email, password, callbackUrl })
+      const res = await loginAction({ email, password, codigo: pideCodigo ? codigo : undefined, callbackUrl })
       if (!res.ok) {
+        if (res.code === 'MFA_REQUIRED') { setPideCodigo(true); setError(null); return }
         setError(res.message)
         return
       }
@@ -55,6 +59,17 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
           </button>
         </div>
       </label>
+
+      {pideCodigo && (
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-white/80">Código de verificación</span>
+          <input
+            value={codigo} onChange={(e) => setCodigo(e.target.value)} autoComplete="one-time-code" autoFocus
+            inputMode="text" maxLength={12} placeholder="123456" required className={`${campo} text-center tracking-[0.25em]`}
+          />
+          <span className="text-xs text-white/60">De tu app autenticadora, o un código de recuperación.</span>
+        </label>
+      )}
 
       {error && (
         <p role="alert" className="rounded-xl border border-rose-300/40 bg-rose-500/20 px-3 py-2 text-sm font-semibold text-rose-100">

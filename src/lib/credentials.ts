@@ -11,6 +11,8 @@ import type { Role } from '@/generated/prisma/enums'
 export const credentialsSchema = z.object({
   email: z.email('Correo inválido.').max(200).toLowerCase().trim(),
   password: z.string().min(1, 'Escribe tu contraseña.').max(200),
+  /** Segundo factor (TOTP o código de recuperación). Solo se exige si la cuenta lo tiene activo. */
+  codigo: z.string().max(32).optional(),
 })
 
 export interface VerifiedUser {
@@ -19,6 +21,8 @@ export interface VerifiedUser {
   name: string
   /** Rol en el momento del login. Viaja al JWT solo para enrutar. */
   role: Role
+  /** ¿Tiene el segundo factor activo? Entonces el login exige además un código. */
+  mfaActivo: boolean
 }
 
 /**
@@ -78,6 +82,7 @@ export async function verifyCredentialsDetailed(
     name: string
     role: Role
     passwordHash: string | null
+    mfaEnabledAt: Date | null
     isActive: boolean
     deletedAt: Date | null
   } | null
@@ -91,6 +96,7 @@ export async function verifyCredentialsDetailed(
         name: true,
         role: true,
         passwordHash: true,
+        mfaEnabledAt: true,
         isActive: true,
         deletedAt: true,
       },
@@ -136,7 +142,10 @@ export async function verifyCredentialsDetailed(
    */
   return {
     ok: true,
-    user: { id: user.id, email: user.email, name: user.name, role: user.role },
+    user: {
+      id: user.id, email: user.email, name: user.name, role: user.role,
+      mfaActivo: user.mfaEnabledAt !== null,
+    },
   }
 }
 

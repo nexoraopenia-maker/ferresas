@@ -17,6 +17,7 @@ import type { AccessLevel } from './tenant-context'
 
 export const ROUTES = {
   login: '/login',
+  activarMfa: '/activar-mfa',
   dashboard: '/panel',
   billing: '/facturacion',
   suspended: '/cuenta-suspendida',

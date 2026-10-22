@@ -115,7 +115,7 @@ async function main() {
    */
   const VERIFICADORES = [
     'requireTenantContext', 'guardDashboard', 'requireSuperAdmin',
-    'withTenant', 'getDashboardAccountState',
+    'withTenant', 'getDashboardAccountState', 'requireIdentidad',
   ]
   const verifica = (sf: SourceFile) => {
     const ll = llamadas(sf)

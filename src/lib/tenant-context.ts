@@ -52,6 +52,8 @@ export interface TenantContext {
    * comprobar una unión que el contexto no sabe representar.
    */
   roles?: readonly Role[]
+  /** El rol exige segundo factor y la cuenta aún no lo activó. Ver `requireTenantContext`. */
+  mfaPendiente?: boolean
   /**
    * Permisos OPCIONALES que el dueño activó para este usuario.
    *

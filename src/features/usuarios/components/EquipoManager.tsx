@@ -6,6 +6,7 @@ import {
   cambiarEstadoUsuario, cambiarPasswordUsuario, cambiarRolesUsuario, crearUsuarioDirecto,
   invitarUsuario, revocarInvitacion,
 } from '../actions'
+import { restablecerMfaAction } from '@/features/seguridad/mfa-actions'
 import { desbloquearPinUsuario, establecerPinUsuario, quitarPinUsuario, cerrarSesionesDelUsuario } from '@/features/seguridad/actions'
 
 /** Contraseña aleatoria legible (sin 0/O ni 1/l/I). Se genera en el navegador y se muestra una vez. */
@@ -327,6 +328,13 @@ export function EquipoManager({
                       className="text-xs font-semibold text-ink-muted"
                     >
                       Cerrar sesiones
+                    </button>
+                    <button
+                      type="button" disabled={pending}
+                      onClick={() => { if (window.confirm(`¿Restablecer la verificación en dos pasos de ${m.name}? Se cerrarán sus sesiones.`)) ejecutar(() => restablecerMfaAction({ userId: m.id })) }}
+                      className="text-xs font-semibold text-ink-muted"
+                    >
+                      Restablecer 2 pasos
                     </button>
                   </div>
                 )}

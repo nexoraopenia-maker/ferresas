@@ -48,6 +48,10 @@ export async function guardDashboard(): Promise<GuardResultado> {
      * usuario está desactivado» frente a «tu sesión expiró» le da
      * información sobre cuentas ajenas a quien esté probando correos.
      */
+    // Rol que exige segundo factor y aún sin activarlo: a la pantalla de activación.
+    if (isBusinessError(e) && e.code === 'MFA_REQUIRED') {
+      redirect(ROUTES.activarMfa)
+    }
     if (isBusinessError(e) && e.code === 'UNAUTHENTICATED') {
       redirect(`${ROUTES.login}?motivo=sesion`)
     }

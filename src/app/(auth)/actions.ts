@@ -16,6 +16,8 @@ import type { ActionResult } from '@/lib/errors'
 export async function loginAction(input: {
   email: string
   password: string
+  /** Segundo factor, cuando la cuenta lo tiene. */
+  codigo?: string
   callbackUrl?: string
 }): Promise<ActionResult<{ redirectTo: string }>> {
   // bcrypt(12) ya hace lenta la fuerza bruta contra UNA cuenta, pero no frena
@@ -45,10 +47,22 @@ export async function loginAction(input: {
     await signIn('credentials', {
       email: parsed.data.email,
       password: parsed.data.password,
+      codigo: parsed.data.codigo ?? '',
       redirect: false,
     })
   } catch (e) {
     if (e instanceof AuthError) {
+      // Códigos del segundo factor: solo existen si la contraseña ya era correcta.
+      const codigo = (e as { code?: string }).code
+      if (codigo === 'mfa_required') {
+        return { ok: false, code: 'MFA_REQUIRED', message: 'Escribe el código de tu app autenticadora.' }
+      }
+      if (codigo === 'mfa_invalid') {
+        return { ok: false, code: 'UNAUTHENTICATED', message: 'El código no es correcto o ya se usó.' }
+      }
+      if (codigo === 'mfa_locked') {
+        return { ok: false, code: 'RATE_LIMITED', message: 'Demasiados intentos con el código. Espera 15 minutos y vuelve a probar.' }
+      }
       // Mensaje deliberadamente idéntico para credenciales malas y usuario
       // inexistente: distinguirlos permitiría enumerar cuentas del SaaS.
       return {

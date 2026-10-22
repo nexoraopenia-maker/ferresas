@@ -526,6 +526,19 @@ model User {
   pinLockedAt       DateTime?
   pinSetAt          DateTime?
 
+  /// Secreto TOTP cifrado (AES-256-GCM, AAD atada al usuario). Con `mfaEnabledAt`
+  /// nulo es una activación a medias: aún no se confirmó con un código.
+  mfaSecretEnc      String?
+  /// Cuándo se confirmó el segundo factor. NULL = sin MFA activo.
+  mfaEnabledAt      DateTime?
+  /// Último paso de 30 s aceptado: un código ya usado no vuelve a valer (replay).
+  mfaLastStep       Int?
+  /// Intentos de código fallidos seguidos. Al llegar a 5 se bloquea un rato.
+  mfaFailedAttempts Int       @default(0)
+  mfaLockedUntil    DateTime?
+  /// SHA-256 de los códigos de recuperación sin usar. Cada uso consume uno.
+  mfaRecoveryHashes String[]  @default([])
+
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
