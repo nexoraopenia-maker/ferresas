@@ -31,6 +31,13 @@ async function main() {
   console.log('\n1) Validación')
   check('reseteo exige motivo de 10+',
     !resetOwnerPasswordSchema.safeParse({ tenantId: t.id, reason: 'corto' }).success)
+  check('>>> la contraseña tecleada exige 8+ caracteres',
+    !resetOwnerPasswordSchema.safeParse({ tenantId: t.id, reason: 'motivo suficiente', password: 'corta' }).success
+    && resetOwnerPasswordSchema.safeParse({ tenantId: t.id, reason: 'motivo suficiente', password: 'MiClave-2026' }).success)
+  check('...y no puede ser solo espacios',
+    !resetOwnerPasswordSchema.safeParse({ tenantId: t.id, reason: 'motivo suficiente', password: '          ' }).success)
+  check('la contraseña es opcional (si falta, se genera)',
+    resetOwnerPasswordSchema.safeParse({ tenantId: t.id, reason: 'motivo suficiente' }).success)
   check('perfil exige RUC de 11 dígitos',
     !updateTenantProfileSchema.safeParse({ tenantId: t.id, taxId: '123', reason: 'motivo suficiente aqui' }).success)
   check('acepta RUC válido',
@@ -56,6 +63,19 @@ async function main() {
   check('queda auditado con motivo', log?.reason === 'El dueño perdió el acceso, verificado')
   check('el log NO guarda la contraseña',
     !JSON.stringify(log?.after).includes(r.temporaryPassword))
+
+  console.log('\n2b) Contraseña TECLEADA por soporte')
+  const manual = 'Mi Clave Manual-2026!'
+  const rm = await resetOwnerPassword({ tenantId: t.id, reason: 'Reseteo con clave elegida por soporte', password: manual }, actor)
+  check('devuelve la que se tecleó, tal cual (con espacios y símbolos)', rm.temporaryPassword === manual)
+  check('>>> la tecleada FUNCIONA para entrar', (await verifyCredentials({ email: owner.email, password: manual })) !== null)
+  check('la anterior ya no', (await verifyCredentials({ email: owner.email, password: r.temporaryPassword })) === null)
+  const hashGuardado = (await prisma.user.findUniqueOrThrow({ where: { id: owner.id } })).passwordHash
+  check('>>> se guarda con bcrypt (coste 12), nunca en claro', !!hashGuardado && hashGuardado !== manual && /^\$2[aby]\$12\$/.test(hashGuardado))
+  const logsM = await prisma.auditLog.findMany({ where: { tenantId: t.id, action: 'tenant.password.reset' } })
+  check('el log no contiene la contraseña tecleada ni su hash', logsM.every((l) => !JSON.stringify(l).includes(manual) && !JSON.stringify(l).includes(hashGuardado!)))
+  check('revoca sesiones también en este modo',
+    (await getRouteSession(owner.id, undefined, new Date(), antiguo)) === null)
 
   console.log('\n3) LA GUARDA: no se resetea a otro SUPERADMIN')
   const otroSa = await prisma.user.create({

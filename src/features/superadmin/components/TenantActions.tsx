@@ -56,7 +56,7 @@ const COPY: Record<Exclude<Accion, 'perfil' | 'facturacion'>, {
   password: {
     titulo: 'Restablecer contraseña',
     descripcion:
-      'Genera una contraseña temporal y cierra las sesiones abiertas del dueño.',
+      'Asigna la contraseña que escribas (o una al azar) y cierra las sesiones abiertas del dueño.',
     boton: 'Restablecer',
     placeholder: 'Ej. El dueño perdió el acceso; verificado por teléfono',
   },
@@ -95,6 +95,8 @@ export function TenantActions({
   const [campos, setCampos] = useState<Record<string, string[]>>({})
   const [credencial, setCredencial] = useState<{ email: string; password: string } | null>(null)
   const [copiado, setCopiado] = useState(false)
+  const [nuevaClave, setNuevaClave] = useState('')
+  const [verClave, setVerClave] = useState(false)
   const [pending, startTransition] = useTransition()
 
   // Perfil editable
@@ -103,6 +105,8 @@ export function TenantActions({
   const cerrar = () => {
     setAccion(null)
     setReason('')
+    setNuevaClave('')
+    setVerClave(false)
     setError(null)
     setCampos({})
     setForm(perfil)
@@ -126,7 +130,7 @@ export function TenantActions({
         accion === 'suspender' ? await suspendTenant({ tenantId, reason })
         : accion === 'reactivar' ? await reactivateTenant({ tenantId, reason })
         : accion === 'soporte' ? await startImpersonation({ tenantId, reason })
-        : accion === 'password' ? await resetTenantOwnerPassword({ tenantId, reason })
+        : accion === 'password' ? await resetTenantOwnerPassword({ tenantId, reason, password: nuevaClave })
         : await updateTenantProfileAction({
             tenantId,
             reason,
@@ -156,6 +160,8 @@ export function TenantActions({
         setCredencial({ email: res.data.userEmail, password: res.data.temporaryPassword })
         setAccion(null)
         setReason('')
+        setNuevaClave('')
+        setVerClave(false)
         return
       }
 
@@ -169,7 +175,9 @@ export function TenantActions({
   const copy = accion && accion !== 'perfil' && accion !== 'facturacion' ? COPY[accion] : null
   const puedeEnviar = esPerfil
     ? reason.trim().length >= 10 && form.name.trim().length >= 3
-    : reason.trim().length >= 10
+    : accion === 'password'
+      ? reason.trim().length >= 10 && nuevaClave.trim().length >= 8
+      : reason.trim().length >= 10
 
   return (
     <>
@@ -280,6 +288,39 @@ export function TenantActions({
               </p>
             )}
 
+            {accion === 'password' && (
+              <div className="mb-3">
+                <Campo label="Nueva contraseña (mínimo 8 caracteres)" error={err('password')}>
+                  <div className="flex gap-2">
+                    <input
+                      type={verClave ? 'text' : 'password'}
+                      value={nuevaClave}
+                      onChange={(e) => setNuevaClave(e.target.value)}
+                      autoComplete="new-password"
+                      autoFocus
+                      placeholder="Escribe la contraseña"
+                      className={inputCls(err('password'))}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setVerClave((v) => !v)}
+                      aria-pressed={verClave}
+                      className="h-touch-lg shrink-0 rounded-xl border border-hairline px-3 text-sm font-semibold text-ink"
+                    >
+                      {verClave ? 'Ocultar' : 'Ver'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setNuevaClave(claveAlAzar()); setVerClave(true) }}
+                      className="h-touch-lg shrink-0 rounded-xl border border-hairline px-3 text-sm font-semibold text-ink"
+                    >
+                      Generar al azar
+                    </button>
+                  </div>
+                </Campo>
+              </div>
+            )}
+
             {esPerfil && (
               <div className="mb-3 flex flex-col gap-3">
                 <Campo label="Nombre comercial" error={err('name')}>
@@ -349,6 +390,22 @@ export function TenantActions({
       </Dialog>
     </>
   )
+}
+
+/**
+ * Misma forma que `generateTempPassword` del servidor (16 caracteres sin
+ * ambiguos, en grupos de 4), con `crypto.getRandomValues` y sin sesgo de módulo.
+ */
+function claveAlAzar(): string {
+  const alfabeto = 'abcdefghjkmnpqrstuvwxyzACDEFGHJKLMNPQRSTUVWXYZ23456789'
+  const limite = 256 - (256 % alfabeto.length)
+  let salida = ''
+  while (salida.length < 16) {
+    for (const b of crypto.getRandomValues(new Uint8Array(32))) {
+      if (b < limite && salida.length < 16) salida += alfabeto[b % alfabeto.length]
+    }
+  }
+  return salida.match(/.{1,4}/g)!.join('-')
 }
 
 function inputCls(error?: string) {

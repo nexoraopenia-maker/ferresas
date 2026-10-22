@@ -370,7 +370,8 @@ export async function resetTenantOwnerPassword(
     return {
       ok: false,
       code: 'VALIDATION',
-      message: 'Falta el motivo del reseteo (mínimo 10 caracteres).',
+      // El primer error real (motivo o contraseña), no un texto fijo.
+      message: parsed.error.issues[0]?.message ?? 'Revisa los datos del reseteo.',
       details: z.flattenError(parsed.error).fieldErrors,
     }
   }

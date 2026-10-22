@@ -77,7 +77,8 @@ export async function resetOwnerPassword(
     )
   }
 
-  const temporaryPassword = generateTempPassword()
+  // Tecleada por soporte o, si no, al azar. En ambos casos solo se guarda el hash (bcrypt, coste 12).
+  const temporaryPassword = input.password ?? generateTempPassword()
   const passwordHash = await bcrypt.hash(temporaryPassword, 12)
 
   await prisma.$transaction([

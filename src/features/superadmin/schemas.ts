@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { passwordSchema } from '@/features/usuarios/schemas'
 
 /**
  * El MOTIVO es obligatorio en las tres acciones (§6.6). No es burocracia: un
@@ -85,9 +86,9 @@ export type ExtendTrialInput = z.infer<typeof extendTrialSchema>
  * Reseteo de la contraseña del dueño de una ferretería, hecho por soporte.
  *
  * No pide la contraseña actual —el Super Admin no la conoce— así que el
- * control es el rol más el motivo auditado. La nueva la genera el sistema:
- * dejar que soporte la elija termina en que las veinte cuentas comparten la
- * misma.
+ * control es el rol más el motivo auditado. La nueva se TECLEA a mano
+ * (`password`) o, si se omite, la genera el sistema. Al teclearla, soporte
+ * decide la clave: conviene darle una distinta a cada cuenta.
  */
 export const resetOwnerPasswordSchema = z.object({
   tenantId: z.string().min(1).max(64),
@@ -98,6 +99,8 @@ export const resetOwnerPasswordSchema = z.object({
     .trim()
     .min(10, 'Explica el motivo con al menos 10 caracteres.')
     .max(500),
+  /** Contraseña nueva escrita por soporte. Si falta, el servidor genera una al azar. */
+  password: passwordSchema.optional(),
 })
 
 export type ResetOwnerPasswordInput = z.infer<typeof resetOwnerPasswordSchema>
