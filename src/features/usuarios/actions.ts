@@ -12,6 +12,7 @@ import {
   aceptarSchema, cambiarEstadoSchema, cambiarPasswordSchema, cambiarRolesSchema,
   crearDirectoSchema, invitarSchema, revocarSchema,
 } from './schemas'
+import { fijarTope } from './descuentos-service'
 import {
   aceptarInvitacion as runAceptar, cambiarEstado as runEstado,
   cambiarPasswordUsuario as runPassword, cambiarRoles as runRoles,
@@ -120,6 +121,16 @@ export async function cambiarPasswordUsuario(raw: unknown) {
 
   return withTenant('cambiarPasswordUsuario', async (db, ctx) => {
     await runPassword(db, ctx, parsed.data)
+    revalidatePath('/usuarios')
+    return { ok: true as const, data: null }
+  })
+}
+
+export async function fijarTopeDescuento(raw: unknown) {
+  const parsed = z.object({ role: z.string().min(1).max(20), maxPercent: z.number() }).safeParse(raw)
+  if (!parsed.success) return validationFailure(parsed.error, 'el tope')
+  return withTenant('fijarTopeDescuento', async (db, ctx) => {
+    await fijarTope(db, ctx, parsed.data)
     revalidatePath('/usuarios')
     return { ok: true as const, data: null }
   })

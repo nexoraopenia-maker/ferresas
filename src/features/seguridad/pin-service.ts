@@ -4,6 +4,7 @@ import { BusinessError } from '@/lib/errors'
 import { prisma } from '@/lib/prisma'
 import { exigir, permisosDe } from '@/lib/puede'
 import { requireBranch, type TenantContext } from '@/lib/tenant-context'
+import { extrasPorTopes, topeDeRoles, topeDescuento } from '@/lib/descuentos'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { puedeCambiarPassword } from '@/features/usuarios/asignacion'
 import { MAX_INTENTOS_PIN, permisosDenegadosAlOperador, validarFormatoPin } from './pin-reglas'
@@ -189,14 +190,18 @@ export function contextoDeOperador(
   operador: { id: string; role: Role; extraRoles: readonly Role[] },
 ): TenantContext {
   const permisosSesion = permisosDe(sesion)
+  const rolesOperador = [operador.role, ...operador.extraRoles]
+  const topes = sesion.topesDescuento
   return {
     ...sesion,
     userId: operador.id,
     role: operador.role,
     roles: [...operador.extraRoles],
-    // Se descarta lo que el operador tuviera "extra" o denegado a título personal
-    // de la sesión: el operador parte de su rol limpio y se recorta.
-    permisosExtra: undefined,
+    // El operador parte de su rol limpio, más lo que los topes del negocio le
+    // activan a ÉL; después se recorta con lo que la sesión no tiene.
+    permisosExtra: topes ? extrasPorTopes(rolesOperador, topes) : undefined,
+    // Descuento: nunca más que la sesión ni que el propio operador.
+    ...(topes ? { descuentoMaxPct: Math.min(topeDescuento(sesion), topeDeRoles(rolesOperador, topes)) } : {}),
     permisosDenegados: permisosDenegadosAlOperador(permisosSesion),
     // Solo opera en la sucursal activa.
     branchIds: sesion.branchId ? [sesion.branchId] : [],

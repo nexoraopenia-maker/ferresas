@@ -2,6 +2,7 @@ import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { requireTenantContext } from '@/lib/session'
 import { PosTerminal } from '@/features/pos/components/PosTerminal'
 import { puede } from '@/lib/puede'
+import { topeDescuento } from '@/lib/descuentos'
 
 export const dynamic = 'force-dynamic'
 
@@ -55,6 +56,7 @@ export default async function PosPage({
           zonaHoraria={tenant?.timezone ?? 'America/Lima'}
           puedeCobrar={puede(ctx, 'ventas.cobrar')}
           puedeArmarPedido={puede(ctx, 'ventas.crear')}
+          topeDescuentoPct={topeDescuento(ctx)}
           // Solo un id sencillo: el servidor valida de nuevo al tomarlo.
           pedidoId={pedido && /^[\w-]{1,64}$/.test(pedido) ? pedido : undefined}
         />

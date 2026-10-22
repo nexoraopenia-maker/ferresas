@@ -9,6 +9,7 @@ import {
 import { computeAccessLevel, type TenantContext } from './tenant-context'
 import { BRANCH_COOKIE, resolverSucursalActiva, sucursalesPermitidas } from './branch-selection'
 import { permisosEfectivos } from './permisos'
+import { extrasPorTopes, type TopesDescuento } from './descuentos'
 import { SUPPORT_COOKIE, verificarSupportToken } from './support-token'
 import { OPERATOR_COOKIE, verificarOperadorToken } from './operator-token'
 import { tocarDispositivo } from '@/features/seguridad/dispositivos'
@@ -93,6 +94,8 @@ const CONTEXT_SELECT = {
         where: { isActive: true, deletedAt: null },
         select: { id: true, code: true, isDefault: true },
       },
+      // Topes de descuento por rol: viajan en la MISMA sentencia (join).
+      discountCaps: { select: { role: true, maxPercent: true } },
     },
   },
 } as const
@@ -293,6 +296,10 @@ export async function resolveTenantContext(
     throw new TenantIsolationError('Sesión sin negocio asociado.')
   }
 
+  const topes: TopesDescuento = Object.fromEntries(
+    user.tenant.discountCaps.map((c) => [c.role, Number(c.maxPercent)]),
+  )
+
   const permitidas = sucursalesPermitidas(
     user.branches.map((ub) => ub.branch),
     user.tenant.branches,
@@ -309,6 +316,9 @@ export async function resolveTenantContext(
     // La cookie del selector es una sugerencia: solo vale si es una de las permitidas.
     branchId: resolverSucursalActiva(permitidas, branchPedida),
     branchIds: permitidas.map((b) => b.id),
+    // El tope > 0 de un rol con `ventas.descuento` OPCIONAL (vendedor, cajero) lo activa.
+    permisosExtra: extrasPorTopes([user.role, ...user.extraRoles], topes),
+    topesDescuento: topes,
   }
 }
 

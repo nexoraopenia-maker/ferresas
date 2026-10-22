@@ -63,6 +63,7 @@ const TENANT_SCOPED = new Set([
   'Merma',
   'Invitation',
   'DeviceSession',
+  'DiscountCap',
   'Sale',
   'SaleItem',
   'Payment',

@@ -4,6 +4,8 @@ import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { puede } from '@/lib/puede'
 import { rolesAsignables } from '@/features/usuarios/asignacion'
 import { listarEquipo } from '@/features/usuarios/service'
+import { listarTopes } from '@/features/usuarios/descuentos-service'
+import { TopesDescuento } from '@/features/usuarios/components/TopesDescuento'
 import { EquipoManager } from '@/features/usuarios/components/EquipoManager'
 
 export const dynamic = 'force-dynamic'
@@ -14,8 +16,9 @@ export default async function UsuariosPage() {
   if (!puede(ctx, 'usuarios.gestionar')) notFound()
 
   const db = getTenantPrisma(ctx)
-  const [equipo, sucursales] = await Promise.all([
+  const [equipo, topes, sucursales] = await Promise.all([
     listarEquipo(db, ctx),
+    listarTopes(db, ctx),
     db.branch.findMany({
       where: { id: { in: [...(ctx.branchIds ?? [])] }, isActive: true, deletedAt: null },
       orderBy: { code: 'asc' },
@@ -33,6 +36,7 @@ export default async function UsuariosPage() {
           que no tengan más poder que el tuyo.
         </p>
       </header>
+      <TopesDescuento filas={topes} puedeOperar={puedeOperar} />
       <EquipoManager
         yo={ctx.userId}
         rolesAsignables={rolesAsignables(ctx)}

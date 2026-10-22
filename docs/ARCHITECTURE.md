@@ -521,6 +521,25 @@ siempre. Se cobra con los precios congelados al armarlo.
   (`validUntil`, aplicado de forma perezosa en cada consulta: no hace falta un
   cron). Un vencido no se toma ni se cobra.
 
+### Topes de descuento por rol
+
+`ventas.descuento` **no se comprobaba en ningún sitio**: quien podía cobrar
+podía enviar el descuento que quisiera invocando la acción a mano, y el POS ni
+tenía campo de descuento. Ahora `validarDescuentoLinea` (`src/lib/descuentos.ts`)
+se aplica en la venta y en la cotización/pedido: sin el permiso, cualquier
+descuento se rechaza; con él, no puede pasar del tope del rol (en % de la
+LÍNEA, redondeado a céntimos como el cobro).
+
+Tope por rol en `DiscountCap` (sin fila: dueño y administrador 100 %, el resto
+0 %). El dueño no se limita; el del administrador solo lo fija el dueño. Un
+tope > 0 para VENDEDOR o CAJERO **activa** su permiso opcional (no hay un
+interruptor aparte que pueda contradecirlo); se resuelve en `resolveTenantContext`
+dentro de la misma consulta. Un pedido o cotización lo autoriza quien lo arma
+con SU tope; el cajero que lo cobra no lo revalida (`descuentosYaAutorizados`),
+porque un cajero sin permiso debe poder cobrar el pedido con descuento que armó
+un vendedor autorizado. El operador por PIN recibe el menor entre el tope de la
+sesión y el suyo. Toda venta con descuento deja `sale.discount` en la auditoría.
+
 ### `productos.ver_costo`: qué protege hoy
 
 Hoy el costo entra por tres caminos y los tres lo exigen en el servidor:

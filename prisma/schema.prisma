@@ -382,6 +382,7 @@ model Tenant {
   transfers      BranchTransfer[]
   transferItems  BranchTransferItem[]
   invitations    Invitation[]
+  discountCaps   DiscountCap[]
   warehouses     Warehouse[]
   categories     Category[]
   products       Product[]
@@ -1873,4 +1874,22 @@ model DeviceSession {
   @@index([userId, revokedAt])
   @@index([tenantId, userId])
   @@map("device_sessions")
+}
+
+/// Descuento máximo (en % de la línea) que cada rol puede dar en un negocio.
+/// Sin fila: ADMIN 100 %, el resto 0 %. Un tope > 0 para VENDEDOR o CAJERO
+/// activa de hecho su permiso opcional `ventas.descuento`.
+model DiscountCap {
+  id          String  @id @default(cuid())
+  tenantId    String
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role        Role
+  maxPercent  Decimal @db.Decimal(5, 2)
+  updatedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, role])
+  @@map("discount_caps")
 }

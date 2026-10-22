@@ -26,7 +26,13 @@ interface LineaCarrito {
   producto: PosProduct
   quantity: number
   discount: number
+  /** Descuento en % de la línea. El importe (`discount`) se recalcula si cambia la cantidad. */
+  pct?: number
 }
+
+/** Importe del descuento de una línea con esa cantidad: mismo redondeo que el servidor. */
+const descuentoDe = (l: LineaCarrito, cantidad: number) =>
+  cent(cent(l.producto.salePrice * cantidad) * ((l.pct ?? 0) / 100))
 
 const METODOS = [
   { value: 'EFECTIVO', label: 'Efectivo' },
@@ -69,6 +75,7 @@ export function PosTerminal({
   puedeCobrar = true,
   puedeArmarPedido = false,
   pedidoId,
+  topeDescuentoPct = 0,
 }: {
   warehouseName: string
   /** Zona del negocio: ver la nota en CashPanel. */
@@ -79,6 +86,8 @@ export function PosTerminal({
   puedeArmarPedido?: boolean
   /** Pedido de la cola que se va a cobrar (llega por `?pedido=`). */
   pedidoId?: string
+  /** Descuento máximo (% de la línea) que el rol puede dar. 0 = sin descuentos. */
+  topeDescuentoPct?: number
 }) {
   const [carrito, setCarrito] = useState<LineaCarrito[]>([])
   const [escaneando, setEscaneando] = useState(false)
@@ -254,7 +263,20 @@ export function PosTerminal({
         if (l.key !== key) return [l]
         // Llegar a cero saca la línea: es lo que el cajero espera, en vez de
         // dejar una línea de cero que no se puede cobrar.
-        return q <= 0 ? [] : [{ ...l, quantity: redondear(q) }]
+        if (q <= 0) return []
+        const quantity = redondear(q)
+        return [{ ...l, quantity, discount: descuentoDe(l, quantity) }]
+      }),
+    )
+
+  /** Fija el descuento de una línea en %, sin pasar del tope del rol. */
+  const fijarDescuento = (key: string, texto: string) =>
+    pedido ? undefined : setCarrito((prev) =>
+      prev.map((l) => {
+        if (l.key !== key) return l
+        const n = Number(texto.replace(',', '.'))
+        const pct = !Number.isFinite(n) || n <= 0 ? 0 : Math.min(n, topeDescuentoPct)
+        return { ...l, pct, discount: descuentoDe({ ...l, pct }, l.quantity) }
       }),
     )
 
@@ -263,7 +285,7 @@ export function PosTerminal({
       prev.flatMap((l) => {
         if (l.key !== key) return [l]
         const q = redondear(l.quantity + delta)
-        return q <= 0 ? [] : [{ ...l, quantity: q }]
+        return q <= 0 ? [] : [{ ...l, quantity: q, discount: descuentoDe(l, q) }]
       }),
     )
 
@@ -588,6 +610,21 @@ export function PosTerminal({
                     ariaLabel={`Cantidad de ${l.producto.name}`}
                     className="mt-2"
                   />
+                  )}
+
+                  {topeDescuentoPct > 0 && !pedido && (
+                    <label className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
+                      Descuento
+                      <input
+                        inputMode="decimal" defaultValue={l.pct ? String(l.pct) : ''} placeholder="0"
+                        onChange={(e) => fijarDescuento(l.key, e.target.value)}
+                        aria-label={`Descuento de ${l.producto.name} en porcentaje`}
+                        className="h-touch w-20 rounded-lg border border-hairline bg-surface px-2 text-right text-sm font-bold text-ink"
+                      />
+                      %
+                      <span>(máx. {topeDescuentoPct}%)</span>
+                      {l.discount > 0 && <span className="font-semibold text-accent-700">− {money(l.discount)}</span>}
+                    </label>
                   )}
 
                   {/* Atajos adaptados a la unidad: para clavos al peso,

@@ -1,6 +1,7 @@
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
 import { redondearCentimos } from '@/lib/dinero'
+import { topeDescuento, validarDescuentoLinea } from '@/lib/descuentos'
 import { requireBranch, type TenantContext } from '@/lib/tenant-context'
 import {
   cargarSucursalOperativa, serieDe, turnoAbiertoId,
@@ -143,6 +144,15 @@ export async function registerSale(
   ctx: TenantContext,
   input: RegisterSaleInput,
   priceOverrides?: PriceOverrides,
+  opciones: {
+    /**
+     * Los descuentos ya los autorizó quien armó el pedido o la cotización (con SU
+     * tope). El cajero que la cobra no los vuelve a validar contra el suyo: un
+     * cajero sin permiso de descuento debe poder cobrar el pedido con descuento
+     * que un vendedor autorizado armó.
+     */
+    descuentosYaAutorizados?: boolean
+  } = {},
 ): Promise<RegisterSaleResult> {
   if (!puede(ctx, 'ventas.cobrar')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para cobrar ventas.')
@@ -257,6 +267,8 @@ export async function registerSale(
             { producto: p.name, importe: bruto, descuento: item.discount },
           )
         }
+        // Permiso y tope del rol (src/lib/descuentos.ts). Antes no se comprobaba nada.
+        if (!opciones.descuentosYaAutorizados) validarDescuentoLinea(ctx, p.name, bruto, item.discount)
 
         const neto = cent(bruto - item.discount)
         const tasa = num(p.taxRate)
@@ -439,6 +451,18 @@ export async function registerSale(
               ? 'El cajero forzó la venta: el producto estaba físicamente disponible'
               : 'Política del tenant permite stock negativo',
             after: { venta: number, forzada: input.allowNegativeStock, negativos },
+            impersonationId: ctx.impersonationId ?? null,
+          },
+        })
+      }
+
+      // Los descuentos quedan a la vista: quién, cuánto y con qué tope.
+      if (discountTotal > 0 && !opciones.descuentosYaAutorizados) {
+        await t.auditLog.create({
+          data: {
+            tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role,
+            action: 'sale.discount', entityType: 'Sale', entityId: sale.id,
+            after: { venta: number, descuento: discountTotal, tope: topeDescuento(ctx) },
             impersonationId: ctx.impersonationId ?? null,
           },
         })

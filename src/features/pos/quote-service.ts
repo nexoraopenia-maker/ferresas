@@ -1,6 +1,7 @@
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
 import { periodos } from '@/lib/periodos'
+import { validarDescuentoLinea } from '@/lib/descuentos'
 import { PEDIDO_BLOQUEO_MS } from './pedido-expiracion'
 import { redondearCentimos } from '@/lib/dinero'
 import { requireBranch, type TenantContext } from '@/lib/tenant-context'
@@ -125,6 +126,8 @@ export async function registerQuote(
           `El descuento de "${p.name}" supera el importe de la línea.`,
         )
       }
+      // Quien arma el pedido o la cotización autoriza SU descuento con SU tope.
+      validarDescuentoLinea(ctx, p.name, bruto, item.discount)
 
       const neto = cent(bruto - item.discount)
       const tasa = num(p.taxRate)
@@ -317,7 +320,7 @@ export async function convertQuoteToSale(
     allowNegativeStock: input.allowNegativeStock,
     idempotencyKey: input.idempotencyKey,
     notes: `Convertida de la cotización ${quote.number}`,
-  }, precios)
+  }, precios, { descuentosYaAutorizados: true })
 
   await db.$transaction([
     db.sale.update({

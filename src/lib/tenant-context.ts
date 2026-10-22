@@ -74,6 +74,13 @@ export interface TenantContext {
    * ni los del operador (ver `src/features/seguridad/pin-reglas.ts`).
    */
   operadorDe?: string
+  /**
+   * Tope de descuento (% de la línea) por rol, tal como lo configuró el
+   * negocio. Lo rellena `resolveTenantContext`. Ver `src/lib/descuentos.ts`.
+   */
+  topesDescuento?: Partial<Record<Role, number>>
+  /** Tope ya calculado y fijado: lo usa el operador por PIN (el menor de los dos). */
+  descuentoMaxPct?: number
   /** Presente solo si un SUPERADMIN está impersonando (§5.3). */
   impersonationId?: string
 }
