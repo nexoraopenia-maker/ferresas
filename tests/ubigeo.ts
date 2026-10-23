@@ -3,6 +3,7 @@ import { correr } from './teardown'
 import {
   DEPARTAMENTOS_INEI, validarCatalogoUbigeo, type FilaUbigeo,
 } from '@/features/ubigeo/validar'
+import { leerTotalesDeclarados, opcion } from '@/features/ubigeo/cargador'
 
 let pass = 0, fail = 0
 const check = (n: string, ok: boolean, extra = '') => {
@@ -154,6 +155,27 @@ async function main() {
     validarCatalogoUbigeo(
       bueno.map((f) => (f.codigo === '040000' ? { ...f, nombre: 'AREQUÍPA' } : f)),
     ).ok)
+
+  console.log('\n12) >>> Los totales DECLARADOS por la fuente son obligatorios y exactos')
+  const tot = { departamentos: 25, provincias: 200, distritos: 1800 }
+  check('coincidencia exacta → sin errores', validarCatalogoUbigeo(bueno, tot).ok)
+  const unoMenos = bueno.filter((f) => f.codigo !== '150109')
+  const vMenos = validarCatalogoUbigeo(unoMenos, tot)
+  check('>>> un distrito de menos frente a lo que declara la fuente se RECHAZA', !vMenos.ok)
+  check('el error dice cuántos trae el fichero y cuántos declara la fuente',
+    vMenos.errores.some((e) => e.includes('1799') && e.includes('1800') && e.includes('distritos')), vMenos.errores.join(' | ').slice(0, 120))
+  check('>>> uno de más también', !validarCatalogoUbigeo([...bueno, { codigo: '150999', nombre: 'Sobra', nivel: 3 }], tot).ok)
+  check('provincias que no coinciden se rechazan', !validarCatalogoUbigeo(bueno, { ...tot, provincias: 196 }).ok)
+  check('departamentos declarados distintos de los que trae se rechazan', !validarCatalogoUbigeo(bueno, { ...tot, departamentos: 24 }).ok)
+  check('sin totales declarados la validación estructural sigue funcionando (compatibilidad)', validarCatalogoUbigeo(bueno).ok)
+
+  console.log('\n13) El cargador exige los tres totales')
+  const sin = leerTotalesDeclarados(['f.csv'])
+  check('>>> sin ninguna opción NO se puede cargar y el mensaje nombra las tres', typeof sin === 'string' && ['--departamentos-fuente', '--provincias-fuente', '--distritos-fuente'].every((o) => sin.includes(o)))
+  check('con solo dos, falta la tercera', (() => { const r = leerTotalesDeclarados(['--departamentos-fuente', '25', '--provincias-fuente', '196']); return typeof r === 'string' && r.includes('--distritos-fuente') && !r.includes('--provincias-fuente') })())
+  check('valores no numéricos o cero se rechazan', typeof leerTotalesDeclarados(['--departamentos-fuente', 'veinticinco', '--provincias-fuente', '0', '--distritos-fuente', '1.5']) === 'string')
+  check('con los tres válidos devuelve los números', JSON.stringify(leerTotalesDeclarados(['x.csv', '--departamentos-fuente', '25', '--provincias-fuente', '196', '--distritos-fuente', '1890'])) === JSON.stringify({ departamentos: 25, provincias: 196, distritos: 1890 }))
+  check('opcion no confunde una bandera con su valor', opcion(['--forzar', '--version', '2026'], '--version') === '2026' && opcion(['--version', '--forzar'], '--version') === undefined)
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
   return fail

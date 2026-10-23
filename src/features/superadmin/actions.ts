@@ -13,11 +13,13 @@ import { IMPERSONATION_MAX_MINUTES } from '@/lib/impersonation'
 import { SUPPORT_COOKIE, emitirSupportToken, verificarSupportToken } from '@/lib/support-token'
 import {
   reactivateTenantSchema,
+  facturacionRealSchema,
   resetOwnerPasswordSchema,
   startImpersonationSchema,
   suspendTenantSchema,
   updateTenantProfileSchema,
 } from './schemas'
+import { cambiarFacturacionReal } from './facturacion-real-service'
 import {
   resetOwnerPassword as runResetPassword,
   updateTenantProfile as runUpdateProfile,
@@ -407,5 +409,25 @@ export async function updateTenantProfileAction(
     return { ok: true, data: { cambios: r.cambios } }
   } catch (e) {
     return fallo(e, 'updateTenantProfileAction')
+  }
+}
+
+
+/** Enciende o apaga la facturación electrónica real de un negocio (solo SuperAdmin). */
+export async function setFacturacionRealAction(raw: unknown): Promise<ActionResult<{ habilitada: boolean }>> {
+  const parsed = facturacionRealSchema.safeParse(raw)
+  if (!parsed.success) {
+    return { ok: false, code: 'VALIDATION', message: parsed.error.issues[0]?.message ?? 'Revisa los datos.', details: z.flattenError(parsed.error).fieldErrors }
+  }
+  try {
+    const admin = await requireSuperAdmin()
+    const r = await cambiarFacturacionReal(
+      { tenantId: parsed.data.tenantId, habilitar: parsed.data.enabled, reason: parsed.data.reason },
+      { id: admin.id, email: admin.email },
+    )
+    revalidatePath(ROUTES.superadmin)
+    return { ok: true, data: r }
+  } catch (e) {
+    return fallo(e, 'setFacturacionRealAction')
   }
 }

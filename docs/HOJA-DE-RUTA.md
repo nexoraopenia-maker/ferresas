@@ -32,3 +32,18 @@ verde, `tsc` y build limpios, y con la lista de lo que NO se pudo probar en real
 
 ## En pausa, esperando al usuario
 Imagen `public/fondo-login.jpg`; documentación y token del PSE; API del padrón RUC/DNI.
+
+
+## Plan por fases (aprobado 2026-10-23)
+
+Fase 1 (SUNAT real) se divide: **1A** (sin dependencias externas) y **1B** (perfil del proveedor real, en pausa hasta tener PSE y sandbox).
+
+| 1A | Qué | Estado |
+|---|---|---|
+| 1A.1 | Ubigeo: cargador con totales de la fuente, selector en cascada con respaldo, requisito de sucursal al emitir, interruptor «facturación real» (apagado, solo SuperAdmin), aviso de la clave al diagnóstico, lista de usos del cliente base | **Hecho** (falta cargar el CSV oficial del INEI) |
+| 1A.2 | Cola de envío con reintentos, disparada por un programador externo (QStash o similar), tolerante a ejecuciones duplicadas o solapadas | Siguiente |
+| 1A.3 | Notas de crédito y de débito | Pendiente |
+| 1A.4 | Comunicación de baja y resumen diario | Pendiente |
+| 1A.5 | Guías de remisión por la misma cola (solo remitente; la de transportista queda fuera) | Pendiente |
+
+Fases 2 a 9: ver el plan aprobado. Nada se publica hasta que la suite completa esté en verde y se dé la orden.

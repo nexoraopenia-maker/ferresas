@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
 import {
   reactivateTenant,
   resetTenantOwnerPassword,
+  setFacturacionRealAction,
   startImpersonation,
   suspendTenant,
   updateTenantProfileAction,
@@ -27,7 +28,7 @@ export interface TenantPerfil {
   email: string | null
 }
 
-type Accion = 'suspender' | 'reactivar' | 'soporte' | 'password' | 'perfil' | 'facturacion'
+type Accion = 'suspender' | 'reactivar' | 'soporte' | 'password' | 'perfil' | 'facturacion' | 'realOn' | 'realOff'
 
 const COPY: Record<Exclude<Accion, 'perfil' | 'facturacion'>, {
   titulo: string
@@ -52,6 +53,18 @@ const COPY: Record<Exclude<Accion, 'perfil' | 'facturacion'>, {
     descripcion: 'Verás la cuenta en modo solo lectura durante 60 minutos.',
     boton: 'Entrar',
     placeholder: 'Ej. Ticket #1290: no le aparece el stock del almacén 2',
+  },
+  realOn: {
+    titulo: 'Habilitar facturación real',
+    descripcion: 'Desde ahora este negocio puede enviar comprobantes a su proveedor. Solo si ya validaste el XML y los catálogos en el sandbox.',
+    boton: 'Habilitar',
+    placeholder: 'Ej. Sandbox del PSE validado el 12/11; RUC y sucursales completos',
+  },
+  realOff: {
+    titulo: 'Apagar facturación real',
+    descripcion: 'Deja de enviar comprobantes al proveedor. Siguen emitiéndose y numerándose, y quedan pendientes.',
+    boton: 'Apagar',
+    placeholder: 'Ej. El proveedor rechaza el XML; se revisa antes de volver a enviar',
   },
   password: {
     titulo: 'Restablecer contraseña',
@@ -79,12 +92,16 @@ export function TenantActions({
   tenantId,
   tenantName,
   isActive,
+  facturacionReal,
+  esDemo,
   perfil,
   onFacturacion,
 }: {
   tenantId: string
   tenantName: string
   isActive: boolean
+  facturacionReal: boolean
+  esDemo: boolean
   perfil: TenantPerfil
   onFacturacion: () => void
 }) {
@@ -131,6 +148,7 @@ export function TenantActions({
         : accion === 'reactivar' ? await reactivateTenant({ tenantId, reason })
         : accion === 'soporte' ? await startImpersonation({ tenantId, reason })
         : accion === 'password' ? await resetTenantOwnerPassword({ tenantId, reason, password: nuevaClave })
+        : accion === 'realOn' || accion === 'realOff' ? await setFacturacionRealAction({ tenantId, reason, enabled: accion === 'realOn' })
         : await updateTenantProfileAction({
             tenantId,
             reason,
@@ -201,6 +219,11 @@ export function TenantActions({
           <DropdownMenuItem onSelect={() => abrir('perfil')}>
             Editar perfil (RUC, teléfono)
           </DropdownMenuItem>
+          {!esDemo && (
+            <DropdownMenuItem onSelect={() => abrir(facturacionReal ? 'realOff' : 'realOn')}>
+              {facturacionReal ? 'Apagar facturación real' : 'Habilitar facturación real'}
+            </DropdownMenuItem>
+          )}
 
           <DropdownMenuSeparator />
 

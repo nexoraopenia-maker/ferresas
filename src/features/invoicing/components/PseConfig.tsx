@@ -64,10 +64,10 @@ export function PseConfig({
         </span>
       </div>
 
+      {/* El estado de la clave maestra es una cuestión de la PLATAFORMA, no del negocio: se
+          muestra en el diagnóstico del sistema (/api/diagnostics), no aquí. */}
       {!claveMaestra && (
-        <p className="mt-3 rounded-xl bg-stock-out-soft px-3 py-2 text-sm font-semibold text-stock-out">
-          El servidor no tiene la clave para guardar credenciales de forma segura. Avisa a soporte antes de configurar.
-        </p>
+        <p className="mt-3 text-sm text-ink-muted">La conexión con el proveedor se habilita desde soporte.</p>
       )}
 
       {puedeOperar && claveMaestra && (editando ? (

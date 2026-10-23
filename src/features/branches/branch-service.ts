@@ -1,3 +1,4 @@
+import { exigirDistritoValido } from '@/features/ubigeo/service'
 import { Prisma } from '@/generated/prisma/client'
 import { camposDeColision, esColisionUnica } from '@/lib/prisma-errors'
 import { BusinessError } from '@/lib/errors'
@@ -52,6 +53,7 @@ export async function createBranch(
        * que emitieron: reasignarla produciría dos documentos distintos con el
        * mismo número bajo el mismo RUC.
        */
+      if (input.ubigeo) await exigirDistritoValido(input.ubigeo, 'El ubigeo de la sucursal')
       const usados = await t.branch.findMany({ select: { seriesNumber: true } })
       const seriesNumber =
         input.seriesNumber ?? siguienteSeriesNumber(usados.map((b) => b.seriesNumber))
@@ -157,6 +159,7 @@ export async function updateBranch(
   // `Unchecked` y no `BranchUpdateInput`: la variante comprobada exige
   // `manager: { connect: ... }` y aquí se asigna el id plano.
   const data: Prisma.BranchUncheckedUpdateInput = {}
+  if (input.ubigeo) await exigirDistritoValido(input.ubigeo, 'El ubigeo de la sucursal')
   if (input.name !== undefined) data.name = input.name
   if (input.address !== undefined) data.address = input.address || null
   if (input.ubigeo !== undefined) data.ubigeo = input.ubigeo || null

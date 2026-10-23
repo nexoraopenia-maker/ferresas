@@ -647,3 +647,11 @@ apoya en eso. Comprobado: `ts-morph` no añade ninguna vulnerabilidad al árbol.
 - **Permisos:** `guias.emitir` (dueño, administrador, vendedor, cajero, almacenero) y `guias.anular` (dueño, administrador). El contador solo consulta (`reportes.ver`).
 - **Transmisión:** pendiente de proveedor (ver `docs/COMPLIANCE.md` §7). Estado `PENDIENTE` hasta entonces.
 - **Pantallas:** `/guias` (listado y anulación), `/guias/nueva` (desde una venta, una transferencia o sin origen) y el enlace «Emitir guía de remisión» en `/comprobantes`.
+
+
+## Facturación real, ubigeo y usos del cliente base
+
+- **Interruptor** `Tenant.realBillingEnabledAt` (NULL = apagado). Lo escribe SOLO `superadmin/facturacion-real-service.ts` (lo vigila `tests/facturacion-real.ts` por AST). `envio.ts → elegirProveedor` lo comprueba antes de cualquier proveedor; `invoicing/requisitos-fiscales.ts` exige sucursal completa al emitir cuando está encendido.
+- **Ubigeo:** tabla global `ubigeos` (sin `tenantId`). Servicio de solo lectura con el cliente base; selector en cascada `UbigeoSelect` con respaldo de 6 dígitos mientras esté vacía. Carga con `scripts/cargar-ubigeo.ts` y los totales declarados por la fuente.
+- **Aviso de `PSE_MASTER_KEY`:** ya no se muestra al dueño. Es un asunto de la plataforma y vive en `/api/diagnostics` (presencia y validez, nunca el valor).
+- **Lista de usos del `prisma` base y del SQL directo:** `tests/prisma-base.ts`. Cada archivo que lo usa está inventariado con su motivo; añadir uno exige escribirlo ahí. El POS, el inventario, la facturación, las sucursales, las guías, el panel y la impresión no pueden usarlo, y ningún componente de cliente tampoco. (No hay RLS de Postgres: queda para después; esta lista es la red mientras tanto.)

@@ -97,7 +97,8 @@ fiscalización contrasta con SUNAT, no con este registro.
 | Punto | Estado |
 |---|---|
 | Formato de 6 dígitos (dep. 2 + prov. 2 + dist. 2) | Validado |
-| ⚠️ **No se valida contra el catálogo del INEI** | Un ubigeo mal tecleado pasa |
+| ✅ **Validación contra el catálogo, cuando está cargado** | Las sucursales y las guías rechazan un ubigeo que no sea un distrito del catálogo. Mientras la tabla esté vacía solo se valida el formato (6 dígitos) y la pantalla cae a un campo de texto con aviso. |
+| ⚠️ **El catálogo oficial AÚN NO está cargado** | El sitio del INEI no fue accesible para descargarlo y validar sus totales. Se carga con `scripts/cargar-ubigeo.ts`, que exige los totales de departamentos, provincias y distritos **que declara la fuente** y no escribe nada si no coinciden exactamente, si falta Callao (07) o si los códigos no son los del INEI (RENIEC). Ver `prisma/data/LEEME.md`. |
 | ⚠️ **Catálogo NO embarcado, y es deliberado** | Se revisaron los datasets públicos disponibles. El más citado trae **24 departamentos** cuando el ubigeo del INEI tiene **25 códigos de primer nivel** (falta Callao), y su propia documentación advierte que se basa en datos antiguos. Cargarlo haría **imposible** seleccionar una dirección del Callao: una regresión funcional peor que el campo de texto actual. Además hay **dos sistemas de codificación incompatibles** (INEI y RENIEC) y usar el equivocado pondría el ubigeo erróneo en los comprobantes. Pendiente del fichero oficial del INEI |
 
 ---
@@ -245,3 +246,12 @@ El aviso permanente de la interfaz lo dice.
 | ✅ | Serie `T` + 3 dígitos por sucursal, correlativo sin huecos, aislamiento por negocio y por sucursal, auditoría de emisión y anulación | Probado en `tests/guias.ts`. |
 
 **Anulación:** solo mientras la guía sigue `PENDIENTE` (no se transmitió). Una guía ya enviada se da de baja por el canal del proveedor o el portal de SUNAT.
+
+
+## 8. Interruptor «facturación real habilitada»
+
+Por negocio, **apagado por defecto**, solo lo enciende un SuperAdmin (con motivo, auditado). Apagado, el negocio emite y numera comprobantes y guías, pero **nada sale hacia ningún proveedor**, aunque tenga credenciales de PSE cargadas. Una cuenta demo nunca lo enciende ni lo necesita.
+
+Para **encenderlo** hacen falta: RUC válido, proveedor PSE configurado, al menos una sucursal activa y **todas** con dirección completa y un ubigeo válido. Con él **encendido**, emitir un comprobante o una guía exige además que la sucursal desde la que se emite esté completa.
+
+El criterio para encenderlo no es técnico: es haber validado el XML, los catálogos (§6) y la trama del QR en el sandbox del proveedor. Hasta entonces, ⚠️ nada de lo que emite FerreSaaS debe considerarse aceptado por SUNAT.

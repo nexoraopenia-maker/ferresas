@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
+import { hayClaveMaestra } from '@/lib/cifrado'
 import { prisma } from '@/lib/prisma'
 
 /**
@@ -70,6 +71,9 @@ export async function GET(req: NextRequest) {
     STRIPE_SECRET_KEY: variable('STRIPE_SECRET_KEY'),
     MERCADOPAGO_ACCESS_TOKEN: variable('MERCADOPAGO_ACCESS_TOKEN'),
     CRON_SECRET: variable('CRON_SECRET'),
+    // Cifra las credenciales del PSE y los secretos del segundo factor. Solo presencia, nunca el valor.
+    PSE_MASTER_KEY: { ...variable('PSE_MASTER_KEY'), validaComoClave: hayClaveMaestra() },
+    PSE_MASTER_KEY_PREVIOUS: variable('PSE_MASTER_KEY_PREVIOUS'),
   }
 
   // Comprobación de la cadena de conexión SIN revelar credenciales: solo si
@@ -277,6 +281,12 @@ export async function GET(req: NextRequest) {
       `${baseDatos.usuariosSinSucursal} usuario(s) activo(s) sin sucursal asignada. ` +
         'No podrán vender ni mover stock hasta que un administrador se la asigne ' +
         'en /sucursales.',
+    )
+  }
+  if (!hayClaveMaestra()) {
+    problemas.push(
+      'PSE_MASTER_KEY no está configurada o no es una clave válida (32 bytes en base64 o hexadecimal): ' +
+        'no se pueden guardar las credenciales del proveedor de facturación ni activar el segundo factor (MFA).',
     )
   }
   if (baseDatos.superadminsActivos === 0) {

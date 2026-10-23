@@ -45,6 +45,9 @@ export interface TenantRow {
   // --- Estado y uso ---
   isActive: boolean
   suspendedReason: string | null
+  /** Facturación electrónica real encendida (apagada por defecto). */
+  facturacionReal: boolean
+  isDemo: boolean
   users: number
   products: number
   createdAt: Date
@@ -67,6 +70,8 @@ export async function getSuperAdminDashboard(
       slug: true,
       isActive: true,
       suspendedReason: true,
+      realBillingEnabledAt: true,
+      isDemo: true,
       createdAt: true,
       legalName: true,
       email: true,
@@ -153,6 +158,8 @@ export async function getSuperAdminDashboard(
         gatewayLinked: Boolean(sub?.externalSubscriptionId),
         isActive: tenant.isActive,
         suspendedReason: tenant.suspendedReason,
+        facturacionReal: tenant.realBillingEnabledAt !== null,
+        isDemo: tenant.isDemo,
         users: tenant._count.users,
         products: tenant._count.products,
         createdAt: tenant.createdAt,

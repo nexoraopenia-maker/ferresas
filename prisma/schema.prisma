@@ -359,18 +359,25 @@ model Tenant {
   /// Si está activa, cobrar EN EFECTIVO exige un turno de caja abierto en la sucursal:
   /// el efectivo siempre cae dentro de un arqueo.
   /// URL base del PSE (https). La configura el dueño; el servidor la valida contra SSRF.
-  pseEndpointUrl  String?
+  pseEndpointUrl       String?
   /// Token del PSE CIFRADO con AES-256-GCM (clave maestra en PSE_MASTER_KEY, atado a este tenant).
   /// Nunca sale de la base en claro ni llega al navegador.
-  pseTokenEnc     String?
-  pseConfiguredAt DateTime?
-  cashRequired    Boolean   @default(false)
-  isDemo          Boolean   @default(false)
+  pseTokenEnc          String?
+  pseConfiguredAt      DateTime?
+  cashRequired         Boolean   @default(false)
+  /**
+   * Facturación electrónica REAL habilitada. NULL (apagado) por defecto: mientras
+   * esté apagado un negocio emite y numera comprobantes, pero NINGUNO sale hacia un
+   * proveedor. Solo lo enciende un SuperAdmin, con motivo auditado, tras validar el
+   * XML y los catálogos en el sandbox del proveedor.
+   */
+  realBillingEnabledAt DateTime?
+  isDemo               Boolean   @default(false)
   /// Cuándo se precargaron los datos de la demo. NULL = aún no (o pendiente).
-  demoSeededAt    DateTime?
-  locale          String    @default("es-PE")
+  demoSeededAt         DateTime?
+  locale               String    @default("es-PE")
   /// IGV por defecto para productos nuevos (18% en Perú).
-  taxRate         Decimal   @default(0.1800) @db.Decimal(5, 4)
+  taxRate              Decimal   @default(0.1800) @db.Decimal(5, 4)
 
   /// Kill switch del Super Admin. Independiente del estado de suscripción:
   /// un tenant puede estar ACTIVE en Stripe y aun así suspendido por abuso.

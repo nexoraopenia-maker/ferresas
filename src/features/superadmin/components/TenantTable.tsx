@@ -15,6 +15,8 @@ export interface TenantTableRow extends BillingData {
   access: string
   isActive: boolean
   suspendedReason: string | null
+  facturacionReal: boolean
+  isDemo: boolean
   users: number
   products: number
   createdAt: string
@@ -245,6 +247,8 @@ export function TenantTable({
                     tenantId={t.tenantId}
                     tenantName={t.tenantName}
                     isActive={t.isActive}
+                    facturacionReal={t.facturacionReal}
+                    esDemo={t.isDemo}
                     perfil={{
                       name: t.tenantName,
                       legalName: t.legalName,

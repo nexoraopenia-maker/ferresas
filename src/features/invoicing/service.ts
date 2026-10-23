@@ -4,6 +4,7 @@ import { validarRuc } from '@/lib/documentos'
 import { type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { claimNextNumber, ensureCounter } from '@/features/pos/sale-service'
+import { exigirRequisitosFiscales } from './requisitos-fiscales'
 import { cargarSucursalOperativa, serieDe } from '@/features/branches/queries'
 import { scopeTributario } from '@/features/branches/series'
 import {
@@ -115,6 +116,9 @@ export async function issueTaxDocument(
    * establecimiento que vendió. Tomar la del usuario pondría ingresos de un
    * local en la numeración de otro.
    */
+  // Con la facturación real habilitada, la sucursal tiene que estar completa (dirección y ubigeo).
+  await exigirRequisitosFiscales(db, sale.branchId)
+
   const sucursal = await cargarSucursalOperativa(db, sale.branchId)
   const { series } = serieDe(sucursal, scope)
 

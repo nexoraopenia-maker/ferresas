@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import { UbigeoSelect } from '@/features/ubigeo/components/UbigeoSelect'
 import { avisoEstablecimiento } from '../establecimiento'
 import { assignBranches, createBranch, deleteBranch, updateBranch } from '../actions'
 
@@ -98,6 +99,11 @@ export function BranchManager({
                   {s.ubigeo && ` · ubigeo ${s.ubigeo}`}
                 </p>
                 {s.address && <p className="text-sm text-ink-muted">{s.address}</p>}
+                {(!s.address || !s.ubigeo) && (
+                  <p className="mt-1 inline-block rounded-full bg-stock-low-soft px-2 py-0.5 text-xs font-bold text-stock-low">
+                    Falta {!s.address && !s.ubigeo ? 'la dirección y el ubigeo' : !s.address ? 'la dirección' : 'el ubigeo'}: necesarios para emitir con facturación real
+                  </p>
+                )}
                 <p className="mt-1 text-xs text-ink-muted">
                   {s.almacenes} {s.almacenes === 1 ? 'almacén' : 'almacenes'}
                   {s.conStock > 0 && ` · ${s.conStock} con stock`}
@@ -331,9 +337,12 @@ function FormCrear({
           ⚠ {avisoEstablecimiento(establishmentCode)}
         </p>
       )}
-      <Campo label="Dirección" valor={address} onCambio={setAddress} />
-      <Campo label="Ubigeo" valor={ubigeo} onCambio={setUbigeo}
-        placeholder="150132" inputMode="numeric" ayuda="Seis dígitos del INEI. Opcional." />
+      <Campo label="Dirección (obligatoria para emitir con facturación real)" valor={address} onCambio={setAddress}
+        ayuda="Completa: calle, número, urbanización." />
+      <div className="flex flex-col gap-1">
+        <span className="text-sm font-medium text-ink-muted">Distrito (ubigeo del INEI)</span>
+        <UbigeoSelect value={ubigeo} onChange={setUbigeo} />
+      </div>
       <Campo label="Teléfono" valor={phone} onCambio={setPhone} />
 
       <label className="flex flex-col gap-1">
@@ -405,8 +414,11 @@ function FormEditar({
       </p>
 
       <Campo label="Nombre" valor={name} onCambio={setName} />
-      <Campo label="Dirección" valor={address} onCambio={setAddress} />
-      <Campo label="Ubigeo" valor={ubigeo} onCambio={setUbigeo} inputMode="numeric" />
+      <Campo label="Dirección (obligatoria para emitir con facturación real)" valor={address} onCambio={setAddress} />
+      <div className="flex flex-col gap-1">
+        <span className="text-sm font-medium text-ink-muted">Distrito (ubigeo del INEI)</span>
+        <UbigeoSelect value={ubigeo} onChange={setUbigeo} />
+      </div>
       <Campo label="Teléfono" valor={phone} onCambio={setPhone} />
 
       <label className="flex flex-col gap-1">

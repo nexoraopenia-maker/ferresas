@@ -1,7 +1,12 @@
 /**
  * Carga el catálogo de ubigeo del INEI.
  *
- *   npx tsx scripts/cargar-ubigeo.ts <fichero> [--version 2026] [--forzar]
+ *   npx tsx scripts/cargar-ubigeo.ts <fichero> --departamentos-fuente 25 --provincias-fuente N \
+ *       --distritos-fuente N [--fuente "texto"] [--version 2026] [--forzar]
+ *
+ * Los TRES totales son obligatorios: son las cifras que declara la fuente oficial
+ * del INEI (no las de nuestro fichero). Si no coinciden exactamente con lo que
+ * trae el fichero, no se carga nada.
  *
  * Acepta CSV o JSON. VALIDA antes de escribir y, si la validación falla, NO
  * CARGA NADA — ni "lo que se pudo". Un catálogo a medias deja unos distritos
@@ -24,6 +29,7 @@ import { readFileSync } from 'node:fs'
 import { assertWritableEnvironment } from '../src/lib/env-guard'
 import { prisma } from '../src/lib/prisma'
 import { validarCatalogoUbigeo, type FilaUbigeo } from '../src/features/ubigeo/validar'
+import { leerTotalesDeclarados, opcion } from '../src/features/ubigeo/cargador'
 import { detectDelimiter, parseCsv } from '../src/features/inventory/csv'
 
 /** El nivel se deduce de los ceros finales del código. */
@@ -132,16 +138,27 @@ function completarNiveles(filas: FilaUbigeo[], crudo: string): FilaUbigeo[] {
 
 async function main() {
   const args = process.argv.slice(2)
-  const ruta = args.find((a) => !a.startsWith('--'))
-  const version = args[args.indexOf('--version') + 1] ?? String(new Date().getFullYear())
+  // El valor de una opción no puede confundirse con la ruta del fichero.
+  const ruta = args.find((a, i) => !a.startsWith('--') && !(args[i - 1]?.startsWith('--') && args[i - 1] !== '--forzar'))
+  const version = opcion(args, '--version') ?? String(new Date().getFullYear())
   const forzar = args.includes('--forzar')
 
   if (!ruta) {
     console.error(
-      'Uso: npx tsx scripts/cargar-ubigeo.ts <fichero.csv|json> [--version 2026] [--forzar]',
+      'Uso: npx tsx scripts/cargar-ubigeo.ts <fichero.csv|json> --departamentos-fuente 25 ' +
+        '--provincias-fuente N --distritos-fuente N [--fuente "texto"] [--version 2026] [--forzar]',
     )
     process.exit(1)
   }
+
+  const declarados = leerTotalesDeclarados(args)
+  if (typeof declarados === 'string') {
+    console.error(`\n  ✗ ${declarados}\n\n  NO SE CARGÓ NADA.`)
+    process.exit(1)
+  }
+  const fuente = opcion(args, '--fuente')
+  if (fuente) console.log(`  fuente declarada: ${fuente}`)
+  console.log(`  la fuente declara: ${declarados.departamentos} departamentos, ${declarados.provincias} provincias, ${declarados.distritos} distritos`)
 
   // El catálogo es global: escribirlo toca a TODOS los tenants, así que pasa
   // por la misma guarda que cualquier script que escriba en la base.
@@ -160,7 +177,7 @@ async function main() {
   console.log(`\n  fichero: ${ruta}`)
   console.log(`  filas leídas: ${conPadre.length}`)
 
-  const v = validarCatalogoUbigeo(conPadre)
+  const v = validarCatalogoUbigeo(conPadre, declarados)
   console.log(
     `\n  departamentos: ${v.conteo.departamentos}  ` +
       `provincias: ${v.conteo.provincias}  distritos: ${v.conteo.distritos}`,

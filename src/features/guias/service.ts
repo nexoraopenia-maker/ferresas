@@ -8,6 +8,8 @@ import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { cargarSucursalOperativa, serieDe } from '@/features/branches/queries'
 import { formatFullNumber } from '@/features/invoicing/schemas'
 import { claimNextNumber, ensureCounter } from '@/features/pos/sale-service'
+import { exigirRequisitosFiscales } from '@/features/invoicing/requisitos-fiscales'
+import { exigirDistritoValido } from '@/features/ubigeo/service'
 import type { EmitirGuiaInput } from './schemas'
 import { normalizarLicencia, normalizarPlaca, pendientePorProducto } from './reglas'
 
@@ -115,6 +117,9 @@ export async function emitirGuia(
 
   const origen = await cargarOrigen(db, ctx, input)
   const branchId = origen?.branchId ?? requireBranch(ctx)
+  await exigirRequisitosFiscales(db, branchId)
+  await exigirDistritoValido(input.origin.ubigeo, 'El ubigeo de partida')
+  await exigirDistritoValido(input.destination.ubigeo, 'El ubigeo de llegada')
 
   // Las fechas son días civiles de Lima, no instantes UTC.
   const emision = diaLocal(tenant.timezone ?? 'America/Lima', ahora)

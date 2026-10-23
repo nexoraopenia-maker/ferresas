@@ -61,8 +61,17 @@ export const DEPARTAMENTOS_INEI = 25
 const norm = (s: string) =>
   s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim()
 
+/** Totales que DECLARA la fuente oficial, tomados de ella y no de nuestra copia. */
+export interface TotalesDeclarados {
+  departamentos: number
+  provincias: number
+  distritos: number
+}
+
 export function validarCatalogoUbigeo(
   filas: readonly FilaUbigeo[],
+  /** Si se pasan, el catálogo tiene que coincidir EXACTAMENTE con lo que declara la fuente. */
+  declarados?: TotalesDeclarados,
 ): ResultadoValidacion {
   const errores: string[] = []
   const avisos: string[] = []
@@ -131,6 +140,20 @@ export function validarCatalogoUbigeo(
           `dice "${fila.nombre}". Puede ser el catálogo de RENIEC, que NO es el que ` +
           'piden los comprobantes de SUNAT.',
       )
+    }
+  }
+
+  // ── 4b. Totales contra lo que declara la fuente oficial ────────────────────
+  // Un catálogo al que le falta un distrito hace IMPOSIBLE registrar esa dirección:
+  // contar contra la cifra de la propia fuente es lo único que lo detecta.
+  if (declarados) {
+    for (const [clave, etiqueta] of [['departamentos', 'departamentos'], ['provincias', 'provincias'], ['distritos', 'distritos']] as const) {
+      if (conteo[clave] !== declarados[clave]) {
+        errores.push(
+          `El fichero trae ${conteo[clave]} ${etiqueta} y la fuente declara ${declarados[clave]}. ` +
+            'O el fichero está incompleto o es de otra versión.',
+        )
+      }
     }
   }
 

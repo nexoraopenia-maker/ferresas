@@ -34,6 +34,10 @@ async function negocio(tag: string, opts: { demo?: boolean; fiscal?: boolean } =
     },
   })
   const { branch, warehouse: w } = await crearSucursalConAlmacen(t.id)
+  // La facturación real está APAGADA por defecto: un negocio que envía a un proveedor la tiene
+  // encendida y su sucursal completa. (Una demo nunca la enciende.)
+  await prisma.branch.update({ where: { id: branch.id }, data: { address: 'Av. Prueba 123, Lima', ubigeo: '150101' } })
+  if (!opts.demo && fiscal) await prisma.tenant.update({ where: { id: t.id }, data: { realBillingEnabledAt: new Date() } })
   const mk = async (role: Role) => {
     const u = await prisma.user.create({ data: { tenantId: t.id, email: `${role}-${randomUUID()}@x.com`.toLowerCase(), name: role, role } })
     await asignarSucursal(t.id, u.id, branch.id)

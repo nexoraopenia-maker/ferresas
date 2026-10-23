@@ -60,6 +60,8 @@ export default async function SuperadminPage() {
     access: t.access,
     isActive: t.isActive,
     suspendedReason: t.suspendedReason,
+    facturacionReal: t.facturacionReal,
+    isDemo: t.isDemo,
     users: t.users,
     products: t.products,
     createdAt: t.createdAt.toISOString(),

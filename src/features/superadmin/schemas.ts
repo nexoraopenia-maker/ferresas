@@ -105,6 +105,13 @@ export const resetOwnerPasswordSchema = z.object({
 
 export type ResetOwnerPasswordInput = z.infer<typeof resetOwnerPasswordSchema>
 
+/** Encender o apagar la facturación electrónica REAL de un negocio. */
+export const facturacionRealSchema = z.object({
+  tenantId: z.string().min(1).max(64),
+  enabled: z.boolean(),
+  reason: z.string().trim().min(10, 'Explica el motivo con al menos 10 caracteres.').max(500),
+})
+
 /** Edición de los datos fiscales y de contacto de una ferretería. */
 export const updateTenantProfileSchema = z.object({
   tenantId: z.string().min(1).max(64),

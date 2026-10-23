@@ -158,9 +158,18 @@ async function elegirProveedor(
   tenantId: string,
   deps: DependenciasEnvio,
 ): Promise<{ proveedor: ProveedorFacturacion; credenciales: CredencialesProveedor }> {
-  const t = await db.tenant.findFirstOrThrow({ select: { isDemo: true } })
+  const t = await db.tenant.findFirstOrThrow({ select: { isDemo: true, realBillingEnabledAt: true } })
   if (t.isDemo) {
     return { proveedor: deps.proveedor ?? obtenerProveedor(undefined, { esDemo: true }), credenciales: deps.credenciales ?? CREDENCIALES_DEMO }
+  }
+
+  // Interruptor «facturación real»: apagado (por defecto), NADA sale hacia un proveedor,
+  // ni siquiera con credenciales cargadas. Lo enciende un SuperAdmin tras validar el sandbox.
+  if (!t.realBillingEnabledAt) {
+    throw new BusinessError(
+      'INVALID_DOCUMENT',
+      'La facturación electrónica real todavía no está habilitada para tu negocio. El comprobante queda pendiente de envío.',
+    )
   }
 
   // Inyectado (solo pruebas): el proveedor y las credenciales vienen de fuera.
