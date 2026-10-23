@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
 import { buscarProductos, palabras, relevancia } from '../src/features/pos/busqueda'
+import { sinTildes, trocearResaltado, variantesConTilde } from '../src/features/pos/resaltado'
 import type { TenantContext } from '../src/lib/tenant-context'
 
 let pass = 0, fail = 0
@@ -25,6 +26,20 @@ async function main() {
   check('palabra en medio del nombre = 4', relevancia({ ...cem, sku: 'X1' }, 'mento') === 4)
   check('>>> sin acentos ni mayúsculas', relevancia({ name: 'Cañería PVC ½"', sku: 'P1', barcode: null, qrCode: null }, 'caneria') === 2)
   check('las palabras se parten por espacios y se limpian', palabras('  sol   cemento ').join('|') === 'sol|cemento')
+
+  console.log('\n1b) Variantes con tilde y resaltado (puros)')
+  check('«presion» incluye «presión» y a sí misma', variantesConTilde('presion').includes('presión') && variantesConTilde('presion').includes('presion'))
+  check('>>> teclear CON tilde también encuentra lo guardado sin ella', variantesConTilde('presión').includes('presion'))
+  check('la ñ: «caneria» incluye «cañeria»', variantesConTilde('caneria').includes('cañeria'))
+  check('>>> dos marcas en una palabra: «caneria» incluye «cañería»', variantesConTilde('caneria').includes('cañería'))
+  check('acota la cantidad de variantes', variantesConTilde('electromecanicamente').length <= 24)
+  check('sinTildes quita tildes y mayúsculas', sinTildes('PRESIÓN Cañería') === 'presion caneria')
+  const j = (t: ReturnType<typeof trocearResaltado>) => t.map((x) => (x.coincide ? `[${x.texto}]` : x.texto)).join('')
+  check('resalta el prefijo: «alicate de punta» con «alic»', j(trocearResaltado('Alicate de punta', ['alic'])) === '[Alic]ate de punta')
+  check('>>> resalta sin importar tildes y conserva el texto original', j(trocearResaltado('Alicate de presión', ['presion'])) === 'Alicate de [presión]')
+  check('varias palabras, en cualquier orden', j(trocearResaltado('Cemento Sol 42.5 kg', ['sol', 'cem'])) === '[Cem]ento [Sol] 42.5 kg')
+  check('sin coincidencia deja todo igual', j(trocearResaltado('Clavo 3"', ['zzz'])) === 'Clavo 3"')
+  check('el texto reconstruido nunca cambia', trocearResaltado('Cañería ½" PVC', ['caner', 'pvc']).map((x) => x.texto).join('') === 'Cañería ½" PVC')
 
   console.log('\n2) Búsqueda real')
   const plan = await prisma.plan.findUniqueOrThrow({ where: { code: 'pro' } })
@@ -67,6 +82,20 @@ async function main() {
   check('trae el stock del almacén de la sucursal activa', conStock?.stock === 30 && conStock.warehouseId === w.id)
   check('y el semáforo', conStock?.stockStatus === 'OK')
   void pCla
+
+  console.log('\n2b) «alicate»: autocompletado con variantes y tildes')
+  await mk({ sku: 'ALI-PUN', name: 'Alicate de punta 8"' })
+  await mk({ sku: 'ALI-PRE', name: 'Alicate de presión 10"' })
+  await mk({ sku: 'ALI-UNI', name: 'ALICATES universal 7"' })
+  await mk({ sku: 'PIN-LAT', name: 'Pintura látex blanca 1 gal' })
+  await mk({ sku: 'CAN-PVC', name: 'Cañería PVC 1/2"' })
+  check('>>> «alicate» lista las tres variantes (también «ALICATES»)', (await ids('alicate')).sort().join() === 'ALI-PRE,ALI-PUN,ALI-UNI')
+  check('«alic» (a medias) ya las encuentra', (await ids('alic')).length === 3)
+  check('>>> «presion» (sin tilde) encuentra «presión»', (await ids('alicate presion')).join() === 'ALI-PRE')
+  check('>>> «presión» (con tilde) también', (await ids('alicate presión')).join() === 'ALI-PRE')
+  check('«latex» encuentra «látex»', (await ids('latex')).join() === 'PIN-LAT')
+  check('«caneria» encuentra «Cañería»', (await ids('caneria')).join() === 'CAN-PVC')
+  check('mayúsculas no importan', (await ids('ALICATE PUNTA')).join() === 'ALI-PUN')
 
   console.log('\n3) Un catálogo grande no se cae')
   await prisma.product.createMany({

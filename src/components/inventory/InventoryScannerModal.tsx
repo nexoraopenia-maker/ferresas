@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import type { IScannerControls } from '@zxing/browser'
+import type { LectorCamara } from '@/lib/lector-camara'
 
 /**
  * Escáner de códigos de barras / QR — esqueleto de la Fase 3 (§5.1).
@@ -97,7 +97,7 @@ export function InventoryScannerModal({
   dedupeMs = 1500,
 }: InventoryScannerModalProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
-  const controlsRef = useRef<IScannerControls | null>(null)
+  const controlsRef = useRef<LectorCamara | null>(null)
   const lastScanRef = useRef<{ code: string; at: number } | null>(null)
   /** Evita procesar lecturas mientras `onDetected` sigue en vuelo. */
   const lockRef = useRef(false)
@@ -106,6 +106,7 @@ export function InventoryScannerModal({
   const [torchOn, setTorchOn] = useState(false)
   const [manualCode, setManualCode] = useState('')
   const [lastCode, setLastCode] = useState<string | null>(null)
+  const [motor, setMotor] = useState<'nativo' | 'zxing' | null>(null)
 
   const headingId = useId()
 
@@ -172,58 +173,23 @@ export function InventoryScannerModal({
       }
 
       try {
-        // Carga diferida: ver nota 1 de la cabecera.
-        const [{ BrowserMultiFormatReader }, { BarcodeFormat, DecodeHintType }] =
-          await Promise.all([import('@zxing/browser'), import('@zxing/library')])
+        // Carga diferida del motor: ver nota 1 de la cabecera.
+        const { iniciarLector } = await import('@/lib/lector-camara')
+        if (cancelled || !videoRef.current) return
 
-        if (cancelled) return
-
-        const hints = new Map()
-        hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-          BarcodeFormat.EAN_13, // el estándar del retail
-          BarcodeFormat.EAN_8,
-          BarcodeFormat.UPC_A,
-          BarcodeFormat.UPC_E,
-          BarcodeFormat.CODE_128, // etiquetas internas / impresas por el tenant
-          BarcodeFormat.CODE_39,
-          BarcodeFormat.ITF, // habitual en cajas y embalaje mayorista
-          BarcodeFormat.QR_CODE,
-        ])
-        // Vale la pena: los códigos impresos y arrugados de un almacén suelen
-        // leerse solo al revés.
-        hints.set(DecodeHintType.TRY_HARDER, true)
-
-        const reader = new BrowserMultiFormatReader(hints, {
-          // Un intento cada 120 ms: fluido sin freír la batería del celular.
-          delayBetweenScanAttempts: 120,
-          delayBetweenScanSuccess: 400,
+        const lector = await iniciarLector({
+          video: videoRef.current,
+          // Las lecturas con dígito de control inválido ya vienen descartadas.
+          onCodigo: (codigo) => void handleCode(codigo),
         })
 
-        const controls = await reader.decodeFromConstraints(
-          {
-            video: {
-              // `ideal` y no `exact`: con `exact` la laptop del mostrador,
-              // que solo tiene cámara frontal, fallaría en vez de degradar.
-              facingMode: { ideal: 'environment' },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
-          },
-          videoRef.current ?? undefined,
-          (result, error) => {
-            if (result) void handleCode(result.getText())
-            // Los NotFoundException son el caso normal: un frame sin código.
-            // Solo se ignoran; cualquier otra cosa ya la reportó el arranque.
-            void error
-          },
-        )
-
         if (cancelled) {
-          controls.stop()
+          lector.stop()
           return
         }
 
-        controlsRef.current = controls
+        controlsRef.current = lector
+        setMotor(lector.motor)
         setState({ phase: 'scanning' })
       } catch (err) {
         if (cancelled) return
@@ -348,6 +314,11 @@ export function InventoryScannerModal({
                   <span className="absolute inset-x-6 top-1/2 h-0.5 -translate-y-1/2 bg-industrial-500/90" />
                 </div>
               </div>
+
+              {/* Qué motor lee: sirve para diagnosticar en el celular. */}
+              <span className="pointer-events-none absolute bottom-2 left-3 rounded bg-graphite-900/70 px-2 py-0.5 text-[10px] text-graphite-300">
+                lector: {motor === 'nativo' ? 'nativo' : 'alternativo'}
+              </span>
 
               {controlsRef.current?.switchTorch && (
                 <button

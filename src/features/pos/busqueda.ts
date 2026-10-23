@@ -2,6 +2,7 @@ import { getStockStatus, type StockStatus } from '@/lib/stock-status'
 import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { filtroAlmacen } from '@/features/branches/queries'
+import { variantesConTilde } from './resaltado'
 
 /**
  * Búsqueda del punto de venta.
@@ -107,11 +108,12 @@ export async function buscarProductos(
         { sku: { startsWith: t, mode: 'insensitive' } },
         // Nombre: TODAS las palabras, en cualquier orden, en el nombre o en el SKU.
         {
+          // Cada palabra, con sus variantes con tilde: «presion» encuentra «presión».
           AND: ps.map((p) => ({
-            OR: [
-              { name: { contains: p, mode: 'insensitive' as const } },
-              { sku: { contains: p, mode: 'insensitive' as const } },
-            ],
+            OR: variantesConTilde(p).flatMap((v) => [
+              { name: { contains: v, mode: 'insensitive' as const } },
+              { sku: { contains: v, mode: 'insensitive' as const } },
+            ]),
           })),
         },
       ],

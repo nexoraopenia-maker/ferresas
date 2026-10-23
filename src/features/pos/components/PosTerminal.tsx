@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import Link from 'next/link'
 import { formatearFechaLocal } from '@/lib/fecha-local'
 import { redondearCentimos } from '@/lib/dinero'
+import { trocearResaltado } from '../resaltado'
 import { InventoryScannerModal } from '@/components/inventory/InventoryScannerModal'
 import { QuantityInput } from '@/components/ui/quantity-input'
 import { getStockStatusView } from '@/lib/stock-status'
@@ -93,6 +94,10 @@ export function PosTerminal({
   const [escaneando, setEscaneando] = useState(false)
   const [busqueda, setBusqueda] = useState('')
   const [resultados, setResultados] = useState<PosProduct[]>([])
+  // Autocompletado: fila marcada con las flechas, última búsqueda terminada y si falló.
+  const [activo, setActivo] = useState(-1)
+  const [buscado, setBuscado] = useState('')
+  const [falloBusqueda, setFalloBusqueda] = useState(false)
   const [metodo, setMetodo] = useState<Metodo>('EFECTIVO')
   const [recibido, setRecibido] = useState('')
   const [aviso, setAviso] = useState<string | null>(null)
@@ -224,11 +229,16 @@ export function PosTerminal({
     setBusqueda(texto)
     clearTimeout(temporizador.current)
     const seq = ++seqBusqueda.current
-    if (texto.trim().length < 2) { setResultados([]); return }
+    if (texto.trim().length < 2) { setResultados([]); setBuscado(''); setActivo(-1); setFalloBusqueda(false); return }
     temporizador.current = setTimeout(() => {
       startTransition(async () => {
         const r = await searchForPos(texto)
-        if (seq === seqBusqueda.current) setResultados(r.ok ? r.data : [])
+        if (seq === seqBusqueda.current) {
+          setResultados(r.ok ? r.data : [])
+          setFalloBusqueda(!r.ok)
+          setBuscado(texto.trim())
+          setActivo(-1)
+        }
       })
     }, 120)
   }, [])
@@ -239,6 +249,9 @@ export function PosTerminal({
    * si no hay código exacto, con el primer resultado cuando es inequívoco.
    */
   const alPulsarEnter = async () => {
+    // Con una fila marcada con las flechas, Enter elige ESA.
+    const marcada = activo >= 0 ? resultados[activo] : undefined
+    if (marcada) { agregar(marcada); setBusqueda(''); setResultados([]); setActivo(-1); return }
     const texto = busqueda.trim()
     if (texto.length < 2) return
     clearTimeout(temporizador.current)
@@ -513,26 +526,54 @@ export function PosTerminal({
           ref={buscadorRef}
           value={busqueda}
           onChange={(e) => buscar(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void alPulsarEnter() } }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); void alPulsarEnter() }
+            else if (e.key === 'ArrowDown' && resultados.length > 0) { e.preventDefault(); setActivo((a) => (a + 1) % resultados.length) }
+            else if (e.key === 'ArrowUp' && resultados.length > 0) { e.preventDefault(); setActivo((a) => (a <= 0 ? resultados.length - 1 : a - 1)) }
+            else if (e.key === 'Escape') { setResultados([]); setActivo(-1) }
+          }}
+          role="combobox"
+          aria-expanded={resultados.length > 0}
+          aria-controls="resultados-pos"
+          aria-autocomplete="list"
+          autoComplete="off"
           placeholder="Código, SKU o nombre…  (F2)"
           className="h-touch-lg w-full rounded-xl border border-hairline bg-surface px-4 text-base text-ink placeholder:text-ink-muted focus:border-industrial-600 focus:outline-none focus:ring-2 focus:ring-industrial-600/40"
         />
+        {pendiente && busqueda.trim().length >= 2 && resultados.length === 0 && (
+          <p className="mt-2 px-1 text-sm text-ink-muted" role="status">Buscando…</p>
+        )}
+        {falloBusqueda && (
+          <p className="mt-2 rounded-xl bg-stock-out-soft px-3 py-2 text-sm font-semibold text-stock-out" role="alert">
+            No pude buscar ahora. Revisa tu conexión y vuelve a escribir.
+          </p>
+        )}
+        {!pendiente && !falloBusqueda && resultados.length === 0 && buscado !== '' && buscado === busqueda.trim() && (
+          <p className="mt-2 rounded-xl border border-hairline bg-surface px-3 py-2 text-sm text-ink-muted" role="status">
+            Sin coincidencias para «{buscado}». Prueba con menos letras o créalo en inventario.
+          </p>
+        )}
         {resultados.length > 0 && (
-          <ul className="mt-2 max-h-56 overflow-y-auto rounded-xl border border-hairline bg-surface">
-            {resultados.map((p) => {
+          <ul id="resultados-pos" role="listbox" className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-hairline bg-surface">
+            {resultados.map((p, i) => {
               const s = getStockStatusView(p.stock, p.minStock)
+              const marcado = i === activo
               return (
-                <li key={p.productId}>
+                <li key={p.productId} role="option" aria-selected={marcado}>
                   <button
                     type="button"
-                    onClick={() => { agregar(p); setBusqueda(''); setResultados([]) }}
-                    className="flex w-full items-center gap-3 border-b border-hairline px-3 py-3 text-left last:border-0 active:bg-surface-sunken"
+                    ref={(el) => { if (marcado) el?.scrollIntoView({ block: 'nearest' }) }}
+                    onMouseEnter={() => setActivo(i)}
+                    onClick={() => { agregar(p); setBusqueda(''); setResultados([]); setActivo(-1) }}
+                    className={`flex w-full items-center gap-3 border-b border-hairline px-3 py-3 text-left last:border-0 active:bg-surface-sunken ${marcado ? 'bg-industrial-600/10' : ''}`}
                   >
                     <span className={`size-2.5 shrink-0 rounded-full ${s.dotClassName}`} />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-semibold text-ink">{p.name}</span>
+                      <span className="block truncate font-semibold text-ink">
+                        <Resaltado texto={p.name} buscadas={busqueda} />
+                      </span>
                       <span className="block text-xs text-ink-muted">
-                        {p.sku} · stock {formatQuantity(p.stock, p.unitType)} {unitLabel(p.unitType)}
+                        <Resaltado texto={p.sku} buscadas={busqueda} /> · stock {formatQuantity(p.stock, p.unitType)} {unitLabel(p.unitType)}
                       </span>
                     </span>
                     <span className="shrink-0 font-bold text-ink">{money(p.salePrice)}</span>
@@ -779,6 +820,19 @@ export function PosTerminal({
       )}
       </div>
     </div>
+  )
+}
+
+/** Texto con la coincidencia de la búsqueda resaltada (sin importar tildes ni mayúsculas). */
+function Resaltado({ texto, buscadas }: { texto: string; buscadas: string }) {
+  const trozos = trocearResaltado(texto, buscadas.trim().split(/\s+/).filter(Boolean))
+  return (
+    <>
+      {trozos.map((t, i) =>
+        t.coincide
+          ? <mark key={i} className="rounded-sm bg-industrial-500/25 px-0 text-inherit">{t.texto}</mark>
+          : <span key={i}>{t.texto}</span>)}
+    </>
   )
 }
 
