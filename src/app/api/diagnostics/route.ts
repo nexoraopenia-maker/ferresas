@@ -74,6 +74,8 @@ export async function GET(req: NextRequest) {
     // Cifra las credenciales del PSE y los secretos del segundo factor. Solo presencia, nunca el valor.
     PSE_MASTER_KEY: { ...variable('PSE_MASTER_KEY'), validaComoClave: hayClaveMaestra() },
     PSE_MASTER_KEY_PREVIOUS: variable('PSE_MASTER_KEY_PREVIOUS'),
+    // Secreto con el que el programador externo dispara el worker de la cola fiscal.
+    FISCAL_WORKER_SECRET: variable('FISCAL_WORKER_SECRET'),
   }
 
   // Comprobación de la cadena de conexión SIN revelar credenciales: solo si

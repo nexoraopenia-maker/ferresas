@@ -19,7 +19,7 @@ export interface TenantTableRow extends BillingData {
   suspendedReason: string | null
   modoFiscal: ModoFiscal
   isDemo: boolean
-  envioFiscal: { sinEnviar: number; masAntiguoHoras: number | null; nivel: 'ok' | 'aviso' | 'critico'; avisoHoras: number; criticoHoras: number; avisoPropio: number | null; criticoPropio: number | null }
+  envioFiscal: { sinEnviar: number; agotados: number; masAntiguoHoras: number | null; nivel: 'ok' | 'aviso' | 'critico'; avisoHoras: number; criticoHoras: number; avisoPropio: number | null; criticoPropio: number | null }
   users: number
   products: number
   createdAt: string
@@ -211,6 +211,7 @@ export function TenantTable({
                       Facturación: {ETIQUETA_MODO[t.modoFiscal]}
                       {t.envioFiscal.sinEnviar > 0 && t.envioFiscal.masAntiguoHoras !== null &&
                         ` · ${t.envioFiscal.sinEnviar} sin enviar, el más antiguo ${describirAntiguedad(t.envioFiscal.masAntiguoHoras)}`}
+                      {t.envioFiscal.agotados > 0 && ` · ${t.envioFiscal.agotados} AGOTADO${t.envioFiscal.agotados === 1 ? '' : 'S'}`}
                     </p>
                   )}
                   {!t.isActive && t.suspendedReason && (

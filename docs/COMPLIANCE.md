@@ -272,3 +272,10 @@ Cada negocio está en uno de cuatro modos:
 **⚠️ Documentos del modelo anterior.** Un negocio que emitió documentos en serie real **antes** de que existiera el modo ensayo (números de una serie que SUNAT nunca vio, posiblemente entregados a clientes) **no se puede habilitar**: el sistema los cuenta y se detiene. Reubicarlos como pruebas no se hace solo; exige la revisión de un contador, un respaldo, un ensayo en staging con una copia representativa y la confirmación explícita del SuperAdmin. Esa migración de datos NO está implementada.
 
 El criterio para habilitar no es técnico: es haber validado el XML, los catálogos (§6) y la trama del QR en el sandbox del proveedor. Hasta entonces, ⚠️ nada de lo que emite FerreSaaS debe considerarse aceptado por SUNAT.
+
+
+## 9. Cola de envío: qué garantiza y qué no
+
+**Garantiza:** que ningún comprobante se envíe dos veces desde FerreSaaS aunque haya varios workers o ejecuciones solapadas; que un worker caído a mitad de un envío no deje la fila bloqueada; que nada se marque ACEPTADO sin una respuesta del proveedor; que un documento de prueba jamás llegue a un proveedor; y que un envío que se rinde (AGOTADO) sea visible para el dueño y el SuperAdmin.
+
+**No garantiza** (⚠️): que el proveedor no duplique un comprobante si ignora su clave de idempotencia (la clave se envía, pero que la respete es cosa suya y de su contrato), ni los **plazos** de SUNAT para enviar: los umbrales de la alarma (24 h / 72 h por defecto) no son plazos oficiales y los confirma el responsable fiscal. Tampoco hay todavía envío real: hasta que haya un PSE contratado la cola solo se ha probado contra proveedores simulados.

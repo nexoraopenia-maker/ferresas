@@ -82,6 +82,9 @@ const PUBLIC_PREFIXES = [
   // Vercel Cron invoca sin cookie. Se autentica con CRON_SECRET dentro del
   // propio handler, igual que los webhooks lo hacen con su firma HMAC.
   '/api/cron',
+  // Worker de la cola fiscal: lo dispara un programador EXTERNO sin cookie. Se autentica con un
+  // secreto compartido (comparado en tiempo constante) dentro del propio handler.
+  '/api/fiscal',
   '/legal',
 ]
 

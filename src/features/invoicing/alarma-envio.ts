@@ -45,6 +45,8 @@ export interface EstadoEnvioFiscal {
   modo: ModoFiscal
   pausado: boolean
   sinEnviar: number
+  /** Comprobantes cuya cola agotó los reintentos SIN respuesta del proveedor: requieren atención. */
+  agotados: number
   /** Horas que lleva el comprobante pendiente más antiguo; null si no hay. */
   masAntiguoHoras: number | null
   umbrales: Umbrales
@@ -59,6 +61,8 @@ export function nivelDeAlarma(i: {
   sinEnviar: number
   masAntiguoHoras: number | null
   umbrales: Umbrales
+  /** Filas AGOTADO: un envío que se rindió SIN respuesta del proveedor. */
+  agotados?: number
 }): { nivel: NivelAlarma; mostrar: boolean } {
   // En ensayo y en demo no hay nada que enviar: no hay alarma posible.
   if (i.modo === 'ENSAYO' || i.modo === 'DEMO') return { nivel: 'ok', mostrar: false }
@@ -68,6 +72,8 @@ export function nivelDeAlarma(i: {
     if (i.masAntiguoHoras >= i.umbrales.criticoHoras) nivel = 'critico'
     else if (i.masAntiguoHoras >= i.umbrales.avisoHoras) nivel = 'aviso'
   }
+  // Un envío AGOTADO ya no se reintenta solo: es siempre crítico, sin esperar a ningún umbral de horas.
+  if ((i.agotados ?? 0) > 0) nivel = 'critico'
   // Una pausa se ve SIEMPRE, aunque aún no haya nada pendiente: es un estado excepcional.
   if (i.modo === 'PAUSADO' && nivel === 'ok') nivel = 'aviso'
   return { nivel, mostrar: nivel !== 'ok' }
@@ -90,7 +96,7 @@ export async function estadoEnvioFiscal(db: TenantPrismaClient, ahora: Date = ne
   const modo = modoFiscal(t)
   const umbrales = umbralesEfectivos(t)
   if (modo === 'ENSAYO' || modo === 'DEMO') {
-    return { modo, pausado: false, sinEnviar: 0, masAntiguoHoras: null, umbrales, nivel: 'ok', mostrar: false }
+    return { modo, pausado: false, sinEnviar: 0, agotados: 0, masAntiguoHoras: null, umbrales, nivel: 'ok', mostrar: false }
   }
   // «Sin enviar» = PENDIENTE y real. Los documentos de prueba NUNCA cuentan.
   const agg = await db.taxDocument.aggregate({
@@ -99,6 +105,7 @@ export async function estadoEnvioFiscal(db: TenantPrismaClient, ahora: Date = ne
     _min: { issuedAt: true },
   })
   const sinEnviar = agg._count._all
+  const agotados = await db.fiscalDispatch.count({ where: { status: 'AGOTADO' } })
   const masAntiguoHoras = agg._min.issuedAt ? horasEntre(agg._min.issuedAt, ahora) : null
-  return { modo, pausado: modo === 'PAUSADO', sinEnviar, masAntiguoHoras, umbrales, ...nivelDeAlarma({ modo, sinEnviar, masAntiguoHoras, umbrales }) }
+  return { modo, pausado: modo === 'PAUSADO', sinEnviar, agotados, masAntiguoHoras, umbrales, ...nivelDeAlarma({ modo, sinEnviar, masAntiguoHoras, umbrales, agotados }) }
 }

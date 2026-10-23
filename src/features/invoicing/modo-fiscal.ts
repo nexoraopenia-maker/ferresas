@@ -50,3 +50,13 @@ export const ETIQUETA_MODO: Record<ModoFiscal, string> = {
   REAL: 'Real',
   PAUSADO: 'Real (envío en pausa)',
 }
+
+/**
+ * Por qué un modo NO puede enviar, o null si puede. Un solo texto para el envío directo, el manual y
+ * la cola: así el mensaje que ve la persona es el mismo vengas por donde vengas.
+ */
+export function bloqueoDeEnvio(modo: ModoFiscal): string | null {
+  if (modo === 'ENSAYO') return 'La facturación electrónica real todavía no está habilitada para tu negocio. El comprobante queda pendiente de envío.'
+  if (modo === 'PAUSADO') return 'Los envíos a tu proveedor de facturación están en pausa. El comprobante queda pendiente y se enviará al reanudar.'
+  return null
+}

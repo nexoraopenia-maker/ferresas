@@ -5,7 +5,7 @@ import { requireTenantContext } from '@/lib/session'
 import { checkSameOrigin } from '@/lib/csrf'
 import { checkRateLimit, clientIp } from '@/lib/rate-limit'
 import { isBusinessError } from '@/lib/errors'
-import { enviarComprobante, refrescarEstado } from '@/features/invoicing/envio'
+import { enviarManual } from '@/features/cola-fiscal/manual'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,10 +35,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const db = getTenantPrisma(ctx)
-    const doc = await db.taxDocument.findFirst({ where: { id: parsed.data.taxDocumentId }, select: { status: true } })
-    const r = doc?.status === 'ENVIADO'
-      ? await refrescarEstado(db, ctx, parsed.data.taxDocumentId)
-      : await enviarComprobante(db, ctx, parsed.data.taxDocumentId)
+    // Por la cola, igual que el worker: un clic y el worker nunca envían el mismo comprobante dos veces.
+    const r = await enviarManual(db, ctx, parsed.data.taxDocumentId)
     return NextResponse.json(r, { status: 200 })
   } catch (e) {
     if (isBusinessError(e)) {

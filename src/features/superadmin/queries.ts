@@ -51,7 +51,7 @@ export interface TenantRow {
   modoFiscal: ModoFiscal
   isDemo: boolean
   /** Alarma de comprobantes sin enviar (solo con facturación real habilitada). */
-  envioFiscal: { sinEnviar: number; masAntiguoHoras: number | null; nivel: NivelAlarma; avisoHoras: number; criticoHoras: number; avisoPropio: number | null; criticoPropio: number | null }
+  envioFiscal: { sinEnviar: number; agotados: number; masAntiguoHoras: number | null; nivel: NivelAlarma; avisoHoras: number; criticoHoras: number; avisoPropio: number | null; criticoPropio: number | null }
   users: number
   products: number
   createdAt: Date
@@ -65,14 +65,16 @@ export interface SuperAdminDashboard {
 function envioDe(
   t: { isDemo: boolean; realBillingEnabledAt: Date | null; realBillingPausedAt: Date | null; fiscalAlertWarnHours: number | null; fiscalAlertCriticalHours: number | null },
   p: { n: number; desde: Date | null } | undefined,
+  agotados: number,
   ahora: Date,
 ): TenantRow['envioFiscal'] {
   const modo = modoFiscal(t)
   const umbrales = umbralesEfectivos(t)
   const sinEnviar = modo === 'REAL' || modo === 'PAUSADO' ? (p?.n ?? 0) : 0
   const masAntiguoHoras = sinEnviar > 0 && p?.desde ? horasEntre(p.desde, ahora) : null
+  const ag = modo === 'REAL' || modo === 'PAUSADO' ? agotados : 0
   return {
-    sinEnviar, masAntiguoHoras, nivel: nivelDeAlarma({ modo, sinEnviar, masAntiguoHoras, umbrales }).nivel,
+    sinEnviar, agotados: ag, masAntiguoHoras, nivel: nivelDeAlarma({ modo, sinEnviar, masAntiguoHoras, umbrales, agotados: ag }).nivel,
     avisoHoras: umbrales.avisoHoras, criticoHoras: umbrales.criticoHoras,
     avisoPropio: t.fiscalAlertWarnHours, criticoPropio: t.fiscalAlertCriticalHours,
   }
@@ -86,6 +88,8 @@ export async function getSuperAdminDashboard(
     by: ['tenantId'], where: { isTrial: false, status: 'PENDIENTE' }, _count: { _all: true }, _min: { issuedAt: true },
   })
   const pendientes = new Map(sinEnviarPorNegocio.map((g) => [g.tenantId, { n: g._count._all, desde: g._min.issuedAt }]))
+  // Envíos que agotaron la cola, por negocio.
+  const agotadosPorNegocio = new Map((await prisma.fiscalDispatch.groupBy({ by: ['tenantId'], where: { status: 'AGOTADO' }, _count: { _all: true } })).map((g) => [g.tenantId, g._count._all]))
 
   const tenants = await prisma.tenant.findMany({
     where: { deletedAt: null },
@@ -189,7 +193,7 @@ export async function getSuperAdminDashboard(
         suspendedReason: tenant.suspendedReason,
         modoFiscal: modoFiscal(tenant),
         isDemo: tenant.isDemo,
-        envioFiscal: envioDe(tenant, pendientes.get(tenant.id), now),
+        envioFiscal: envioDe(tenant, pendientes.get(tenant.id), agotadosPorNegocio.get(tenant.id) ?? 0, now),
         users: tenant._count.users,
         products: tenant._count.products,
         createdAt: tenant.createdAt,

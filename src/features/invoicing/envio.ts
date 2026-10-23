@@ -1,4 +1,4 @@
-import type { TaxDocumentStatus } from '@/generated/prisma/enums'
+import type { Role, TaxDocumentStatus } from '@/generated/prisma/enums'
 import { redondearCentimos } from '@/lib/dinero'
 import { validarRuc } from '@/lib/documentos'
 import { BusinessError } from '@/lib/errors'
@@ -14,7 +14,7 @@ import type {
   ComprobanteFiscal, CredencialesProveedor, LineaFiscal, ProveedorFacturacion,
 } from './providers/types'
 import { construirXmlUbl } from './ubl'
-import { modoFiscal } from './modo-fiscal'
+import { bloqueoDeEnvio, modoFiscal } from './modo-fiscal'
 
 /**
  * Envío de un comprobante al proveedor de facturación (PSE/OSE).
@@ -41,6 +41,19 @@ export interface ResultadoEnvio {
   reintentable: boolean
   mensaje: string | null
   codigoRespuesta: string | null
+}
+
+/**
+ * Quién envía. Un usuario (con permiso, ver `enviarComprobante`) o el SISTEMA (la cola): en ese caso
+ * `id` y `role` son null, porque el worker no es ninguna persona y el AuditLog no puede apuntar a un
+ * usuario que no existe.
+ */
+export interface ActorEnvio {
+  tenantId: string
+  id: string | null
+  role: Role | null
+  impersonationId?: string | null
+  origen?: 'usuario' | 'cola'
 }
 
 export interface DependenciasEnvio {
@@ -167,18 +180,8 @@ async function elegirProveedor(
   // Interruptor «facturación real»: apagado (por defecto), NADA sale hacia un proveedor,
   // ni siquiera con credenciales cargadas. Lo enciende un SuperAdmin tras validar el sandbox.
   const modo = modoFiscal(t)
-  if (modo === 'ENSAYO') {
-    throw new BusinessError(
-      'INVALID_DOCUMENT',
-      'La facturación electrónica real todavía no está habilitada para tu negocio. El comprobante queda pendiente de envío.',
-    )
-  }
-  if (modo === 'PAUSADO') {
-    throw new BusinessError(
-      'INVALID_DOCUMENT',
-      'Los envíos a tu proveedor de facturación están en pausa. El comprobante queda pendiente y se enviará al reanudar.',
-    )
-  }
+  const bloqueo = bloqueoDeEnvio(modo)
+  if (bloqueo) throw new BusinessError('INVALID_DOCUMENT', bloqueo)
 
   // Inyectado (solo pruebas): el proveedor y las credenciales vienen de fuera.
   if (deps.proveedor) {
@@ -205,13 +208,12 @@ function comoError(e: unknown): never {
   throw e
 }
 
-export async function enviarComprobante(
+export async function enviarInterno(
   db: TenantPrismaClient,
-  ctx: TenantContext,
+  actor: ActorEnvio,
   taxDocumentId: string,
   deps: DependenciasEnvio = {},
 ): Promise<ResultadoEnvio> {
-  exigir(ctx, 'comprobantes.emitir')
   const ahora = deps.ahora ?? new Date()
 
   const { comprobante, doc } = await cargarComprobanteFiscal(db, taxDocumentId)
@@ -234,7 +236,7 @@ export async function enviarComprobante(
   // Si los totales no cuadran, se corta AQUÍ y nada sale del sistema.
   construirXmlUbl(comprobante)
 
-  const { proveedor, credenciales } = await elegirProveedor(db, ctx.tenantId, deps)
+  const { proveedor, credenciales } = await elegirProveedor(db, actor.tenantId, deps)
   const r = await proveedor.emitir(comprobante, credenciales).catch(comoError)
 
   // Fallo transitorio: no cambia el estado. Reintentar es seguro porque el
@@ -264,11 +266,11 @@ export async function enviarComprobante(
     if (cambio.count === 1) {
       await t.auditLog.create({
         data: {
-          tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role,
+          tenantId: actor.tenantId, actorId: actor.id, actorRole: actor.role,
           action: 'comprobante.enviar', entityType: 'TaxDocument', entityId: doc.id,
           before: { status: 'PENDIENTE' },
-          after: { status: r.estado, proveedor: proveedor.nombre, codigo: r.codigoRespuesta },
-          impersonationId: ctx.impersonationId ?? null,
+          after: { status: r.estado, proveedor: proveedor.nombre, codigo: r.codigoRespuesta, origen: actor.origen ?? 'usuario' },
+          impersonationId: actor.impersonationId ?? null,
         },
       })
     }
@@ -278,13 +280,12 @@ export async function enviarComprobante(
 }
 
 /** Para un comprobante ENVIADO que espera respuesta (proveedores asíncronos). */
-export async function refrescarEstado(
+export async function consultarInterno(
   db: TenantPrismaClient,
-  ctx: TenantContext,
+  actor: ActorEnvio,
   taxDocumentId: string,
   deps: DependenciasEnvio = {},
 ): Promise<ResultadoEnvio> {
-  exigir(ctx, 'comprobantes.emitir')
   const ahora = deps.ahora ?? new Date()
 
   const doc = await db.taxDocument.findFirst({
@@ -297,7 +298,7 @@ export async function refrescarEstado(
     return { estado: doc.status, reintentable: false, mensaje: null, codigoRespuesta: null }
   }
 
-  const { proveedor, credenciales } = await elegirProveedor(db, ctx.tenantId, deps)
+  const { proveedor, credenciales } = await elegirProveedor(db, actor.tenantId, deps)
   const e = await proveedor.consultarEstado(
     { idExterno: doc.externalId, ticket: doc.externalTicket, serie: doc.series, correlativo: doc.correlativo },
     credenciales,
@@ -322,13 +323,34 @@ export async function refrescarEstado(
     if (cambio.count === 1) {
       await t.auditLog.create({
         data: {
-          tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role,
+          tenantId: actor.tenantId, actorId: actor.id, actorRole: actor.role,
           action: 'comprobante.respuesta', entityType: 'TaxDocument', entityId: doc.id,
           before: { status: 'ENVIADO' }, after: { status: e.estado, codigo: e.codigoRespuesta },
-          impersonationId: ctx.impersonationId ?? null,
+          impersonationId: actor.impersonationId ?? null,
         },
       })
     }
   })
   return { estado: e.estado, reintentable: false, mensaje: e.mensaje, codigoRespuesta: e.codigoRespuesta }
+}
+
+
+const actorDe = (ctx: TenantContext): ActorEnvio => ({
+  tenantId: ctx.tenantId, id: ctx.userId, role: ctx.role, impersonationId: ctx.impersonationId ?? null, origen: 'usuario',
+})
+
+/** Envío pedido por una PERSONA: exige el permiso. El worker usa `enviarInterno`, que no lo necesita. */
+export async function enviarComprobante(
+  db: TenantPrismaClient, ctx: TenantContext, taxDocumentId: string, deps: DependenciasEnvio = {},
+): Promise<ResultadoEnvio> {
+  exigir(ctx, 'comprobantes.emitir')
+  return enviarInterno(db, actorDe(ctx), taxDocumentId, deps)
+}
+
+/** Consulta de estado pedida por una persona. */
+export async function refrescarEstado(
+  db: TenantPrismaClient, ctx: TenantContext, taxDocumentId: string, deps: DependenciasEnvio = {},
+): Promise<ResultadoEnvio> {
+  exigir(ctx, 'comprobantes.emitir')
+  return consultarInterno(db, actorDe(ctx), taxDocumentId, deps)
 }

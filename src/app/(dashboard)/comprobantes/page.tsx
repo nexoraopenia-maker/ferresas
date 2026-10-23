@@ -30,6 +30,7 @@ export default async function ComprobantesPage() {
         currency: true, subtotal: true, taxTotal: true, total: true,
         issuedAt: true,
         saleId: true, isTrial: true,
+        dispatch: { select: { status: true, attempts: true, nextAttemptAt: true, lastError: true } },
         sale: { select: { number: true } },
       },
       // Una sentencia en vez de dos: ver la nota en src/lib/session.ts.
@@ -118,6 +119,7 @@ export default async function ComprobantesPage() {
           saleNumber: d.sale.number,
           saleId: d.saleId,
           isTrial: d.isTrial,
+          cola: d.dispatch ? { estado: d.dispatch.status, intentos: d.dispatch.attempts, proximo: d.dispatch.nextAttemptAt.toISOString(), error: d.dispatch.lastError } : null,
         }))}
       />
     </main>

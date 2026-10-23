@@ -51,6 +51,7 @@ const BASE: Record<string, string> = {
   'src/app/api/diagnostics/route.ts': 'estado del sistema, protegido por CRON_SECRET; sin datos de negocios',
   'src/app/api/diagnostics/perf/route.ts': 'mediciones de rendimiento, protegido por CRON_SECRET',
   'src/features/ubigeo/service.ts': 'catálogo de ubigeo: tabla GLOBAL, sin tenantId, de solo lectura',
+  'src/features/cola-fiscal/repositorio.ts': 'cola de envío fiscal: el worker reclama filas ENTRE negocios (FOR UPDATE SKIP LOCKED); cada fila se procesa luego con el cliente acotado a su negocio',
 }
 
 /** Archivos que usan SQL directo (`$queryRaw`, `$executeRaw`...): se saltan TODA la extensión. */
@@ -59,6 +60,7 @@ const RAW: Record<string, string> = {
   'src/app/api/diagnostics/route.ts': 'lee _prisma_migrations y cuenta filas de diagnóstico',
   'src/app/api/diagnostics/perf/route.ts': 'mide latencias con SELECT 1',
   'src/features/seguridad/mfa-service.ts': 'array_remove atómico: consumir un código de recuperación una sola vez',
+  'src/features/cola-fiscal/repositorio.ts': 'reclamo atómico con lease (FOR UPDATE SKIP LOCKED), recuperación de filas vencidas y adopción de huérfanos: no se pueden expresar con el cliente de Prisma',
 }
 
 let pass = 0, fail = 0
@@ -110,6 +112,12 @@ function main() {
   const rawObsoletos = Object.keys(RAW).filter((r) => !usanRaw.includes(r))
   check('la lista de SQL directo no está podrida', rawObsoletos.length === 0, rawObsoletos.join(', '))
   check('todo SQL directo está además en la lista del cliente base (necesita el cliente base)', usanRaw.every((r) => r in BASE))
+
+  console.log('\n2b) El SQL directo de la cola vive en UN solo archivo')
+  const colaConBase = usanBase.filter((r) => r.startsWith('src/features/cola-fiscal/') && r !== 'src/features/cola-fiscal/repositorio.ts')
+  const colaConRaw = usanRaw.filter((r) => r.startsWith('src/features/cola-fiscal/') && r !== 'src/features/cola-fiscal/repositorio.ts')
+  check('>>> en cola-fiscal solo `repositorio.ts` usa el cliente base y SQL directo: el resto (procesar, worker, manual) trabaja con el cliente acotado al negocio de cada fila',
+    colaConBase.length === 0 && colaConRaw.length === 0, [...colaConBase, ...colaConRaw].join(', '))
 
   console.log('\n3) Zonas que NUNCA deben tocar el cliente base')
   const prohibidos = usanBase.filter((r) =>

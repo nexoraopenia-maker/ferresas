@@ -6,6 +6,7 @@ import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { claimNextNumber, ensureCounter } from '@/features/pos/sale-service'
 import { exigirRequisitosFiscales } from './requisitos-fiscales'
 import { modoFiscal, numeraEnPrueba } from './modo-fiscal'
+import { encolarComprobante, seEncola } from '@/features/cola-fiscal/encolar'
 import { cargarSucursalOperativa, serieDe } from '@/features/branches/queries'
 import { scopeTributario } from '@/features/branches/series'
 import {
@@ -70,7 +71,8 @@ export async function issueTaxDocument(
   const estado = await db.tenant.findFirstOrThrow({
     select: { isDemo: true, realBillingEnabledAt: true, realBillingPausedAt: true },
   })
-  const prueba = numeraEnPrueba(modoFiscal(estado))
+  const modo = modoFiscal(estado)
+  const prueba = numeraEnPrueba(modo)
   const scope = scopeTributario(input.documentType, prueba)
 
   const sale = await db.sale.findFirst({
@@ -235,6 +237,10 @@ export async function issueTaxDocument(
         data: { documentType: input.documentType },
       })
 
+      // Cola de envío (outbox): el comprobante REAL y su fila nacen en la misma transacción. Un documento
+      // de prueba no se encola nunca; la demo envía por su propio camino.
+      if (seEncola({ isTrial: prueba }, modo)) await encolarComprobante(t, ctx.tenantId, doc.id)
+
       await t.auditLog.create({
         data: {
           tenantId: ctx.tenantId,
@@ -246,7 +252,7 @@ export async function issueTaxDocument(
           after: {
             comprobante: fullNumber,
             tipo: input.documentType,
-            modo: prueba ? 'ENSAYO' : 'REAL_O_DEMO',
+            modo,
             venta: sale.number,
             total: num(sale.total),
           },

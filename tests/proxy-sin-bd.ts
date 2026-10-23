@@ -183,7 +183,7 @@ async function main() {
 
   // Rutas de API: cada una se autentica por su vía (sesión, HMAC o CRON_SECRET).
   const AUTENTICADORES = [
-    ...VERIFICADORES, 'resolveTenantContext', 'timingSafeEqual', 'auth',
+    ...VERIFICADORES, 'resolveTenantContext', 'timingSafeEqual', 'secretosIguales', 'auth',
     // Firmas HMAC de las pasarelas: un webhook llega sin cookie, así que su
     // autenticación NO puede ser la sesión.
     'verifyStripeSignature', 'verifyMercadoPagoSignature',

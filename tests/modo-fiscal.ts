@@ -214,10 +214,14 @@ async function main() {
     console.log('\n12) ESTRUCTURA')
     const proj = proyecto()
     const envio = abrir(proj, 'src/features/invoicing/envio.ts')
-    const fn = envio.getFunction('enviarComprobante')!
-    const t = fn.getText()
-    check('>>> enviarComprobante rechaza el documento de prueba ANTES de elegir proveedor', t.indexOf('doc.isTrial') !== -1 && t.indexOf('doc.isTrial') < t.indexOf('elegirProveedor('))
-    check('refrescarEstado también lo comprueba', envio.getFunction('refrescarEstado')!.getText().includes('doc.isTrial'))
+    const interno = envio.getFunction('enviarInterno')!.getText()
+    check('>>> enviarInterno rechaza el documento de prueba ANTES de elegir proveedor', interno.indexOf('doc.isTrial') !== -1 && interno.indexOf('doc.isTrial') < interno.indexOf('elegirProveedor('))
+    check('consultarInterno también lo comprueba', envio.getFunction('consultarInterno')!.getText().includes('doc.isTrial'))
+    check('>>> los envoltorios con permisos (enviarComprobante, refrescarEstado) DELEGAN en los internos: no hay otro camino hacia el proveedor',
+      envio.getFunction('enviarComprobante')!.getText().includes('enviarInterno(') && envio.getFunction('refrescarEstado')!.getText().includes('consultarInterno('))
+    check('>>> y el proveedor solo se invoca desde los internos (`proveedor.emitir` / `consultarEstado`)',
+      envio.getDescendantsOfKind(SyntaxKind.CallExpression).filter((c) => /proveedor\.(emitir|consultarEstado)$/.test(c.getExpression().getText()))
+        .every((c) => ['enviarInterno', 'consultarInterno'].includes(c.getFirstAncestorByKind(SyntaxKind.FunctionDeclaration)?.getName() ?? '')))
     const sinFiltro: string[] = []
     const PERMITIDOS = new Set(['src/features/invoicing/counter-service.ts', 'src/app/api/diagnostics/perf/route.ts'])
     for (const f of ficheros(join(RAIZ, 'src'), (p) => /\.(ts|tsx)$/.test(p))) {

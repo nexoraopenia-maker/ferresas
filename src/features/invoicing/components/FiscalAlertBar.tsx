@@ -12,7 +12,9 @@ const TONOS = {
  */
 export function FiscalAlertBar({ estado }: { estado: EstadoEnvioFiscal }) {
   if (!estado.mostrar || estado.nivel === 'ok') return null
-  const titulo = estado.pausado
+  const titulo = estado.agotados > 0
+    ? 'Hay comprobantes que no se pudieron enviar a SUNAT'
+    : estado.pausado
     ? 'El envío de comprobantes a SUNAT está en pausa'
     : estado.nivel === 'critico'
       ? 'Comprobantes sin enviar a SUNAT: atención urgente'
@@ -22,8 +24,11 @@ export function FiscalAlertBar({ estado }: { estado: EstadoEnvioFiscal }) {
       <div className="min-w-0">
         <p className="text-sm font-bold">{titulo}</p>
         <p className="text-sm">
+          {estado.agotados > 0 && (
+            <><b>{estado.agotados}</b> {estado.agotados === 1 ? 'comprobante agotó' : 'comprobantes agotaron'} sus reintentos SIN respuesta del proveedor y ya no se reintentan solos: hay que revisarlos y reintentar a mano. </>
+          )}
           {estado.sinEnviar === 0
-            ? 'No hay comprobantes pendientes ahora.'
+            ? (estado.agotados > 0 ? '' : 'No hay comprobantes pendientes ahora.')
             : <>
                 <b>{estado.sinEnviar}</b> {estado.sinEnviar === 1 ? 'comprobante sin enviar' : 'comprobantes sin enviar'}
                 {estado.masAntiguoHoras !== null && <>; el más antiguo lleva <b>{describirAntiguedad(estado.masAntiguoHoras)}</b></>}

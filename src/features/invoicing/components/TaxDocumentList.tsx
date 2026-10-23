@@ -23,6 +23,8 @@ export interface TaxDocRow {
   saleId: string
   /** Documento de PRUEBA: serie PB001/PF001, sin valor tributario; no se envía ni cambia de estado. */
   isTrial: boolean
+  /** Estado de su fila en la cola de envío (null si no está en cola). */
+  cola: { estado: string; intentos: number; proximo: string; error: string | null } | null
 }
 
 const ESTADO: Record<string, { texto: string; cls: string }> = {
@@ -179,6 +181,17 @@ export function TaxDocumentList({
                       <span className={`rounded-full px-2 py-1 text-xs font-bold ${e.cls}`}>
                         {e.texto}
                       </span>
+                      {!d.isTrial && d.cola && d.cola.estado !== 'COMPLETADO' && (
+                        <p className={`mt-1 max-w-[16rem] text-xs font-semibold ${d.cola.estado === 'AGOTADO' ? 'text-stock-out' : 'text-ink-muted'}`}>
+                          {d.cola.estado === 'AGOTADO'
+                            ? 'Se agotaron los reintentos: el proveedor no respondió. Reintenta a mano.'
+                            : d.cola.estado === 'EN_CURSO'
+                              ? 'Enviándose…'
+                              : d.cola.intentos > 0
+                                ? `En cola · ${d.cola.intentos} intento(s) fallido(s) · reintenta ${formatearFechaLocal(d.cola.proximo, zonaHoraria)}`
+                                : 'En cola de envío'}
+                        </p>
+                      )}
                       {d.statusMessage && (
                         <p className="mt-1 max-w-[16rem] text-xs text-ink-muted">{d.statusMessage}</p>
                       )}
@@ -202,7 +215,7 @@ export function TaxDocumentList({
                           type="button" disabled={pendiente} onClick={() => enviar(d.id)}
                           className="ml-2 h-touch rounded-lg bg-industrial-600 px-3 text-sm font-bold text-white disabled:opacity-50"
                         >
-                          {d.status === 'ENVIADO' ? 'Consultar' : 'Enviar'}
+                          {d.status === 'ENVIADO' ? 'Consultar' : d.cola?.estado === 'AGOTADO' ? 'Reintentar' : 'Enviar'}
                         </button>
                       )}
                     </td>
