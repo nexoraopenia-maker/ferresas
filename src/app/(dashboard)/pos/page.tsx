@@ -38,7 +38,7 @@ export default async function PosPage({
   ])
 
   return (
-    <main className="mx-auto flex max-w-lg flex-col gap-4 p-4">
+    <main className="mx-auto flex max-w-lg flex-col gap-4 p-4 lg:max-w-7xl lg:px-6">
       <header>
         <h1 className="text-2xl font-bold text-ink">Punto de venta</h1>
         <p className="text-sm text-ink-muted">

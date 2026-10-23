@@ -437,7 +437,7 @@ export function PosTerminal({
      * taparía las últimas líneas del carrito sin ese hueco. En escritorio
      * vive en su columna y no tapa nada.
      */
-    <div className="flex flex-col gap-5 pb-[23rem] lg:grid lg:grid-cols-[minmax(0,1fr)_27rem] lg:items-start lg:gap-8 lg:pb-0">
+    <div className="flex flex-col gap-5 pb-[23rem] lg:grid lg:grid-cols-[minmax(0,1fr)_24rem] lg:items-start lg:gap-6 lg:pb-0 xl:grid-cols-[minmax(0,1fr)_27rem] xl:gap-8">
       {/* Avisos a ANCHO COMPLETO sobre las dos columnas.
           Sin `col-span-2` cada uno ocuparía una celda de la rejilla y
           desplazaría el carrito a una tercera fila. */}
@@ -550,8 +550,8 @@ export function PosTerminal({
             <svg aria-hidden viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M4 12h16" />
             </svg>
-            <span className="hidden sm:inline">Escanear</span>
-            <span className="hidden text-sm font-normal opacity-75 lg:inline">(F4)</span>
+            <span className="hidden sm:inline lg:hidden xl:inline">Escanear</span>
+            <span className="hidden text-sm font-normal opacity-75 xl:inline">(F4)</span>
           </button>
         </div>
 
@@ -808,14 +808,14 @@ export function PosTerminal({
 
             </>)}
 
-            <div className="mt-3 flex gap-3">
+            <div className="mt-3 flex gap-3 lg:flex-wrap">
               {!pedido && puedeArmarPedido && (
                 <button
                   type="button"
                   onClick={enviarACaja}
                   disabled={pendiente || carrito.some((l) => l.quantity <= 0)}
                   className={`h-16 rounded-2xl text-base font-bold transition active:scale-95 disabled:opacity-40 ${
-                    puedeCobrar ? 'shrink-0 border border-graphite-900 px-4 text-ink dark:border-graphite-50' : 'min-w-0 flex-1 bg-industrial-600 text-lg text-white'
+                    puedeCobrar ? 'shrink-0 border-2 border-graphite-900 px-4 text-ink lg:flex-1 lg:shrink dark:border-graphite-50' : 'min-w-0 flex-1 bg-industrial-600 text-lg text-white'
                   }`}
                 >
                   {pendiente && !puedeCobrar ? 'Enviando…' : 'Enviar a caja'}
@@ -825,7 +825,7 @@ export function PosTerminal({
                 type="button"
                 onClick={cotizar}
                 disabled={pendiente || carrito.some((l) => l.quantity <= 0)}
-                className="h-16 shrink-0 rounded-2xl border-2 border-graphite-900 px-5 text-base font-bold text-ink transition active:scale-95 disabled:opacity-40 dark:border-graphite-50"
+                className="h-16 shrink-0 rounded-2xl border-2 border-graphite-900 px-5 text-base font-bold text-ink transition active:scale-95 disabled:opacity-40 lg:flex-1 lg:shrink dark:border-graphite-50"
               >
                 Cotizar
                 <span className="hidden text-xs font-normal opacity-70 lg:block">Ctrl+G</span>
@@ -834,7 +834,7 @@ export function PosTerminal({
                 type="button"
                 onClick={cobrar}
                 disabled={pendiente || carrito.some((l) => l.quantity <= 0)}
-                className="h-16 min-w-0 flex-1 rounded-2xl bg-industrial-600 text-xl font-bold text-white shadow-md transition active:scale-95 disabled:opacity-40"
+                className="h-16 min-w-0 flex-1 rounded-2xl bg-industrial-600 text-xl font-bold text-white shadow-md transition active:scale-95 disabled:opacity-40 lg:order-first lg:basis-full"
               >
                 {pendiente ? 'Registrando…' : `Cobrar ${money(totales.total)}`}
                 <span className="hidden text-xs font-normal opacity-75 lg:block">F9</span>
