@@ -14,12 +14,13 @@ import { SUPPORT_COOKIE, emitirSupportToken, verificarSupportToken } from '@/lib
 import {
   reactivateTenantSchema,
   facturacionRealSchema,
+  umbralesAlertaSchema,
   resetOwnerPasswordSchema,
   startImpersonationSchema,
   suspendTenantSchema,
   updateTenantProfileSchema,
 } from './schemas'
-import { cambiarFacturacionReal } from './facturacion-real-service'
+import { cambiarFacturacionReal, fijarUmbralesAlerta } from './facturacion-real-service'
 import {
   resetOwnerPassword as runResetPassword,
   updateTenantProfile as runUpdateProfile,
@@ -414,7 +415,7 @@ export async function updateTenantProfileAction(
 
 
 /** Enciende o apaga la facturación electrónica real de un negocio (solo SuperAdmin). */
-export async function setFacturacionRealAction(raw: unknown): Promise<ActionResult<{ habilitada: boolean }>> {
+export async function setFacturacionRealAction(raw: unknown): Promise<ActionResult<{ modo: string }>> {
   const parsed = facturacionRealSchema.safeParse(raw)
   if (!parsed.success) {
     return { ok: false, code: 'VALIDATION', message: parsed.error.issues[0]?.message ?? 'Revisa los datos.', details: z.flattenError(parsed.error).fieldErrors }
@@ -422,12 +423,29 @@ export async function setFacturacionRealAction(raw: unknown): Promise<ActionResu
   try {
     const admin = await requireSuperAdmin()
     const r = await cambiarFacturacionReal(
-      { tenantId: parsed.data.tenantId, habilitar: parsed.data.enabled, reason: parsed.data.reason },
+      { tenantId: parsed.data.tenantId, accion: parsed.data.accion, reason: parsed.data.reason },
       { id: admin.id, email: admin.email },
     )
     revalidatePath(ROUTES.superadmin)
     return { ok: true, data: r }
   } catch (e) {
     return fallo(e, 'setFacturacionRealAction')
+  }
+}
+
+
+/** Fija los umbrales de alerta de envío fiscal de un negocio (solo SuperAdmin). */
+export async function setUmbralesAlertaAction(raw: unknown): Promise<ActionResult<null>> {
+  const parsed = umbralesAlertaSchema.safeParse(raw)
+  if (!parsed.success) {
+    return { ok: false, code: 'VALIDATION', message: parsed.error.issues[0]?.message ?? 'Revisa los datos.', details: z.flattenError(parsed.error).fieldErrors }
+  }
+  try {
+    const admin = await requireSuperAdmin()
+    await fijarUmbralesAlerta(parsed.data, { id: admin.id, email: admin.email })
+    revalidatePath(ROUTES.superadmin)
+    return { ok: true, data: null }
+  } catch (e) {
+    return fallo(e, 'setUmbralesAlertaAction')
   }
 }

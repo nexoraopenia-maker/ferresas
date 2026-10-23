@@ -34,6 +34,9 @@ export async function crearSucursal(
       establishmentCode: opts.establishmentCode ?? '0000',
       seriesNumber: opts.seriesNumber ?? 1,
       isDefault: opts.isDefault ?? true,
+      // Completa por defecto: con la facturación real habilitada la sucursal necesita dirección y ubigeo.
+      address: 'Av. Prueba 123, Lima',
+      ubigeo: '150101',
     },
   })
 }

@@ -127,6 +127,11 @@ const AVISO_NO_FISCAL =
   'Este documento no es un comprobante de pago válido para efectos ' +
   'tributarios. Solicite su boleta o factura.'
 
+/** Pie de un documento de PRUEBA. No menciona «electrónico» ni SUNAT como si fuera uno. */
+export const AVISO_PRUEBA =
+  'DOCUMENTO DE PRUEBA, SIN VALOR TRIBUTARIO. No es una boleta ni una factura. ' +
+  'Solicite su comprobante de pago.'
+
 /**
  * Desglose de operaciones gravadas y exoneradas a partir de las líneas.
  *
@@ -288,7 +293,7 @@ async function comprobante(db: TenantPrismaClient, id: string, emisor: Emisor, r
     where: { id },
     select: {
       documentType: true, fullNumber: true, status: true, statusMessage: true,
-      series: true, correlativo: true, xmlHash: true,
+      series: true, correlativo: true, xmlHash: true, isTrial: true,
       issuerTaxId: true, issuerLegalName: true,
       receiverDocType: true, receiverDocNumber: true, receiverName: true, receiverAddress: true,
       currency: true, subtotal: true, taxTotal: true, discountTotal: true, total: true,
@@ -313,7 +318,7 @@ async function comprobante(db: TenantPrismaClient, id: string, emisor: Emisor, r
   const total = num(doc.total)
   const { tasaIgv } = desglosar(lineas)
 
-  return {
+  const real = {
     ...reloj,
     tipo: 'comprobante' as const,
     titulo: TITULO[doc.documentType] ?? doc.documentType,
@@ -360,6 +365,21 @@ async function comprobante(db: TenantPrismaClient, id: string, emisor: Emisor, r
     motivoAnulacion: doc.voidReason,
     avisoNoFiscal: null,
     marcaAgua: doc.voidedAt ? 'ANULADO' : null,
+  }
+
+  // Documento de PRUEBA (negocio que aún no habilitó la facturación real): NO debe parecerse a un
+  // comprobante electrónico. Sin el pie «representación impresa del comprobante electrónico», sin QR,
+  // sin «validación por SUNAT», con otro título y una marca de agua. Se imprime como documento interno.
+  if (!doc.isTrial) return real
+  return {
+    ...real,
+    tipo: 'venta' as const,
+    titulo: 'DOCUMENTO DE PRUEBA',
+    estadoTributario: null,
+    hashXml: null,
+    qr: null,
+    avisoNoFiscal: AVISO_PRUEBA,
+    marcaAgua: doc.voidedAt ? 'ANULADO' : 'PRUEBA',
   }
 }
 

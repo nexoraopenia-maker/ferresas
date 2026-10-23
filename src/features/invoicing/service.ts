@@ -5,6 +5,7 @@ import { type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { claimNextNumber, ensureCounter } from '@/features/pos/sale-service'
 import { exigirRequisitosFiscales } from './requisitos-fiscales'
+import { modoFiscal, numeraEnPrueba } from './modo-fiscal'
 import { cargarSucursalOperativa, serieDe } from '@/features/branches/queries'
 import { scopeTributario } from '@/features/branches/series'
 import {
@@ -24,6 +25,8 @@ export interface IssuedDocument {
   fullNumber: string
   status: string
   total: number
+  /** Documento de PRUEBA (negocio en modo ensayo): serie PB001/PF001, sin valor tributario, nunca se envía. */
+  isTrial: boolean
   /** Ya estaba emitido: se devuelve el existente en vez de duplicar. */
   alreadyIssued: boolean
 }
@@ -62,7 +65,13 @@ export async function issueTaxDocument(
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para emitir comprobantes.')
   }
 
-  const scope = scopeTributario(input.documentType)
+  // El modo fiscal decide la SERIE: un negocio que aún no habilitó la facturación real emite en
+  // una serie de prueba y deja intacta la real (ver modo-fiscal.ts).
+  const estado = await db.tenant.findFirstOrThrow({
+    select: { isDemo: true, realBillingEnabledAt: true, realBillingPausedAt: true },
+  })
+  const prueba = numeraEnPrueba(modoFiscal(estado))
+  const scope = scopeTributario(input.documentType, prueba)
 
   const sale = await db.sale.findFirst({
     where: { id: input.saleId },
@@ -81,7 +90,7 @@ export async function issueTaxDocument(
       },
       taxDocument: {
         select: {
-          id: true, documentType: true, series: true,
+          id: true, documentType: true, series: true, isTrial: true,
           correlativo: true, fullNumber: true, status: true, total: true,
         },
       },
@@ -104,6 +113,7 @@ export async function issueTaxDocument(
       fullNumber: d.fullNumber,
       status: d.status,
       total: num(d.total),
+      isTrial: d.isTrial,
       alreadyIssued: true,
     }
   }
@@ -198,6 +208,7 @@ export async function issueTaxDocument(
           correlativo,
           fullNumber,
           status: 'PENDIENTE',
+          isTrial: prueba,
           issuerTaxId: tenant.taxId,
           issuerLegalName: tenant.legalName ?? tenant.name,
           receiverDocType,
@@ -211,7 +222,7 @@ export async function issueTaxDocument(
           total: sale.total,
         },
         select: {
-          id: true, documentType: true, series: true,
+          id: true, documentType: true, series: true, isTrial: true,
           correlativo: true, fullNumber: true, status: true, total: true,
         },
       })
@@ -235,6 +246,7 @@ export async function issueTaxDocument(
           after: {
             comprobante: fullNumber,
             tipo: input.documentType,
+            modo: prueba ? 'ENSAYO' : 'REAL_O_DEMO',
             venta: sale.number,
             total: num(sale.total),
           },
@@ -250,6 +262,7 @@ export async function issueTaxDocument(
         fullNumber: doc.fullNumber,
         status: doc.status,
         total: num(doc.total),
+        isTrial: doc.isTrial,
         alreadyIssued: false,
       }
     }, {
@@ -267,7 +280,7 @@ export async function issueTaxDocument(
       const existente = await db.taxDocument.findFirst({
         where: { saleId: sale.id },
         select: {
-          id: true, documentType: true, series: true,
+          id: true, documentType: true, series: true, isTrial: true,
           correlativo: true, fullNumber: true, status: true, total: true,
         },
       })

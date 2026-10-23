@@ -105,10 +105,18 @@ export const resetOwnerPasswordSchema = z.object({
 
 export type ResetOwnerPasswordInput = z.infer<typeof resetOwnerPasswordSchema>
 
-/** Encender o apagar la facturación electrónica REAL de un negocio. */
+/** Habilitar, pausar, reanudar o volver a ensayo la facturación electrónica REAL de un negocio. */
 export const facturacionRealSchema = z.object({
   tenantId: z.string().min(1).max(64),
-  enabled: z.boolean(),
+  accion: z.enum(['habilitar', 'pausar', 'reanudar', 'volver_a_ensayo']),
+  reason: z.string().trim().min(10, 'Explica el motivo con al menos 10 caracteres.').max(500),
+})
+
+/** Umbrales (en horas) a partir de los cuales el panel avisa de comprobantes sin enviar. */
+export const umbralesAlertaSchema = z.object({
+  tenantId: z.string().min(1).max(64),
+  warnHours: z.number().int().nullable(),
+  criticalHours: z.number().int().nullable(),
   reason: z.string().trim().min(10, 'Explica el motivo con al menos 10 caracteres.').max(500),
 })
 

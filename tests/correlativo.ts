@@ -32,7 +32,8 @@ async function main() {
   const t = await prisma.tenant.create({
     data: {
       slug: `corr-${M}`, name: 'Correlativo', planId: plan.id,
-      taxId: `20${Date.now()}`.slice(0, 11), legalName: 'CORRELATIVO S.A.C.',
+      taxId: completarRuc(`20${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`), legalName: 'CORRELATIVO S.A.C.',
+      realBillingEnabledAt: new Date(),
     },
   })
   await prisma.subscription.create({

@@ -29,13 +29,14 @@ export default async function ComprobantesPage() {
         receiverDocType: true, receiverDocNumber: true, receiverName: true,
         currency: true, subtotal: true, taxTotal: true, total: true,
         issuedAt: true,
-        saleId: true,
+        saleId: true, isTrial: true,
         sale: { select: { number: true } },
       },
       // Una sentencia en vez de dos: ver la nota en src/lib/session.ts.
       relationLoadStrategy: 'join',
     }),
-    db.taxDocument.groupBy({ by: ['status'], _count: { _all: true } }),
+    // Los documentos de PRUEBA nunca cuentan como pendientes: no hay nada que enviar.
+    db.taxDocument.groupBy({ by: ['status'], where: { isTrial: false }, _count: { _all: true } }),
   ])
 
   const tenant = await db.tenant.findFirst({ select: { timezone: true } })
@@ -116,6 +117,7 @@ export default async function ComprobantesPage() {
           issuedAt: d.issuedAt.toISOString(),
           saleNumber: d.sale.number,
           saleId: d.saleId,
+          isTrial: d.isTrial,
         }))}
       />
     </main>

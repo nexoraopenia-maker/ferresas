@@ -3,6 +3,7 @@ import { correr } from './teardown'
 import { randomUUID } from 'node:crypto'
 import { crearSucursal, asignarSucursal } from './fixtures'
 import { prisma } from '@/lib/prisma'
+import { completarRuc } from '../src/lib/documentos'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { serieDeSucursal, siguienteSeriesNumber, scopeTributario } from '@/features/branches/series'
 import { resolverSucursalActiva } from '@/lib/branch-selection'
@@ -95,7 +96,8 @@ async function main() {
   const t = await prisma.tenant.create({
     data: {
       slug: `suc-${M}`, name: `Ferretería Multi ${M}`, planId: plan.id,
-      legalName: `MULTI ${M} S.A.C.`, taxId: `20${Date.now()}`.slice(0, 11),
+      legalName: `MULTI ${M} S.A.C.`, taxId: completarRuc(`20${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`),
+      realBillingEnabledAt: new Date(),
     },
   })
   await prisma.subscription.create({ data: { tenantId: t.id, planId: plan.id, status: 'ACTIVE' } })

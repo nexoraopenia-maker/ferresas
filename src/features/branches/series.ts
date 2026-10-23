@@ -33,6 +33,8 @@ export type CounterScope =
   | 'TAX_BOLETA'
   | 'TAX_FACTURA'
   | 'GUIA_REMISION'
+  | 'TAX_BOLETA_PRUEBA'
+  | 'TAX_FACTURA_PRUEBA'
 
 /**
  * Dos convenciones conviven porque los documentos tributarios y los internos
@@ -54,6 +56,10 @@ const CONFIG: Record<CounterScope, { letra: string; letraEnSerie: boolean }> = {
   TAX_FACTURA: { letra: 'F', letraEnSerie: true },
   // Guía de Remisión electrónica: T001. (La «T» de TRANSFER no choca: es otro scope y no lleva letra en la serie.)
   GUIA_REMISION: { letra: 'T', letraEnSerie: true },
+  // Series de PRUEBA (negocio que aún no habilitó la facturación real). Empiezan por «P»: ninguna
+  // serie de boleta o factura de SUNAT lo hace, así que no pueden confundirse con una real.
+  TAX_BOLETA_PRUEBA: { letra: 'PB', letraEnSerie: true },
+  TAX_FACTURA_PRUEBA: { letra: 'PF', letraEnSerie: true },
 }
 
 export const SERIES_NUMBER_MIN = 1
@@ -88,7 +94,12 @@ export function serieDeSucursal(
 }
 
 /** Scope del contador para un comprobante tributario. */
-export function scopeTributario(documentType: 'BOLETA' | 'FACTURA'): CounterScope {
+export function scopeTributario(
+  documentType: 'BOLETA' | 'FACTURA',
+  /** Negocio en modo ensayo: serie de prueba (PB001/PF001) en lugar de la real. */
+  prueba = false,
+): CounterScope {
+  if (prueba) return documentType === 'BOLETA' ? 'TAX_BOLETA_PRUEBA' : 'TAX_FACTURA_PRUEBA'
   return documentType === 'BOLETA' ? 'TAX_BOLETA' : 'TAX_FACTURA'
 }
 

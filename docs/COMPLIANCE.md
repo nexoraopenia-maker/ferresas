@@ -248,10 +248,27 @@ El aviso permanente de la interfaz lo dice.
 **Anulación:** solo mientras la guía sigue `PENDIENTE` (no se transmitió). Una guía ya enviada se da de baja por el canal del proveedor o el portal de SUNAT.
 
 
-## 8. Interruptor «facturación real habilitada»
+## 8. Modo fiscal de un negocio: ensayo, real y pausa
 
-Por negocio, **apagado por defecto**, solo lo enciende un SuperAdmin (con motivo, auditado). Apagado, el negocio emite y numera comprobantes y guías, pero **nada sale hacia ningún proveedor**, aunque tenga credenciales de PSE cargadas. Una cuenta demo nunca lo enciende ni lo necesita.
+Cada negocio está en uno de cuatro modos:
 
-Para **encenderlo** hacen falta: RUC válido, proveedor PSE configurado, al menos una sucursal activa y **todas** con dirección completa y un ubigeo válido. Con él **encendido**, emitir un comprobante o una guía exige además que la sucursal desde la que se emite esté completa.
+| Modo | Qué numera | ¿Envía a un proveedor? |
+|---|---|---|
+| **DEMO** | como un comprobante real (B001…), pero solo con el proveedor **simulado** | Nunca a uno real |
+| **ENSAYO** (por defecto) | serie de **PRUEBA** `PB001` / `PF001`: sin valor tributario | **Nunca** |
+| **REAL** | serie real `B001` / `F001` | Sí |
+| **PAUSADO** | serie real (no vuelve a prueba) | No, hasta reanudar |
 
-El criterio para encenderlo no es técnico: es haber validado el XML, los catálogos (§6) y la trama del QR en el sandbox del proveedor. Hasta entonces, ⚠️ nada de lo que emite FerreSaaS debe considerarse aceptado por SUNAT.
+**Por qué una serie propia para el ensayo.** Los números de una serie real que SUNAT nunca vio dejarían un hueco irrecuperable el día que se enciende, y el cliente se llevaría un papel con aspecto de boleta que no existe. Con la serie de prueba aparte, la serie real nace limpia: al habilitar arranca en 1, o en el correlativo inicial que el dueño haya fijado mientras estaba en ensayo (ese ajuste sigue disponible porque los documentos de prueba no cuentan). Las series de prueba empiezan por «P»: ninguna serie de boleta o factura de SUNAT lo hace.
+
+**El documento de prueba nunca se parece a un comprobante electrónico.** Ticket: título «DOCUMENTO DE PRUEBA», leyenda «SIN VALOR TRIBUTARIO», marca de agua PRUEBA, sin QR, sin hash, sin «validación por SUNAT» y sin la frase «representación impresa del comprobante electrónico». En el listado figura como «Prueba», sin botón de envío, y no cuenta como pendiente. **Nunca llega a un proveedor ni a ninguna cola**: `enviarComprobante` lo rechaza antes de elegir proveedor, y `esEnviable` (único criterio, para la cola de la 1A.2) lo excluye en todos los modos.
+
+**Transiciones (solo SuperAdmin, con motivo, auditadas):** habilitar (ENSAYO→REAL) · pausar (REAL→PAUSADO) · reanudar (PAUSADO→REAL) · volver a ensayo (solo si no se emitió ni un documento en serie real). **«Apagar» ya no existe**: apagar un negocio que ya emite documentos reales haría que sus clientes recibieran documentos de prueba sin valor. Pausar solo detiene el ENVÍO: la numeración sigue siendo real y los comprobantes esperan.
+
+**Para habilitar** hacen falta: RUC válido, proveedor PSE configurado, al menos una sucursal activa y **todas** con dirección completa y un ubigeo válido. Con la facturación real habilitada (también en pausa), emitir exige además que la sucursal esté completa.
+
+**Alarma de comprobantes sin enviar.** Con REAL o PAUSADO: el dueño y el administrador ven una barra en todo el panel, y el SuperAdmin una insignia por negocio, con la cantidad de comprobantes reales sin enviar y la antigüedad del más viejo. La pausa se muestra siempre. ⚠️ **Los umbrales por defecto (24 h de aviso, 72 h crítico) NO son plazos de SUNAT**: son valores de trabajo, configurables por negocio (SuperAdmin) o para toda la plataforma (`FISCAL_ALERTA_AVISO_HORAS`, `FISCAL_ALERTA_CRITICO_HORAS`), a la espera de que el responsable fiscal confirme los plazos que correspondan.
+
+**⚠️ Documentos del modelo anterior.** Un negocio que emitió documentos en serie real **antes** de que existiera el modo ensayo (números de una serie que SUNAT nunca vio, posiblemente entregados a clientes) **no se puede habilitar**: el sistema los cuenta y se detiene. Reubicarlos como pruebas no se hace solo; exige la revisión de un contador, un respaldo, un ensayo en staging con una copia representativa y la confirmación explícita del SuperAdmin. Esa migración de datos NO está implementada.
+
+El criterio para habilitar no es técnico: es haber validado el XML, los catálogos (§6) y la trama del QR en el sandbox del proveedor. Hasta entonces, ⚠️ nada de lo que emite FerreSaaS debe considerarse aceptado por SUNAT.

@@ -1,9 +1,11 @@
 import Link from 'next/link'
 import { guardDashboard } from '@/lib/dashboard-guard'
-import { permisosDe, puede } from '@/lib/puede'
+import { permisosDe, puede, puedeAlguno } from '@/lib/puede'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { logoutAction } from '../(auth)/actions'
 import { AccountBannerBar } from '@/features/billing/components/AccountBannerBar'
+import { estadoEnvioFiscal } from '@/features/invoicing/alarma-envio'
+import { FiscalAlertBar } from '@/features/invoicing/components/FiscalAlertBar'
 import { ImpersonationBanner } from '@/features/superadmin/components/ImpersonationBanner'
 import { NavLinks } from '@/features/shell/components/NavLinks'
 import { BranchSwitcher } from '@/features/branches/components/BranchSwitcher'
@@ -46,7 +48,7 @@ export default async function DashboardLayout({
   const { ctx } = await guardDashboard()
   const db = getTenantPrisma(ctx)
   const [tenant, asignadas, operador] = await Promise.all([
-    db.tenant.findFirst({ select: { name: true, isDemo: true } }),
+    db.tenant.findFirst({ select: { name: true, isDemo: true, realBillingEnabledAt: true } }),
     /*
      * Sucursales que el usuario puede operar. Se consultan aquí, en el
      * armazón, para que el selector esté en todas las pantallas: equivocarse
@@ -64,6 +66,11 @@ export default async function DashboardLayout({
       : Promise.resolve(null),
   ])
   const nombreOperador = operador?.name ?? null
+  // Alarma de comprobantes sin enviar: solo a quien gestiona lo fiscal, y solo si el negocio ya emite en serie real
+  // (en ensayo y en demo no hay nada que enviar, así que no se paga la consulta).
+  const estadoFiscal = tenant?.realBillingEnabledAt && puedeAlguno(ctx, 'config.fiscal', 'comprobantes.anular')
+    ? await estadoEnvioFiscal(db)
+    : null
   // El selector de operador lo ve quien cobra o vende; y siempre quien YA está en modo operador, para poder salir.
   const puedeOperarCaja =
     !!ctx.operadorDe || puede(ctx, 'ventas.cobrar') || puede(ctx, 'ventas.crear') || puede(ctx, 'caja.abrir_cerrar')
@@ -114,6 +121,7 @@ export default async function DashboardLayout({
         )}
         <ImpersonationBanner />
         <AccountBannerBar />
+        {estadoFiscal && <FiscalAlertBar estado={estadoFiscal} />}
 
         {/* Cabecera solo en móvil: en escritorio esa información ya está en
             el sidebar y repetirla gasta altura. */}

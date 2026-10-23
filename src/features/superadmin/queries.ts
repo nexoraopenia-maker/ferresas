@@ -1,3 +1,5 @@
+import { horasEntre, nivelDeAlarma, umbralesEfectivos, type NivelAlarma } from '@/features/invoicing/alarma-envio'
+import { modoFiscal, type ModoFiscal } from '@/features/invoicing/modo-fiscal'
 import { prisma } from '@/lib/prisma'
 import { computeAccessLevel, type AccessLevel } from '@/lib/tenant-context'
 import { computeSaasMetrics, type SaasMetrics } from './metrics'
@@ -45,9 +47,11 @@ export interface TenantRow {
   // --- Estado y uso ---
   isActive: boolean
   suspendedReason: string | null
-  /** Facturación electrónica real encendida (apagada por defecto). */
-  facturacionReal: boolean
+  /** Modo fiscal: DEMO, ENSAYO (por defecto), REAL o PAUSADO. */
+  modoFiscal: ModoFiscal
   isDemo: boolean
+  /** Alarma de comprobantes sin enviar (solo con facturación real habilitada). */
+  envioFiscal: { sinEnviar: number; masAntiguoHoras: number | null; nivel: NivelAlarma; avisoHoras: number; criticoHoras: number; avisoPropio: number | null; criticoPropio: number | null }
   users: number
   products: number
   createdAt: Date
@@ -58,9 +62,31 @@ export interface SuperAdminDashboard {
   tenants: TenantRow[]
 }
 
+function envioDe(
+  t: { isDemo: boolean; realBillingEnabledAt: Date | null; realBillingPausedAt: Date | null; fiscalAlertWarnHours: number | null; fiscalAlertCriticalHours: number | null },
+  p: { n: number; desde: Date | null } | undefined,
+  ahora: Date,
+): TenantRow['envioFiscal'] {
+  const modo = modoFiscal(t)
+  const umbrales = umbralesEfectivos(t)
+  const sinEnviar = modo === 'REAL' || modo === 'PAUSADO' ? (p?.n ?? 0) : 0
+  const masAntiguoHoras = sinEnviar > 0 && p?.desde ? horasEntre(p.desde, ahora) : null
+  return {
+    sinEnviar, masAntiguoHoras, nivel: nivelDeAlarma({ modo, sinEnviar, masAntiguoHoras, umbrales }).nivel,
+    avisoHoras: umbrales.avisoHoras, criticoHoras: umbrales.criticoHoras,
+    avisoPropio: t.fiscalAlertWarnHours, criticoPropio: t.fiscalAlertCriticalHours,
+  }
+}
+
 export async function getSuperAdminDashboard(
   now: Date = new Date(),
 ): Promise<SuperAdminDashboard> {
+  // Comprobantes reales sin enviar, por negocio, en UNA consulta (no una por fila).
+  const sinEnviarPorNegocio = await prisma.taxDocument.groupBy({
+    by: ['tenantId'], where: { isTrial: false, status: 'PENDIENTE' }, _count: { _all: true }, _min: { issuedAt: true },
+  })
+  const pendientes = new Map(sinEnviarPorNegocio.map((g) => [g.tenantId, { n: g._count._all, desde: g._min.issuedAt }]))
+
   const tenants = await prisma.tenant.findMany({
     where: { deletedAt: null },
     orderBy: { createdAt: 'desc' },
@@ -71,6 +97,9 @@ export async function getSuperAdminDashboard(
       isActive: true,
       suspendedReason: true,
       realBillingEnabledAt: true,
+      realBillingPausedAt: true,
+      fiscalAlertWarnHours: true,
+      fiscalAlertCriticalHours: true,
       isDemo: true,
       createdAt: true,
       legalName: true,
@@ -158,8 +187,9 @@ export async function getSuperAdminDashboard(
         gatewayLinked: Boolean(sub?.externalSubscriptionId),
         isActive: tenant.isActive,
         suspendedReason: tenant.suspendedReason,
-        facturacionReal: tenant.realBillingEnabledAt !== null,
+        modoFiscal: modoFiscal(tenant),
         isDemo: tenant.isDemo,
+        envioFiscal: envioDe(tenant, pendientes.get(tenant.id), now),
         users: tenant._count.users,
         products: tenant._count.products,
         createdAt: tenant.createdAt,

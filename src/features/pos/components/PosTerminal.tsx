@@ -884,7 +884,7 @@ function ReciboEmitido({
   recibo: { saleId: string; number: string; total: number }
   onCerrar: () => void
 }) {
-  const [doc, setDoc] = useState<{ id: string; fullNumber: string; status: string } | null>(null)
+  const [doc, setDoc] = useState<{ id: string; fullNumber: string; status: string; isTrial: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pendiente, startTransition] = useTransition()
 
@@ -902,7 +902,7 @@ function ReciboEmitido({
         setError(d?.message ?? 'No se pudo emitir el comprobante.')
         return
       }
-      setDoc({ id: d.id, fullNumber: d.fullNumber, status: d.status })
+      setDoc({ id: d.id, fullNumber: d.fullNumber, status: d.status, isTrial: d.isTrial === true })
     })
   }
 
@@ -930,10 +930,17 @@ function ReciboEmitido({
 
       {doc ? (
         <div className="mt-3 rounded-xl bg-surface px-3 py-2">
-          <p className="text-sm text-ink">
-            Comprobante <span className="font-mono font-bold">{doc.fullNumber}</span>{' '}
-            — estado <span className="font-semibold">{doc.status}</span>
-          </p>
+          {doc.isTrial ? (
+            <p className="text-sm text-ink">
+              Documento de <b>prueba</b> <span className="font-mono font-bold">{doc.fullNumber}</span>.{' '}
+              <span className="font-semibold">Sin valor tributario:</span> no es una boleta ni una factura y no se envía a SUNAT.
+            </p>
+          ) : (
+            <p className="text-sm text-ink">
+              Comprobante <span className="font-mono font-bold">{doc.fullNumber}</span>{' '}
+              — estado <span className="font-semibold">{doc.status}</span>
+            </p>
+          )}
           <a
             href={`/imprimir/comprobante/${doc.id}?auto=1`}
             target="_blank"

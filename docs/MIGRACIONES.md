@@ -36,3 +36,9 @@ migración con marca anterior aunque ya haya otras posteriores aplicadas: no fal
 NUEVA, y debe coincidir con el de producción. Regla: la marca de una migración nueva es
 mayor que la de todas las existentes (la hora real, o un minuto después de la última si la
 hora real quedara por detrás). Las ya aplicadas en algún entorno no se renombran nunca.
+
+## Ensayo de un `down.sql`
+
+Un `down.sql` no vale hasta que se ha probado: se aplican todas las migraciones en un esquema
+temporal, se ejecuta el `down.sql` y se comprueba con `prisma migrate diff` contra el esquema
+anterior que no queda **ninguna** diferencia. (Hecho para `20261102120000_fiscal_modo_ensayo`.)

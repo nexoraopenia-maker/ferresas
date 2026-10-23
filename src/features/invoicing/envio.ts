@@ -14,6 +14,7 @@ import type {
   ComprobanteFiscal, CredencialesProveedor, LineaFiscal, ProveedorFacturacion,
 } from './providers/types'
 import { construirXmlUbl } from './ubl'
+import { modoFiscal } from './modo-fiscal'
 
 /**
  * Envío de un comprobante al proveedor de facturación (PSE/OSE).
@@ -56,12 +57,12 @@ const cent = redondearCentimos
 export async function cargarComprobanteFiscal(
   db: TenantPrismaClient,
   taxDocumentId: string,
-): Promise<{ comprobante: ComprobanteFiscal; doc: { id: string; status: TaxDocumentStatus; saleId: string; fullNumber: string } }> {
+): Promise<{ comprobante: ComprobanteFiscal; doc: { id: string; status: TaxDocumentStatus; saleId: string; fullNumber: string; isTrial: boolean } }> {
   const doc = await db.taxDocument.findFirst({
     where: { id: taxDocumentId },
     select: {
       id: true, status: true, saleId: true, documentType: true, series: true, correlativo: true,
-      fullNumber: true, issuedAt: true, currency: true,
+      fullNumber: true, issuedAt: true, currency: true, isTrial: true,
       receiverDocType: true, receiverDocNumber: true, receiverName: true, receiverAddress: true,
       sale: {
         select: {
@@ -150,7 +151,7 @@ export async function cargarComprobanteFiscal(
     total,
     totalEnLetras: montoALetras(total, doc.currency),
   }
-  return { comprobante, doc: { id: doc.id, status: doc.status, saleId: doc.saleId, fullNumber: doc.fullNumber } }
+  return { comprobante, doc: { id: doc.id, status: doc.status, saleId: doc.saleId, fullNumber: doc.fullNumber, isTrial: doc.isTrial } }
 }
 
 async function elegirProveedor(
@@ -158,17 +159,24 @@ async function elegirProveedor(
   tenantId: string,
   deps: DependenciasEnvio,
 ): Promise<{ proveedor: ProveedorFacturacion; credenciales: CredencialesProveedor }> {
-  const t = await db.tenant.findFirstOrThrow({ select: { isDemo: true, realBillingEnabledAt: true } })
+  const t = await db.tenant.findFirstOrThrow({ select: { isDemo: true, realBillingEnabledAt: true, realBillingPausedAt: true } })
   if (t.isDemo) {
     return { proveedor: deps.proveedor ?? obtenerProveedor(undefined, { esDemo: true }), credenciales: deps.credenciales ?? CREDENCIALES_DEMO }
   }
 
   // Interruptor «facturación real»: apagado (por defecto), NADA sale hacia un proveedor,
   // ni siquiera con credenciales cargadas. Lo enciende un SuperAdmin tras validar el sandbox.
-  if (!t.realBillingEnabledAt) {
+  const modo = modoFiscal(t)
+  if (modo === 'ENSAYO') {
     throw new BusinessError(
       'INVALID_DOCUMENT',
       'La facturación electrónica real todavía no está habilitada para tu negocio. El comprobante queda pendiente de envío.',
+    )
+  }
+  if (modo === 'PAUSADO') {
+    throw new BusinessError(
+      'INVALID_DOCUMENT',
+      'Los envíos a tu proveedor de facturación están en pausa. El comprobante queda pendiente y se enviará al reanudar.',
     )
   }
 
@@ -207,6 +215,13 @@ export async function enviarComprobante(
   const ahora = deps.ahora ?? new Date()
 
   const { comprobante, doc } = await cargarComprobanteFiscal(db, taxDocumentId)
+  // PRIMERO y antes de elegir proveedor: un documento de prueba no se envía nunca, en ningún modo.
+  if (doc.isTrial) {
+    throw new BusinessError(
+      'INVALID_DOCUMENT',
+      'Este es un documento de prueba, sin valor tributario: no se envía a ningún proveedor.',
+    )
+  }
   if (doc.status !== 'PENDIENTE') {
     throw new BusinessError(
       'INVALID_DOCUMENT',
@@ -274,9 +289,10 @@ export async function refrescarEstado(
 
   const doc = await db.taxDocument.findFirst({
     where: { id: taxDocumentId },
-    select: { id: true, status: true, series: true, correlativo: true, externalId: true, externalTicket: true },
+    select: { id: true, status: true, series: true, correlativo: true, externalId: true, externalTicket: true, isTrial: true },
   })
   if (!doc) throw new BusinessError('NOT_FOUND', 'El comprobante no existe.')
+  if (doc.isTrial) throw new BusinessError('INVALID_DOCUMENT', 'Este es un documento de prueba: no tiene estado ante ningún proveedor.')
   if (doc.status !== 'ENVIADO') {
     return { estado: doc.status, reintentable: false, mensaje: null, codigoRespuesta: null }
   }

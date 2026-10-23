@@ -1,6 +1,8 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { describirAntiguedad } from '@/features/invoicing/alarma-envio'
+import { ETIQUETA_MODO, type ModoFiscal } from '@/features/invoicing/modo-fiscal'
 import { TenantActions } from './TenantActions'
 import { BillingPanel, EstadoChip, type BillingData, type PlanOpcion } from './BillingPanel'
 
@@ -15,8 +17,9 @@ export interface TenantTableRow extends BillingData {
   access: string
   isActive: boolean
   suspendedReason: string | null
-  facturacionReal: boolean
+  modoFiscal: ModoFiscal
   isDemo: boolean
+  envioFiscal: { sinEnviar: number; masAntiguoHoras: number | null; nivel: 'ok' | 'aviso' | 'critico'; avisoHoras: number; criticoHoras: number; avisoPropio: number | null; criticoPropio: number | null }
   users: number
   products: number
   createdAt: string
@@ -200,6 +203,16 @@ export function TenantTable({
                       <span className="text-ink-muted">Sin teléfono ni RUC</span>
                     )}
                   </dl>
+                  {t.modoFiscal !== 'DEMO' && (
+                    <p className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-bold ${
+                      t.envioFiscal.nivel === 'critico' ? 'bg-stock-out-soft text-stock-out'
+                      : t.envioFiscal.nivel === 'aviso' ? 'bg-stock-low-soft text-stock-low'
+                      : t.modoFiscal === 'ENSAYO' ? 'bg-surface-sunken text-ink-muted' : 'bg-stock-ok-soft text-stock-ok'}`}>
+                      Facturación: {ETIQUETA_MODO[t.modoFiscal]}
+                      {t.envioFiscal.sinEnviar > 0 && t.envioFiscal.masAntiguoHoras !== null &&
+                        ` · ${t.envioFiscal.sinEnviar} sin enviar, el más antiguo ${describirAntiguedad(t.envioFiscal.masAntiguoHoras)}`}
+                    </p>
+                  )}
                   {!t.isActive && t.suspendedReason && (
                     <p className="mt-1.5 max-w-xs rounded bg-stock-out-soft px-2 py-1 text-xs font-semibold text-stock-out">
                       Suspendida: {t.suspendedReason}
@@ -247,8 +260,8 @@ export function TenantTable({
                     tenantId={t.tenantId}
                     tenantName={t.tenantName}
                     isActive={t.isActive}
-                    facturacionReal={t.facturacionReal}
-                    esDemo={t.isDemo}
+                    modoFiscal={t.modoFiscal}
+                    umbrales={t.envioFiscal}
                     perfil={{
                       name: t.tenantName,
                       legalName: t.legalName,

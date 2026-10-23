@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
       take: parsed.data.limit,
       select: {
         id: true, fullNumber: true, documentType: true, series: true,
-        correlativo: true, status: true, statusMessage: true,
+        correlativo: true, status: true, statusMessage: true, isTrial: true,
         receiverDocType: true, receiverDocNumber: true, receiverName: true,
         currency: true, subtotal: true, taxTotal: true, total: true,
         issuedAt: true, sentAt: true, acceptedAt: true,

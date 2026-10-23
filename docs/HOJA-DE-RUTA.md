@@ -41,6 +41,7 @@ Fase 1 (SUNAT real) se divide: **1A** (sin dependencias externas) y **1B** (perf
 | 1A | Qué | Estado |
 |---|---|---|
 | 1A.1 | Ubigeo: cargador con totales de la fuente, selector en cascada con respaldo, requisito de sucursal al emitir, interruptor «facturación real» (apagado, solo SuperAdmin), aviso de la clave al diagnóstico, lista de usos del cliente base | **Hecho** (falta cargar el CSV oficial del INEI) |
+| 1A.1b | Rediseño: modo ensayo con serie de prueba, pausar en lugar de apagar, alarma de comprobantes sin enviar, ticket de prueba | **Hecho** (commits expand y código); la migración de DATOS espera el resultado de la consulta de producción |
 | 1A.2 | Cola de envío con reintentos, disparada por un programador externo (QStash o similar), tolerante a ejecuciones duplicadas o solapadas | Siguiente |
 | 1A.3 | Notas de crédito y de débito | Pendiente |
 | 1A.4 | Comunicación de baja y resumen diario | Pendiente |

@@ -29,7 +29,9 @@ async function main() {
   const t = await prisma.tenant.create({
     data: {
       slug: `pos-${M}`, name: `Ferre POS ${M}`, planId: plan.id,
-      taxId: '20600123456', legalName: `FERRE POS ${M} S.A.C.`,
+      taxId: completarRuc(`20${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`), legalName: `FERRE POS ${M} S.A.C.`,
+      // Estos tests miden la numeración REAL: el negocio ya habilitó la facturación real.
+      realBillingEnabledAt: new Date(),
     },
   })
   await prisma.subscription.create({
@@ -187,15 +189,15 @@ async function main() {
   check('copia los importes de la venta', b1.total === 118)
 
   const doc = await db.taxDocument.findFirstOrThrow({ where: { id: b1.id } })
-  check('congela el RUC del emisor', doc.issuerTaxId === '20600123456')
+  check('congela el RUC del emisor', doc.issuerTaxId === t.taxId)
   check('y su razón social', doc.issuerLegalName === `FERRE POS ${M} S.A.C.`)
 
   console.log('\n6) INMUTABILIDAD: cambiar el negocio no altera lo emitido')
   await prisma.tenant.update({
-    where: { id: t.id }, data: { taxId: '20699999999', legalName: 'OTRA RAZON SOCIAL' },
+    where: { id: t.id }, data: { taxId: completarRuc(`20${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`), legalName: 'OTRA RAZON SOCIAL' },
   })
   const tras = await db.taxDocument.findFirstOrThrow({ where: { id: b1.id } })
-  check('el comprobante conserva el RUC original', tras.issuerTaxId === '20600123456')
+  check('el comprobante conserva el RUC original', tras.issuerTaxId === t.taxId)
   check('y la razón social original', tras.issuerLegalName === `FERRE POS ${M} S.A.C.`)
 
   console.log('\n7) Uno por venta; reintentar devuelve el mismo')

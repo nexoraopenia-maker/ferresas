@@ -21,6 +21,8 @@ export interface TaxDocRow {
   saleNumber: string
   /** Venta del comprobante: de ahí se vincula la guía de remisión. */
   saleId: string
+  /** Documento de PRUEBA: serie PB001/PF001, sin valor tributario; no se envía ni cambia de estado. */
+  isTrial: boolean
 }
 
 const ESTADO: Record<string, { texto: string; cls: string }> = {
@@ -142,7 +144,9 @@ export function TaxDocumentList({
             </thead>
             <tbody>
               {docs.map((d) => {
-                const e = ESTADO[d.status] ?? { texto: d.status, cls: '' }
+                const e = d.isTrial
+                  ? { texto: 'Prueba, sin valor tributario', cls: 'bg-surface-sunken text-ink-muted' }
+                  : ESTADO[d.status] ?? { texto: d.status, cls: '' }
                 return (
                   <tr key={d.id} className="border-t border-hairline align-top">
                     <td className="px-3 py-3">
@@ -193,7 +197,7 @@ export function TaxDocumentList({
                       >
                         80 mm
                       </a>
-                      {puedeEnviar && (d.status === 'PENDIENTE' || d.status === 'ENVIADO') && (
+                      {puedeEnviar && !d.isTrial && (d.status === 'PENDIENTE' || d.status === 'ENVIADO') && (
                         <button
                           type="button" disabled={pendiente} onClick={() => enviar(d.id)}
                           className="ml-2 h-touch rounded-lg bg-industrial-600 px-3 text-sm font-bold text-white disabled:opacity-50"
@@ -204,7 +208,9 @@ export function TaxDocumentList({
                     </td>
                     {canManage && (
                       <td className="px-3 py-3">
-                        {SIGUIENTES[d.status]?.length ? (
+                        {d.isTrial ? (
+                          <span className="text-xs text-ink-muted">—</span>
+                        ) : SIGUIENTES[d.status]?.length ? (
                           <button
                             type="button"
                             onClick={() => {

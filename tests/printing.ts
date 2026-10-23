@@ -3,6 +3,7 @@ import { correr } from './teardown'
 import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
+import { completarRuc } from '../src/lib/documentos'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { enteroALetras, montoALetras } from '@/lib/numero-a-letras'
 import { formatearFechaLocal } from '@/lib/fecha-local'
@@ -89,7 +90,8 @@ async function main() {
   const t = await prisma.tenant.create({
     data: {
       slug: `print-${M}`, name: `Ferretería Sol ${M}`, planId: plan.id,
-      legalName: `COMERCIAL SOL ${M} S.A.C.`, taxId: `206${M.replace(/\D/g, '0')}00`.slice(0, 11),
+      legalName: `COMERCIAL SOL ${M} S.A.C.`, taxId: completarRuc(`20${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`),
+      realBillingEnabledAt: new Date(),
       address: 'Av. Industrial 1234, Lima', phone: '987654321',
       timezone: 'America/Lima', locale: 'es-PE',
     },

@@ -58,6 +58,9 @@ async function main() {
       creados.push(t.id)
       await prisma.subscription.create({ data: { tenantId: t.id, planId: plan.id, provider: 'STRIPE', status: 'ACTIVE', externalSubscriptionId: `sub_${randomUUID().slice(0, 8)}`, externalCustomerId: 'cus_fr' } })
       const { branch, warehouse: w } = await crearSucursalConAlmacen(t.id)
+      // Los fixtures la crean completa; estas pruebas parten de una sucursal SIN dirección ni ubigeo
+      // y la completan donde corresponde.
+      await prisma.branch.update({ where: { id: branch.id }, data: { address: null, ubigeo: null } })
       const u = await prisma.user.create({ data: { tenantId: t.id, email: `o-${randomUUID()}@x.com`, name: 'Dueño', role: 'OWNER' } })
       await asignarSucursal(t.id, u.id, branch.id)
       const ctx: TenantContext = { tenantId: t.id, userId: u.id, role: 'OWNER', access: 'FULL', branchId: branch.id, branchIds: [branch.id] }
@@ -79,16 +82,19 @@ async function main() {
     check('un negocio nuevo nace con la facturación real APAGADA', (await prisma.tenant.findUniqueOrThrow({ where: { id: A.t.id } })).realBillingEnabledAt === null)
     const d1 = await A.boleta()
     check('con la facturación real apagada SÍ puede emitir y numerar (sin regresión)', !!d1.fullNumber)
-    check('>>> pero enviar se rechaza con un mensaje claro', (await msg(enviarComprobante(A.db, A.ctx, d1.id, { proveedor: espia, credenciales: cred }))).includes('todavía no está habilitada'))
+    check('>>> y es un documento de PRUEBA (serie propia), no uno real', d1.isTrial === true && d1.series.startsWith('PB'), `${d1.fullNumber}`)
+    check('>>> enviarlo se rechaza: es de prueba', (await msg(enviarComprobante(A.db, A.ctx, d1.id, { proveedor: espia, credenciales: cred }))).includes('documento de prueba'))
     check('>>> el proveedor NO fue invocado ni una vez', llamadas.n === 0, String(llamadas.n))
     check('y el comprobante sigue PENDIENTE', (await prisma.taxDocument.findUniqueOrThrow({ where: { id: d1.id } })).status === 'PENDIENTE')
-    check('>>> aun con credenciales válidas cargadas, el interruptor manda', llamadas.n === 0)
 
     console.log('\n2) Encendida: envía')
     await prisma.tenant.update({ where: { id: A.t.id }, data: { realBillingEnabledAt: new Date() } })
     await prisma.branch.update({ where: { id: A.branch.id }, data: { address: 'Av. Los Constructores 123, Lima', ubigeo: '150101' } })
-    const r = await enviarComprobante(A.db, A.ctx, d1.id, { proveedor: espia, credenciales: cred })
-    check('con el interruptor encendido el comprobante se envía y se acepta', r.estado === 'ACEPTADO' && llamadas.n === 1)
+    check('>>> el documento de prueba de antes SIGUE siendo de prueba y no se envía aunque ahora esté habilitado', (await msg(enviarComprobante(A.db, A.ctx, d1.id, { proveedor: espia, credenciales: cred }))).includes('documento de prueba') && llamadas.n === 0)
+    const dReal = await A.boleta()
+    check('>>> habilitado, el siguiente documento es REAL (serie B001, correlativo 1: la serie real nace limpia)', dReal.isTrial === false && dReal.fullNumber === 'B001-00000001', dReal.fullNumber)
+    const r = await enviarComprobante(A.db, A.ctx, dReal.id, { proveedor: espia, credenciales: cred })
+    check('con el interruptor encendido el comprobante REAL se envía y se acepta', r.estado === 'ACEPTADO' && llamadas.n === 1)
 
     console.log('\n3) La demo ignora el interruptor y nunca usa un proveedor real')
     const D = await mkNegocio('demo', { demo: true })
@@ -96,7 +102,7 @@ async function main() {
     const rd = await enviarComprobante(D.db, D.ctx, dd.id, { proveedor: espia, credenciales: cred })
     check('una demo envía al simulado aunque el interruptor esté apagado', rd.estado === 'ACEPTADO')
     check('>>> y NO se le exigen requisitos de sucursal', (await faltantesParaEmitir(D.db, D.branch.id)).aplica === false)
-    check('>>> una demo no se puede habilitar', await code(cambiarFacturacionReal({ tenantId: D.t.id, habilitar: true, reason: 'Intento sobre una demo' }, { id: 'x', email: 'a@b.c' })) === 'FORBIDDEN_ROLE')
+    check('>>> una demo no se puede habilitar', await code(cambiarFacturacionReal({ tenantId: D.t.id, accion: 'habilitar', reason: 'Intento sobre una demo' }, { id: 'x', email: 'a@b.c' })) === 'FORBIDDEN_ROLE')
 
     console.log('\n4) Requisitos de la sucursal para emitir con facturación real')
     const B = await mkNegocio('b')
@@ -135,24 +141,34 @@ async function main() {
     const falta = await faltantesParaHabilitar(C.t.id)
     check('>>> sin RUC, sin PSE y sin dirección/ubigeo lo dice todo junto', ['RUC', 'proveedor PSE', 'dirección', 'ubigeo'].every((k) => falta.some((x) => x.includes(k))), falta.join(' | '))
     const actor = { id: (await prisma.user.create({ data: { email: `sa-${randomUUID()}@x.com`, name: 'SA', role: 'SUPERADMIN' } })).id, email: 'soporte@plataforma.pe' }
-    check('habilitar con faltantes se rechaza y los nombra', (await msg(cambiarFacturacionReal({ tenantId: C.t.id, habilitar: true, reason: 'Sandbox validado el 12/11' }, actor))).includes('Falta:'))
+    check('habilitar con faltantes se rechaza y los nombra', (await msg(cambiarFacturacionReal({ tenantId: C.t.id, accion: 'habilitar', reason: 'Sandbox validado el 12/11' }, actor))).includes('Falta:'))
     check('>>> y NO cambia nada', (await prisma.tenant.findUniqueOrThrow({ where: { id: C.t.id } })).realBillingEnabledAt === null)
     await prisma.tenant.update({ where: { id: C.t.id }, data: { taxId: ruc(), pseConfiguredAt: new Date() } })
     await prisma.branch.update({ where: { id: C.branch.id }, data: { address: 'Av. Los Constructores 123, Lima', ubigeo: '150101' } })
     check('con todo en regla ya no falta nada', (await faltantesParaHabilitar(C.t.id)).length === 0)
 
-    console.log('\n7) Habilitar y apagar, con auditoría y sin carreras')
-    const ambos = await Promise.all([1, 2].map(() => cambiarFacturacionReal({ tenantId: C.t.id, habilitar: true, reason: 'Sandbox del PSE validado' }, actor).then(() => 'ok', () => 'no')))
+    console.log('\n7) Habilitar, pausar, reanudar y volver a ensayo, con auditoría y sin carreras')
+    const ambos = await Promise.all([1, 2].map(() => cambiarFacturacionReal({ tenantId: C.t.id, accion: 'habilitar', reason: 'Sandbox del PSE validado' }, actor).then(() => 'ok', () => 'no')))
     check('>>> dos SuperAdmin a la vez: gana UNO', ambos.filter((x) => x === 'ok').length === 1, ambos.join())
     check('queda habilitada', (await prisma.tenant.findUniqueOrThrow({ where: { id: C.t.id } })).realBillingEnabledAt !== null)
     const log = await prisma.auditLog.findMany({ where: { tenantId: C.t.id, action: 'tenant.facturacion_real.habilitar' } })
     check('>>> UNA sola auditoría, con motivo y el correo de quien lo hizo', log.length === 1 && log[0]!.reason === 'Sandbox del PSE validado' && log[0]!.actorEmail === 'soporte@plataforma.pe')
-    check('habilitar dos veces se rechaza', await code(cambiarFacturacionReal({ tenantId: C.t.id, habilitar: true, reason: 'Otra vez, por si acaso' }, actor)) === 'INVALID_DOCUMENT')
-    await cambiarFacturacionReal({ tenantId: C.t.id, habilitar: false, reason: 'El proveedor rechaza el XML' }, actor)
-    check('apagar la deja en NULL y se audita', (await prisma.tenant.findUniqueOrThrow({ where: { id: C.t.id } })).realBillingEnabledAt === null
-      && (await prisma.auditLog.count({ where: { tenantId: C.t.id, action: 'tenant.facturacion_real.apagar' } })) === 1)
-    check('apagar lo ya apagado se rechaza', await code(cambiarFacturacionReal({ tenantId: C.t.id, habilitar: false, reason: 'Nada que apagar aquí' }, actor)) === 'INVALID_DOCUMENT')
-    check('un negocio inexistente', await code(cambiarFacturacionReal({ tenantId: 'no-existe', habilitar: true, reason: 'Negocio que no existe' }, actor)) === 'TENANT_MISMATCH')
+    check('habilitar dos veces se rechaza', await code(cambiarFacturacionReal({ tenantId: C.t.id, accion: 'habilitar', reason: 'Otra vez, por si acaso' }, actor)) === 'INVALID_DOCUMENT')
+    await cambiarFacturacionReal({ tenantId: C.t.id, accion: 'pausar', reason: 'El proveedor rechaza el XML' }, actor)
+    const pausado = await prisma.tenant.findUniqueOrThrow({ where: { id: C.t.id } })
+    check('>>> pausar NO apaga: conserva «desde cuándo emite en serie real» y marca la pausa', pausado.realBillingEnabledAt !== null && pausado.realBillingPausedAt !== null)
+    check('pausar queda auditado', (await prisma.auditLog.count({ where: { tenantId: C.t.id, action: 'tenant.facturacion_real.pausar' } })) === 1)
+    check('pausar dos veces se rechaza', await code(cambiarFacturacionReal({ tenantId: C.t.id, accion: 'pausar', reason: 'Ya estaba en pausa' }, actor)) === 'INVALID_DOCUMENT')
+    await cambiarFacturacionReal({ tenantId: C.t.id, accion: 'reanudar', reason: 'El proveedor corrigió el fallo' }, actor)
+    check('reanudar quita la pausa y conserva el estado real', (await prisma.tenant.findUniqueOrThrow({ where: { id: C.t.id } })).realBillingPausedAt === null)
+    check('reanudar sin pausa se rechaza', await code(cambiarFacturacionReal({ tenantId: C.t.id, accion: 'reanudar', reason: 'Nada que reanudar' }, actor)) === 'INVALID_DOCUMENT')
+    const E = await mkNegocio('e')
+    check('>>> un negocio en ENSAYO no se puede pausar ni reanudar', await code(cambiarFacturacionReal({ tenantId: E.t.id, accion: 'pausar', reason: 'Pausa de un negocio en ensayo' }, actor)) === 'INVALID_DOCUMENT'
+      && await code(cambiarFacturacionReal({ tenantId: E.t.id, accion: 'reanudar', reason: 'Reanudar sin haber pausado' }, actor)) === 'INVALID_DOCUMENT')
+    await cambiarFacturacionReal({ tenantId: C.t.id, accion: 'volver_a_ensayo', reason: 'Se habilitó por error' }, actor)
+    check('>>> sin documentos reales, se puede volver a ensayo: queda NULL', (await prisma.tenant.findUniqueOrThrow({ where: { id: C.t.id } })).realBillingEnabledAt === null)
+    check('volver a ensayo estando en ensayo se rechaza', await code(cambiarFacturacionReal({ tenantId: C.t.id, accion: 'volver_a_ensayo', reason: 'Ya está en ensayo' }, actor)) === 'INVALID_DOCUMENT')
+    check('un negocio inexistente', await code(cambiarFacturacionReal({ tenantId: 'no-existe', accion: 'habilitar', reason: 'Negocio que no existe' }, actor)) === 'TENANT_MISMATCH')
     await prisma.user.delete({ where: { id: actor.id } }).catch(() => {})
 
     console.log('\n8) ESTRUCTURA: solo el SuperAdmin puede tocar el interruptor')
@@ -162,12 +178,12 @@ async function main() {
       if (f.includes('/generated/')) continue
       const sf = proj.addSourceFileAtPath(f)
       const escribe = sf.getDescendantsOfKind(SyntaxKind.PropertyAssignment).some((pa) =>
-        pa.getName() === 'realBillingEnabledAt' &&
+        ['realBillingEnabledAt', 'realBillingPausedAt'].includes(pa.getName()) &&
         pa.getParentWhile((n) => n.getKind() !== SyntaxKind.PropertyAssignment || (n as import('ts-morph').PropertyAssignment).getName() !== 'data') !== undefined &&
         pa.getFirstAncestor((a) => a.getKind() === SyntaxKind.PropertyAssignment && (a as import('ts-morph').PropertyAssignment).getName() === 'data') !== undefined)
       if (escribe) escritores.push(rel(f))
     }
-    check('>>> el único código de producción que ESCRIBE `realBillingEnabledAt` es el servicio del SuperAdmin',
+    check('>>> el único código de producción que ESCRIBE `realBillingEnabledAt` y `realBillingPausedAt` es el servicio del SuperAdmin',
       escritores.length === 1 && escritores[0] === 'src/features/superadmin/facturacion-real-service.ts', escritores.join(', '))
     const acc = proj.addSourceFileAtPath(join(RAIZ, 'src/features/superadmin/actions.ts'))
     const fn = acc.getFunction('setFacturacionRealAction')
