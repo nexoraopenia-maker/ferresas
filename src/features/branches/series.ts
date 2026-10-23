@@ -32,6 +32,7 @@ export type CounterScope =
   | 'TRANSFER'
   | 'TAX_BOLETA'
   | 'TAX_FACTURA'
+  | 'GUIA_REMISION'
 
 /**
  * Dos convenciones conviven porque los documentos tributarios y los internos
@@ -51,6 +52,8 @@ const CONFIG: Record<CounterScope, { letra: string; letraEnSerie: boolean }> = {
   TRANSFER: { letra: 'T', letraEnSerie: false },
   TAX_BOLETA: { letra: 'B', letraEnSerie: true },
   TAX_FACTURA: { letra: 'F', letraEnSerie: true },
+  // Guía de Remisión electrónica: T001. (La «T» de TRANSFER no choca: es otro scope y no lleva letra en la serie.)
+  GUIA_REMISION: { letra: 'T', letraEnSerie: true },
 }
 
 export const SERIES_NUMBER_MIN = 1

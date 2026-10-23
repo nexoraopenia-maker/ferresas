@@ -638,3 +638,12 @@ apoya en eso. Comprobado: `ts-morph` no añade ninguna vulnerabilidad al árbol.
 - **Anti fuerza bruta / repetición**: el intento se reserva con incremento atómico (5 fallos → bloqueo de 15 min, las peticiones en vuelo no ganan otra tanda); el paso TOTP usado se reclama atómicamente (`mfaLastStep`) y un código de recuperación se consume con `array_remove` atómico.
 - **Obligatoriedad**: `resolveTenantContext` marca `mfaPendiente`; `requireTenantContext` lanza `MFA_REQUIRED` (sirve también a las Server Actions) y el layout redirige a `/activar-mfa`, que vive fuera del panel y usa `requireIdentidad` (sin acceso a datos del negocio).
 - **Restablecer**: un administrador puede restablecer el MFA de quien tenga menos poder (nunca el del dueño ni el propio); cierra las sesiones y queda auditado (`mfa.restablecer`). Si el DUEÑO pierde teléfono y códigos, no hay vía dentro de la app: hay que hacerlo desde la base (limpiar las columnas `mfa*` de su fila).
+
+## Guías de remisión
+
+- **Modelo:** `DispatchGuide` + `DispatchGuideItem` (claves foráneas compuestas `(tenantId, id)`; ambas en `TENANT_SCOPED`, la guía acotada por sucursal con `BRANCH_SCOPED`). Vinculada a `Sale` o `BranchTransfer`, o a ninguna.
+- **Numeración:** scope `GUIA_REMISION`, serie `T` + número de la sucursal (T001), reclamada con `claimNextNumber` dentro de la transacción.
+- **Integridad:** el control «no más de lo vendido/enviado» va DENTRO de la transacción, tras reclamar el número (la fila del contador se bloquea y serializa las emisiones de la serie). Si el control falla, el número vuelve. Una guía anulada no cuenta, pero su número no se reutiliza.
+- **Permisos:** `guias.emitir` (dueño, administrador, vendedor, cajero, almacenero) y `guias.anular` (dueño, administrador). El contador solo consulta (`reportes.ver`).
+- **Transmisión:** pendiente de proveedor (ver `docs/COMPLIANCE.md` §7). Estado `PENDIENTE` hasta entonces.
+- **Pantallas:** `/guias` (listado y anulación), `/guias/nueva` (desde una venta, una transferencia o sin origen) y el enlace «Emitir guía de remisión» en `/comprobantes`.

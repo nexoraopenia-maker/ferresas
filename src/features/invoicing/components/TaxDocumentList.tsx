@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { formatearFechaLocal } from '@/lib/fecha-local'
 
@@ -18,6 +19,8 @@ export interface TaxDocRow {
   total: string
   issuedAt: string
   saleNumber: string
+  /** Venta del comprobante: de ahí se vincula la guía de remisión. */
+  saleId: string
 }
 
 const ESTADO: Record<string, { texto: string; cls: string }> = {
@@ -43,12 +46,15 @@ export function TaxDocumentList({
   docs,
   canManage,
   puedeEnviar = false,
+  puedeEmitirGuia = false,
   zonaHoraria,
 }: {
   docs: TaxDocRow[]
   canManage: boolean
   /** Puede mandar comprobantes al proveedor de facturación. */
   puedeEnviar?: boolean
+  /** Puede emitir guías de remisión: muestra el enlace en cada comprobante. */
+  puedeEmitirGuia?: boolean
   /** Zona del negocio: ver la nota en CashPanel. */
   zonaHoraria: string
 }) {
@@ -147,6 +153,11 @@ export function TaxDocumentList({
                       <p className="text-xs text-ink-muted">
                         {formatearFechaLocal(d.issuedAt, zonaHoraria)}
                       </p>
+                      {puedeEmitirGuia && (
+                        <Link href={`/guias/nueva?venta=${d.saleId}`} className="mt-1 inline-block text-xs font-semibold text-industrial-700 underline dark:text-industrial-300">
+                          Emitir guía de remisión
+                        </Link>
+                      )}
                     </td>
                     <td className="px-3 py-3">
                       <p className="text-ink">{d.receiverName ?? 'Sin cliente'}</p>

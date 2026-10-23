@@ -81,6 +81,14 @@ export const NAV_ITEMS: NavItem[] = [
     permisos: ['comprobantes.emitir', 'comprobantes.anular', 'reportes.ver'],
   },
   {
+    href: '/guias',
+    label: 'Guías de remisión',
+    short: 'Guías',
+    // Camión
+    icon: 'M3 7h11v9H3V7Zm11 3h4l3 3v3h-7v-6ZM7 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm10 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z',
+    permisos: ['guias.emitir', 'guias.anular', 'reportes.ver'],
+  },
+  {
     href: '/pedidos',
     label: 'Pedidos',
     short: 'Pedidos',

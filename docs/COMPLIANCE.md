@@ -227,3 +227,21 @@ El aviso permanente de la interfaz lo dice.
   `branch_transfers` y `mermas` llevan `DEFAULT CURRENT_TIMESTAMP` en la base y
   Prisma no lo espera. No afecta al comportamiento; una migración
   `DROP DEFAULT` lo limpiaría.
+
+## 7. Guía de Remisión Electrónica (remitente)
+
+**Qué hay:** emisión y numeración (`T001-00000001`, serie por sucursal, sin huecos, con el mismo contador transaccional de los comprobantes), vinculada a una venta, a una transferencia entre sucursales o sin origen (compra / otros). Campos: motivo, modalidad, fechas, peso bruto, bultos, destinatario, partida y llegada (dirección + ubigeo), transportista (público) o vehículo y conductor (privado), y líneas. No se despacha más de lo vendido o enviado (control dentro de la transacción), y una guía anulada no cuenta pero conserva su número.
+
+**Qué NO hay:** la **transmisión a SUNAT**. Ninguna guía sale sola: queda `PENDIENTE`, que es la verdad. Hace falta un proveedor (PSE/OSE) o la integración directa con la API de SUNAT, y no hay ninguno conectado. Tampoco hay guía de **transportista** (GRE-T) ni **representación impresa**.
+
+| | Qué | Estado |
+|---|---|---|
+| ⚠️ | **Catálogo de motivos de traslado** (`01` Venta, `02` Compra, `04` Traslado entre establecimientos de la misma empresa, `13` Otros) y **modalidad de transporte** (`01` público, `02` privado) | Los códigos de `features/guias/reglas.ts` NO se contrastaron con la fuente oficial vigente. Hay más motivos oficiales (importación, exportación, venta sujeta a confirmación, etc.) que no se exponen. Verificar antes de transmitir. |
+| ⚠️ | **Regla de fechas**: el inicio del traslado no puede ser anterior a la emisión | Supuesto razonable, sin confirmar con la normativa. |
+| ⚠️ | **Formato de la licencia de conducir** y de la **placa** | Solo se valida que parezcan un código (8–12 y 6–7 caracteres alfanuméricos). |
+| ⚠️ | **Qué datos exige la modalidad pública/privada** para cada motivo | Se exige RUC y razón social del transportista (público) o placa, conductor y licencia (privado). Confirmar el conjunto exacto. |
+| ⚠️ | **Unidad y precisión del peso** | Kilogramos, 3 decimales. Confirmar la unidad de medida y límites. |
+| ⚠️ | **Ubigeo** | Solo el formato (6 dígitos): no hay catálogo embarcado (ver §3). |
+| ✅ | Serie `T` + 3 dígitos por sucursal, correlativo sin huecos, aislamiento por negocio y por sucursal, auditoría de emisión y anulación | Probado en `tests/guias.ts`. |
+
+**Anulación:** solo mientras la guía sigue `PENDIENTE` (no se transmitió). Una guía ya enviada se da de baja por el canal del proveedor o el portal de SUNAT.

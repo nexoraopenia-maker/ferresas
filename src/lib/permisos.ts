@@ -48,6 +48,8 @@ export const PERMISOS = [
   'comprobantes.emitir',
   'comprobantes.anular',
   'comprobantes.estado_manual',
+  'guias.emitir',
+  'guias.anular',
   'usuarios.gestionar',
   'sucursales.gestionar',
   'config.fiscal',
@@ -104,6 +106,8 @@ export const MATRIZ: Record<Role, readonly Permiso[]> = {
   VENDEDOR: [
     'ventas.crear',
     'cotizaciones.crear',
+    // Despacha lo que vende: la guía acompaña a la mercadería.
+    'guias.emitir',
     // Pedir mercadería es solicitar, no despachar: el ciclo es
     // solicitar → aprobar → despachar → recibir, y cada paso es de alguien
     // distinto. Un vendedor o cajero puede pedir reposición para su tienda;
@@ -118,6 +122,7 @@ export const MATRIZ: Record<Role, readonly Permiso[]> = {
     'cotizaciones.crear',
     'caja.abrir_cerrar',
     'comprobantes.emitir',
+    'guias.emitir',
     'stock.transferir_solicitar',
   ],
 
@@ -134,6 +139,8 @@ export const MATRIZ: Record<Role, readonly Permiso[]> = {
   ALMACENERO: [
     'productos.crear',
     'stock.entrada',
+    // Prepara y despacha la mercadería: emite la guía que la acompaña.
+    'guias.emitir',
     /*
      * SOLICITAR una merma, no aplicarla.
      *
@@ -217,6 +224,8 @@ export const ETIQUETAS: Record<Permiso, string> = {
   'comprobantes.emitir': 'Emitir boletas y facturas',
   'comprobantes.anular': 'Emitir notas de crédito',
   'comprobantes.estado_manual': 'Cambiar a mano el estado tributario de un comprobante',
+  'guias.emitir': 'Emitir guías de remisión',
+  'guias.anular': 'Anular guías de remisión',
   'usuarios.gestionar': 'Gestionar usuarios',
   'sucursales.gestionar': 'Gestionar sucursales',
   'config.fiscal': 'Configurar series y datos fiscales',

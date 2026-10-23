@@ -73,6 +73,8 @@ const TENANT_SCOPED = new Set([
   'PurchaseItem',
   'DocumentCounter',
   'TaxDocument',
+  'DispatchGuide',
+  'DispatchGuideItem',
   'UsagePeriod',
   'AuditLog',
   'ImpersonationSession',
@@ -112,6 +114,8 @@ const BRANCH_SCOPED: Record<string, AlcanceSucursal> = {
   TaxDocument: { columnas: ['branchId'], via: 'sale' },
   QuoteItem: { columnas: ['branchId'], via: 'quote' },
   BranchTransferItem: { columnas: ['fromBranchId', 'toBranchId'], via: 'transfer' },
+  DispatchGuide: { columnas: ['branchId'] },
+  DispatchGuideItem: { columnas: ['branchId'], via: 'guide' },
 }
 
 function condicionDeSucursal(alcance: AlcanceSucursal, ids: readonly string[]): AnyArgs {

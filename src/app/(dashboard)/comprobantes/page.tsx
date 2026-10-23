@@ -29,6 +29,7 @@ export default async function ComprobantesPage() {
         receiverDocType: true, receiverDocNumber: true, receiverName: true,
         currency: true, subtotal: true, taxTotal: true, total: true,
         issuedAt: true,
+        saleId: true,
         sale: { select: { number: true } },
       },
       // Una sentencia en vez de dos: ver la nota en src/lib/session.ts.
@@ -97,6 +98,7 @@ export default async function ComprobantesPage() {
 
       <TaxDocumentList
         canManage={puede(ctx, 'comprobantes.anular')}
+        puedeEmitirGuia={puede(ctx, 'guias.emitir')}
         puedeEnviar={puede(ctx, 'comprobantes.emitir') && (ctx.access === 'FULL' || ctx.access === 'WARN')}
         zonaHoraria={tenant?.timezone ?? 'America/Lima'}
         docs={docs.map((d) => ({
@@ -113,6 +115,7 @@ export default async function ComprobantesPage() {
           total: d.total.toFixed(2),
           issuedAt: d.issuedAt.toISOString(),
           saleNumber: d.sale.number,
+          saleId: d.saleId,
         }))}
       />
     </main>

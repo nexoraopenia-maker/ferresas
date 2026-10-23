@@ -187,6 +187,21 @@ enum CustomerDocType {
   SIN_DOCUMENTO
 }
 
+/// Motivo del traslado de una Guía de Remisión. Los códigos de SUNAT (catálogo 20)
+/// viven en `features/guias/reglas.ts`, marcados para verificar contra la fuente oficial.
+enum GuideMotive {
+  VENTA
+  COMPRA
+  TRASLADO_ESTABLECIMIENTOS
+  OTROS
+}
+
+/// Quién lleva la mercadería: una empresa de transporte (público) o el propio negocio (privado).
+enum GuideTransportMode {
+  PUBLICO
+  PRIVADO
+}
+
 /**
  * Estado de una merma solicitada.
  * Existe porque una merma reduce inventario a criterio de quien la registra,
@@ -373,37 +388,39 @@ model Tenant {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  subscription   Subscription?
-  users          User[]
-  branches       Branch[]
-  userBranches   UserBranch[]
-  cashSessions   CashSession[]
-  mermas         Merma[]
-  transfers      BranchTransfer[]
-  transferItems  BranchTransferItem[]
-  invitations    Invitation[]
-  discountCaps   DiscountCap[]
-  warehouses     Warehouse[]
-  categories     Category[]
-  products       Product[]
-  variants       ProductVariant[]
-  stocks         Stock[]
-  movements      StockMovement[]
-  customers      Customer[]
-  suppliers      Supplier[]
-  sales          Sale[]
-  saleItems      SaleItem[]
-  payments       Payment[]
-  quotes         Quote[]
-  quoteItems     QuoteItem[]
-  purchases      Purchase[]
-  purchaseItems  PurchaseItem[]
-  taxDocuments   TaxDocument[]
-  counters       DocumentCounter[]
-  usage          UsagePeriod[]
-  auditLogs      AuditLog[]
-  impersonations ImpersonationSession[]
-  webhookEvents  WebhookEvent[]
+  subscription       Subscription?
+  users              User[]
+  branches           Branch[]
+  userBranches       UserBranch[]
+  cashSessions       CashSession[]
+  mermas             Merma[]
+  transfers          BranchTransfer[]
+  transferItems      BranchTransferItem[]
+  invitations        Invitation[]
+  dispatchGuides     DispatchGuide[]
+  dispatchGuideItems DispatchGuideItem[]
+  discountCaps       DiscountCap[]
+  warehouses         Warehouse[]
+  categories         Category[]
+  products           Product[]
+  variants           ProductVariant[]
+  stocks             Stock[]
+  movements          StockMovement[]
+  customers          Customer[]
+  suppliers          Supplier[]
+  sales              Sale[]
+  saleItems          SaleItem[]
+  payments           Payment[]
+  quotes             Quote[]
+  quoteItems         QuoteItem[]
+  purchases          Purchase[]
+  purchaseItems      PurchaseItem[]
+  taxDocuments       TaxDocument[]
+  counters           DocumentCounter[]
+  usage              UsagePeriod[]
+  auditLogs          AuditLog[]
+  impersonations     ImpersonationSession[]
+  webhookEvents      WebhookEvent[]
 
   @@index([isActive])
   @@index([deletedAt])
@@ -553,6 +570,7 @@ model User {
   pedidosCobrando Quote[]                @relation("PedidoCobrandoPor")
   mermasPedidas   Merma[]                @relation("MermaRequestedBy")
   mermasResueltas Merma[]                @relation("MermaResolvedBy")
+  guiasCreadas    DispatchGuide[]        @relation("GuideCreatedBy")
   cashOpened      CashSession[]          @relation("CashOpenedBy")
   cashClosed      CashSession[]          @relation("CashClosedBy")
   transfersAsked  BranchTransfer[]       @relation("TransferRequestedBy")
@@ -798,6 +816,7 @@ model Product {
 
   variants      ProductVariant[]
   stocks        Stock[]
+  guideItems    DispatchGuideItem[]
   movements     StockMovement[]
   saleItems     SaleItem[]
   quoteItems    QuoteItem[]
@@ -1023,9 +1042,10 @@ model Sale {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  items       SaleItem[]
-  payments    Payment[]
-  taxDocument TaxDocument?
+  items          SaleItem[]
+  payments       Payment[]
+  taxDocument    TaxDocument?
+  dispatchGuides DispatchGuide[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, number])
@@ -1646,15 +1666,16 @@ model Branch {
   /// Soft delete: nunca se borra una sucursal con historial (Frente 1).
   deletedAt DateTime?
 
-  warehouses   Warehouse[]
-  users        UserBranch[]
-  counters     DocumentCounter[]
-  sales        Sale[]
-  quotes       Quote[]
-  cashSessions CashSession[]
-  transfersOut BranchTransfer[]  @relation("TransferFrom")
-  transfersIn  BranchTransfer[]  @relation("TransferTo")
-  mermas       Merma[]
+  warehouses     Warehouse[]
+  users          UserBranch[]
+  counters       DocumentCounter[]
+  sales          Sale[]
+  quotes         Quote[]
+  cashSessions   CashSession[]
+  transfersOut   BranchTransfer[]  @relation("TransferFrom")
+  transfersIn    BranchTransfer[]  @relation("TransferTo")
+  mermas         Merma[]
+  dispatchGuides DispatchGuide[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -1791,7 +1812,8 @@ model BranchTransfer {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  items BranchTransferItem[]
+  items          BranchTransferItem[]
+  dispatchGuides DispatchGuide[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, number])
@@ -1905,4 +1927,119 @@ model DiscountCap {
 
   @@unique([tenantId, role])
   @@map("discount_caps")
+}
+
+/**
+ * Guía de Remisión Electrónica — remitente.
+ * Documenta el traslado de mercadería: de dónde sale, a dónde va, quién la lleva
+ * y por qué. Se vincula a una venta o a una transferencia entre sucursales, y su
+ * numeración (T001-00000001) sale del mismo contador sin huecos que los comprobantes.
+ * `status` es el estado frente a la administración tributaria. Hoy ninguna guía
+ * se transmite sola (no hay proveedor conectado): queda PENDIENTE, que es la verdad.
+ */
+model DispatchGuide {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Sucursal que despacha. De ella sale la serie.
+  branchId String
+  branch   Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  /// Venta que origina el traslado (motivo VENTA). Puede haber varias guías por venta.
+  saleId     String?
+  sale       Sale?           @relation(fields: [tenantId, saleId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+  /// Transferencia entre sucursales que origina el traslado.
+  transferId String?
+  transfer   BranchTransfer? @relation(fields: [tenantId, transferId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  /// "T001"
+  series      String
+  /// Sin huecos dentro de (tenant, serie).
+  correlativo Int
+  /// "T001-00000001"
+  fullNumber  String
+
+  motive        GuideMotive
+  /// Obligatorio cuando el motivo es OTROS.
+  motiveDetail  String?
+  transportMode GuideTransportMode
+
+  /// Día civil de emisión y de inicio del traslado (sin hora).
+  issueDate         DateTime @db.Date
+  transferStartDate DateTime @db.Date
+  /// Peso bruto total de la carga, en kilogramos.
+  grossWeightKg     Decimal  @db.Decimal(12, 3)
+  packages          Int?
+
+  // --- Emisor (remitente) congelado al emitir ---
+  issuerTaxId     String
+  issuerLegalName String
+
+  // --- Destinatario ---
+  recipientDocType   CustomerDocType
+  recipientDocNumber String
+  recipientName      String
+
+  // --- Punto de partida y de llegada (dirección completa + ubigeo de 6 dígitos) ---
+  originAddress      String
+  originUbigeo       String
+  destinationAddress String
+  destinationUbigeo  String
+
+  // --- Transporte PÚBLICO: la empresa transportista ---
+  carrierRuc  String?
+  carrierName String?
+
+  // --- Transporte PRIVADO: vehículo y conductor ---
+  vehiclePlate    String?
+  driverDocType   CustomerDocType?
+  driverDocNumber String?
+  driverName      String?
+  driverLicense   String?
+
+  notes String?
+
+  status        TaxDocumentStatus @default(PENDIENTE)
+  statusMessage String?
+  voidedAt      DateTime?
+  voidReason    String?
+
+  createdById String
+  createdBy   User     @relation("GuideCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items DispatchGuideItem[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, series, correlativo])
+  @@index([tenantId, branchId, issueDate])
+  @@index([tenantId, saleId])
+  @@index([tenantId, transferId])
+  @@map("dispatch_guides")
+}
+
+model DispatchGuideItem {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  guideId String
+  guide   DispatchGuide @relation(fields: [tenantId, guideId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  productId String
+  product   Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  /// Lo que decía el producto al emitir: la guía no cambia si luego se renombra.
+  nameSnapshot String
+  skuSnapshot  String
+  unitType     UnitType @default(UNIDAD)
+  quantity     Decimal  @db.Decimal(14, 4)
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, guideId])
+  @@index([tenantId, productId])
+  @@map("dispatch_guide_items")
 }
