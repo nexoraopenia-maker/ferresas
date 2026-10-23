@@ -1,5 +1,9 @@
+import { abrir, ficheros, proyecto, rel } from './ast'
+import { join } from 'node:path'
+import { RAIZ } from './ast'
+import { SyntaxKind } from 'ts-morph'
 import {
-  digitoControlGs1, esGs1Valido, formatoDeDetector, lecturaValida,
+  esRepeticion, digitoControlGs1, esGs1Valido, formatoDeDetector, lecturaValida,
 } from '../src/lib/codigos-barras'
 import {
   iniciarLector, RESTRICCIONES_CAMARA,
@@ -124,6 +128,61 @@ async function main() {
     })
   } catch (e) { permiso = (e as Error).name }
   check('>>> el error de permiso llega intacto al modal (NotAllowedError)', permiso === 'NotAllowedError')
+
+  console.log('\n4) Anti-rebote: sostener un código no suma otra unidad')
+  const ult = { code: 'A', seen: 1000 }
+  check('la misma lectura enseguida es repetición', esRepeticion(ult, 'A', 1100, 1500))
+  check('>>> cada avistamiento renueva la ventana (sostenido 5 s = una sola unidad)',
+    [1200, 1300, 2000, 3000, 4000, 5000, 6000].every((t) => esRepeticion(ult, 'A', t, 1500)))
+  check('>>> tras apartarlo más de la ventana, vuelve a contar', !esRepeticion(ult, 'A', 6000 + 1600, 1500))
+  check('otro código nunca es repetición', !esRepeticion({ code: 'A', seen: 1000 }, 'B', 1001, 1500))
+  check('sin lectura previa no es repetición', !esRepeticion(null, 'A', 5, 1500))
+
+  console.log('\n5) ESTRUCTURA: la cámara no se reinicia cuando el padre re-renderiza')
+  const sf = abrir(proyecto(), 'src/components/inventory/InventoryScannerModal.tsx')
+  const llamadas = sf.getDescendantsOfKind(SyntaxKind.CallExpression)
+    .filter((c) => ['useEffect', 'useCallback'].includes(c.getExpression().getText()))
+  const deps = llamadas.map((c) => {
+    const arr = c.getArguments()[1]
+    return { fn: c.getExpression().getText(), cuerpo: c.getArguments()[0]!.getText(), ids: arr ? arr.getDescendantsOfKind(SyntaxKind.Identifier).map((i) => i.getText()) : null }
+  })
+  const prohibidas = ['onClose', 'onDetected', 'continuous', 'dedupeMs']
+  check('>>> ningún efecto ni callback depende de las props del padre (se leen por ref)',
+    deps.every((d) => !d.ids || d.ids.every((n) => !prohibidas.includes(n))), JSON.stringify(deps.map((d) => d.ids)))
+  const efectoCamara = deps.find((d) => d.cuerpo.includes('iniciarLector'))
+  check('el efecto de la cámara solo depende de open + callbacks estables', !!efectoCamara
+    && efectoCamara.ids!.every((n) => ['open', 'handleCode', 'stop'].includes(n)))
+  const handle = deps.find((d) => d.cuerpo.includes('esRepeticion'))
+  check('handleCode es estable (deps vacías)', !!handle && handle.ids!.length === 0)
+  check('hay barrera de errores alrededor del escáner', sf.getFullText().includes('getDerivedStateFromError'))
+
+  console.log('\n6) ESTRUCTURA: quien usa el escáner no pasa un onClose con estado capturado')
+  console.log('   (causa del bug de Inventario: onClose veía `phase` viejo y pisaba la hoja del producto)')
+  const usuarios = ficheros(join(RAIZ, 'src'), (p) => p.endsWith('.tsx'))
+    .filter((f) => rel(f) !== 'src/components/inventory/InventoryScannerModal.tsx')
+  const proj = proyecto()
+  let cuantos = 0
+  for (const f of usuarios) {
+    const u = proj.addSourceFileAtPath(f)
+    for (const el of u.getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement)
+      .filter((e) => e.getTagNameNode().getText() === 'InventoryScannerModal')) {
+      cuantos++
+      const attr = el.getAttribute('onClose')
+      const expr = attr?.getFirstDescendantByKind(SyntaxKind.JsxExpression)?.getExpression()
+      // Variables de estado del componente que lo contiene: const [x, setX] = useState(...)
+      const comp = el.getFirstAncestor((a) => a.getKind() === SyntaxKind.FunctionDeclaration || a.getKind() === SyntaxKind.ArrowFunction)
+      const estado = new Set(
+        (comp?.getDescendantsOfKind(SyntaxKind.VariableDeclaration) ?? [])
+          .filter((v) => /useState/.test(v.getInitializer()?.getText() ?? ''))
+          .flatMap((v) => v.getDescendantsOfKind(SyntaxKind.ArrayBindingPattern).flatMap((b) => b.getElements().slice(0, 1).map((e) => e.getText()))),
+      )
+      const leidas = (expr?.getDescendantsOfKind(SyntaxKind.Identifier) ?? [])
+        .filter((i) => estado.has(i.getText()) && i.getParent()?.getKind() !== SyntaxKind.PropertyAccessExpression || (estado.has(i.getText()) && (i.getParent() as { getExpression?: () => unknown })?.getExpression?.() === i))
+        .map((i) => i.getText())
+      check(`>>> ${rel(f)}: onClose no lee estado capturado (${[...estado].join(', ') || 'sin estado'})`, !!attr && leidas.length === 0, leidas.join(','))
+    }
+  }
+  check('se revisó al menos un uso del escáner', cuantos >= 2, String(cuantos))
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
   process.exit(fail === 0 ? 0 : 1)

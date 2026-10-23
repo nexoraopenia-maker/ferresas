@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { formatearFechaLocal } from '@/lib/fecha-local'
 import { redondearCentimos } from '@/lib/dinero'
 import { trocearResaltado } from '../resaltado'
-import { InventoryScannerModal } from '@/components/inventory/InventoryScannerModal'
+import { InventoryScannerModal, type ResultadoLectura } from '@/components/inventory/InventoryScannerModal'
 import { QuantityInput } from '@/components/ui/quantity-input'
 import { getStockStatusView } from '@/lib/stock-status'
 import {
@@ -201,17 +201,21 @@ export function PosTerminal({
   }, [])
 
   // El escáner espera esta promesa antes de aceptar otra lectura.
-  const onDetected = useCallback(async (code: string) => {
+  const onDetected = useCallback(async (code: string): Promise<ResultadoLectura> => {
     setError(null)
     setAviso(null)
     const res = await lookupForPos({ code })
 
-    if (!res.ok) { setError(res.message); return }
+    if (!res.ok) {
+      // Un QR ajeno (un enlace, un texto largo) no es un producto: mensaje claro, sin ruido.
+      const mensaje = res.code === 'VALIDATION' ? 'Ese código no es de un producto de tu catálogo.' : res.message
+      return { tipo: 'error', mensaje }
+    }
     if (!res.data) {
-      setAviso(`El código ${code} no está registrado. Búscalo por nombre o créalo en inventario.`)
-      return
+      return { tipo: 'aviso', mensaje: `El código ${code.length > 24 ? `${code.slice(0, 24)}…` : code} no está registrado.` }
     }
     agregar(res.data)
+    return { tipo: 'ok', mensaje: `+ ${res.data.name}` }
   }, [agregar])
 
   /*
@@ -433,7 +437,7 @@ export function PosTerminal({
      * taparía las últimas líneas del carrito sin ese hueco. En escritorio
      * vive en su columna y no tapa nada.
      */
-    <div className="pb-40 lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-6 lg:pb-0">
+    <div className="flex flex-col gap-5 pb-[23rem] lg:grid lg:grid-cols-[minmax(0,1fr)_27rem] lg:items-start lg:gap-8 lg:pb-0">
       {/* Avisos a ANCHO COMPLETO sobre las dos columnas.
           Sin `col-span-2` cada uno ocuparía una celda de la rejilla y
           desplazaría el carrito a una tercera fila. */}
@@ -509,79 +513,104 @@ export function PosTerminal({
       )}
 
       {/* ══════════ COLUMNA IZQUIERDA: entrada de productos ══════════ */}
-      <div className="flex min-w-0 flex-col gap-4">
+      <div className="flex min-w-0 flex-col gap-5">
       {/* --- Entrada: escáner + búsqueda --------------------------------- */}
-      <div className={pedido ? 'hidden' : 'flex gap-2'}>
-        <button
-          type="button"
-          onClick={() => { setAviso(null); setEscaneando(true) }}
-          className="h-touch-xl flex-1 rounded-2xl bg-industrial-600 text-lg font-bold text-white transition active:scale-95"
-        >
-          Escanear <span className="hidden text-sm font-normal opacity-75 lg:inline">(F4)</span>
-        </button>
-      </div>
+      <div className={pedido ? 'hidden' : 'relative'}>
+        <div className="flex gap-3">
+          <div className="relative min-w-0 flex-1">
+            <svg aria-hidden viewBox="0 0 24 24" className="pointer-events-none absolute left-4 top-1/2 size-6 -translate-y-1/2 text-ink-muted" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+            </svg>
+            <input
+              ref={buscadorRef}
+              value={busqueda}
+              onChange={(e) => buscar(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); void alPulsarEnter() }
+                else if (e.key === 'ArrowDown' && resultados.length > 0) { e.preventDefault(); setActivo((a) => (a + 1) % resultados.length) }
+                else if (e.key === 'ArrowUp' && resultados.length > 0) { e.preventDefault(); setActivo((a) => (a <= 0 ? resultados.length - 1 : a - 1)) }
+                else if (e.key === 'Escape') { setResultados([]); setActivo(-1) }
+              }}
+              role="combobox"
+              aria-expanded={resultados.length > 0}
+              aria-controls="resultados-pos"
+              aria-autocomplete="list"
+              autoComplete="off"
+              enterKeyHint="search"
+              placeholder="Buscar por nombre, código o SKU…  (F2)"
+              className="h-16 w-full rounded-2xl border-2 border-hairline bg-surface pl-12 pr-4 text-lg text-ink shadow-sm placeholder:text-ink-muted focus:border-industrial-600 focus:outline-none focus:ring-4 focus:ring-industrial-600/20"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => { setAviso(null); setEscaneando(true) }}
+            aria-label="Escanear con la cámara"
+            className="flex h-16 shrink-0 items-center justify-center gap-2 rounded-2xl bg-industrial-600 px-5 text-base font-bold text-white shadow-sm transition active:scale-95"
+          >
+            <svg aria-hidden viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M4 12h16" />
+            </svg>
+            <span className="hidden sm:inline">Escanear</span>
+            <span className="hidden text-sm font-normal opacity-75 lg:inline">(F4)</span>
+          </button>
+        </div>
 
-      <div className={pedido ? 'hidden' : undefined}>
-        <input
-          ref={buscadorRef}
-          value={busqueda}
-          onChange={(e) => buscar(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); void alPulsarEnter() }
-            else if (e.key === 'ArrowDown' && resultados.length > 0) { e.preventDefault(); setActivo((a) => (a + 1) % resultados.length) }
-            else if (e.key === 'ArrowUp' && resultados.length > 0) { e.preventDefault(); setActivo((a) => (a <= 0 ? resultados.length - 1 : a - 1)) }
-            else if (e.key === 'Escape') { setResultados([]); setActivo(-1) }
-          }}
-          role="combobox"
-          aria-expanded={resultados.length > 0}
-          aria-controls="resultados-pos"
-          aria-autocomplete="list"
-          autoComplete="off"
-          placeholder="Código, SKU o nombre…  (F2)"
-          className="h-touch-lg w-full rounded-xl border border-hairline bg-surface px-4 text-base text-ink placeholder:text-ink-muted focus:border-industrial-600 focus:outline-none focus:ring-2 focus:ring-industrial-600/40"
-        />
-        {pendiente && busqueda.trim().length >= 2 && resultados.length === 0 && (
-          <p className="mt-2 px-1 text-sm text-ink-muted" role="status">Buscando…</p>
-        )}
-        {falloBusqueda && (
-          <p className="mt-2 rounded-xl bg-stock-out-soft px-3 py-2 text-sm font-semibold text-stock-out" role="alert">
-            No pude buscar ahora. Revisa tu conexión y vuelve a escribir.
-          </p>
-        )}
-        {!pendiente && !falloBusqueda && resultados.length === 0 && buscado !== '' && buscado === busqueda.trim() && (
-          <p className="mt-2 rounded-xl border border-hairline bg-surface px-3 py-2 text-sm text-ink-muted" role="status">
-            Sin coincidencias para «{buscado}». Prueba con menos letras o créalo en inventario.
-          </p>
-        )}
-        {resultados.length > 0 && (
-          <ul id="resultados-pos" role="listbox" className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-hairline bg-surface">
-            {resultados.map((p, i) => {
-              const s = getStockStatusView(p.stock, p.minStock)
-              const marcado = i === activo
-              return (
-                <li key={p.productId} role="option" aria-selected={marcado}>
-                  <button
-                    type="button"
-                    ref={(el) => { if (marcado) el?.scrollIntoView({ block: 'nearest' }) }}
-                    onMouseEnter={() => setActivo(i)}
-                    onClick={() => { agregar(p); setBusqueda(''); setResultados([]); setActivo(-1) }}
-                    className={`flex w-full items-center gap-3 border-b border-hairline px-3 py-3 text-left last:border-0 active:bg-surface-sunken ${marcado ? 'bg-industrial-600/10' : ''}`}
-                  >
-                    <span className={`size-2.5 shrink-0 rounded-full ${s.dotClassName}`} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-semibold text-ink">
-                        <Resaltado texto={p.name} buscadas={busqueda} />
-                      </span>
-                      <span className="block text-xs text-ink-muted">
-                        <Resaltado texto={p.sku} buscadas={busqueda} /> · stock {formatQuantity(p.stock, p.unitType)} {unitLabel(p.unitType)}
-                      </span>
-                    </span>
-                    <span className="shrink-0 font-bold text-ink">{money(p.salePrice)}</span>
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
+        {/* Lista FLOTANTE: no empuja el carrito ni el cobro; se cierra al tocar fuera o con Esc. */}
+        {(resultados.length > 0 || (busqueda.trim().length >= 2 && (pendiente || falloBusqueda || (buscado !== '' && buscado === busqueda.trim())))) && (
+          <>
+            <div className="fixed inset-0 z-20" aria-hidden onClick={() => { setResultados([]); setActivo(-1) }} />
+            <div
+              className="absolute inset-x-0 top-full z-30 mt-2 max-h-[min(32rem,62dvh)] overflow-y-auto overscroll-contain rounded-2xl border border-hairline bg-surface shadow-2xl ring-1 ring-black/5"
+            >
+              {pendiente && resultados.length === 0 && (
+                <p className="px-5 py-4 text-base text-ink-muted" role="status">Buscando…</p>
+              )}
+              {falloBusqueda && (
+                <p className="px-5 py-4 text-base font-semibold text-stock-out" role="alert">
+                  No pude buscar ahora. Revisa tu conexión y vuelve a escribir.
+                </p>
+              )}
+              {!pendiente && !falloBusqueda && resultados.length === 0 && (
+                <p className="px-5 py-4 text-base text-ink-muted" role="status">
+                  Sin coincidencias para «{buscado}». Prueba con menos letras o créalo en inventario.
+                </p>
+              )}
+              {resultados.length > 0 && (
+                <ul id="resultados-pos" role="listbox" className="divide-y divide-hairline">
+                  {resultados.map((p, i) => {
+                    const s = getStockStatusView(p.stock, p.minStock)
+                    const marcado = i === activo
+                    return (
+                      <li key={p.productId} role="option" aria-selected={marcado}>
+                        <button
+                          type="button"
+                          ref={(el) => { if (marcado) el?.scrollIntoView({ block: 'nearest' }) }}
+                          onMouseEnter={() => setActivo(i)}
+                          onClick={() => { agregar(p); setBusqueda(''); setResultados([]); setActivo(-1) }}
+                          className={`flex min-h-[4.5rem] w-full items-center gap-4 px-5 py-3 text-left transition active:bg-surface-sunken ${marcado ? 'bg-industrial-600/10' : 'hover:bg-surface-sunken'}`}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-base font-bold text-ink sm:text-lg">
+                              <Resaltado texto={p.name} buscadas={busqueda} />
+                            </span>
+                            <span className="mt-0.5 flex flex-wrap items-center gap-x-4 gap-y-0.5 text-sm text-ink-muted">
+                              <span className="font-mono"><Resaltado texto={p.sku} buscadas={busqueda} /></span>
+                              <span className="font-bold text-ink">{money(p.salePrice)}</span>
+                              <span className="inline-flex items-center gap-1.5" title={s.label}>
+                                <span className={`size-2.5 rounded-full ${s.dotClassName}`} aria-hidden />
+                                {formatQuantity(p.stock, p.unitType)} {unitLabel(p.unitType)}
+                              </span>
+                            </span>
+                          </span>
+                          <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-full bg-industrial-600/10 text-xl font-bold text-industrial-700">+</span>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+          </>
         )}
       </div>
 
@@ -599,7 +628,7 @@ export function PosTerminal({
       {/* ══════════ COLUMNA DERECHA: carrito, totales y cobro ══════════
           En escritorio se queda pegada arriba mientras la izquierda crece:
           el cajero no pierde de vista el total al bajar por la lista. */}
-      <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-4">
+      <div className="flex min-w-0 flex-col gap-5 lg:sticky lg:top-4">
       {/* --- Cliente: encima del carrito, que es donde se decide el
               comprobante ------------------------------------------------- */}
       <CustomerPicker cliente={cliente} onChange={setCliente} />
@@ -615,14 +644,14 @@ export function PosTerminal({
             Escanea un producto para empezar.
           </p>
         ) : (
-          <ul className="mt-2 flex flex-col gap-2">
+          <ul className="mt-3 flex flex-col gap-3">
             {carrito.map((l) => {
               const neto = cent(l.producto.salePrice * l.quantity - l.discount)
               const sinStock = l.producto.trackStock && l.quantity > l.producto.stock
               return (
                 <li
                   key={l.key}
-                  className={`rounded-xl border p-3 ${sinStock ? 'border-stock-out/50 bg-stock-out-soft' : 'border-hairline bg-surface'}`}
+                  className={`rounded-2xl border p-4 ${sinStock ? 'border-stock-out/50 bg-stock-out-soft' : 'border-hairline bg-surface'}`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -649,7 +678,8 @@ export function PosTerminal({
                     unitType={l.producto.unitType}
                     min={0}
                     ariaLabel={`Cantidad de ${l.producto.name}`}
-                    className="mt-2"
+                    className="mt-3"
+                    grande
                   />
                   )}
 
@@ -676,7 +706,7 @@ export function PosTerminal({
                         key={n}
                         type="button"
                         onClick={() => sumarCantidad(l.key, n)}
-                        className="h-touch flex-1 rounded-lg border border-hairline bg-surface text-xs font-bold text-ink active:scale-95"
+                        className="h-12 flex-1 rounded-xl border border-hairline bg-surface text-sm font-bold text-ink active:scale-95"
                       >
                         +{formatQuantity(n, l.producto.unitType)}
                       </button>
@@ -684,7 +714,7 @@ export function PosTerminal({
                     <button
                       type="button"
                       onClick={() => setCarrito((p) => p.filter((x) => x.key !== l.key))}
-                      className="h-touch shrink-0 rounded-lg px-3 text-xs font-semibold text-stock-out"
+                      className="h-12 shrink-0 rounded-xl px-4 text-sm font-semibold text-stock-out"
                     >
                       Quitar
                     </button>
@@ -708,7 +738,7 @@ export function PosTerminal({
            * Escritorio: estático dentro de la columna derecha, que ya es
            * sticky, así que acompaña igual sin flotar sobre el contenido.
            */
-          className="safe-bottom fixed inset-x-0 bottom-0 z-20 border-t border-hairline bg-surface px-4 pt-3 shadow-[0_-8px_24px_rgba(2,6,23,0.12)] lg:static lg:inset-auto lg:rounded-2xl lg:border lg:p-4 lg:pb-4 lg:shadow-none"
+          className="safe-bottom fixed inset-x-0 bottom-0 z-20 border-t border-hairline bg-surface px-4 pt-3 shadow-[0_-8px_24px_rgba(2,6,23,0.12)] max-h-[85dvh] overflow-y-auto lg:static lg:inset-auto lg:max-h-none lg:overflow-visible lg:rounded-2xl lg:border lg:p-5 lg:pb-5 lg:shadow-none"
         >
           <div className="mx-auto max-w-lg lg:max-w-none">
             <dl className="flex flex-col gap-0.5 text-sm">
@@ -726,13 +756,14 @@ export function PosTerminal({
             </dl>
 
             {puedeCobrar && (<>
-            <div className="mt-2 flex gap-1 overflow-x-auto pb-1">
+            <div role="group" aria-label="Método de pago" className="mt-3 grid grid-cols-3 gap-2.5">
               {METODOS.map((m) => (
                 <button key={m.value} type="button" onClick={() => setMetodo(m.value)}
                   aria-pressed={metodo === m.value}
-                  className={`h-touch shrink-0 rounded-xl px-3 text-sm font-bold ${
-                    metodo === m.value ? 'bg-graphite-900 text-white dark:bg-graphite-50 dark:text-graphite-900'
-                    : 'border border-hairline text-ink'
+                  className={`h-14 rounded-2xl px-2 text-base font-bold transition active:scale-95 ${
+                    metodo === m.value
+                      ? 'bg-industrial-600 text-white shadow-md ring-2 ring-industrial-600 ring-offset-2 ring-offset-surface'
+                      : 'border-2 border-hairline bg-surface text-ink hover:bg-surface-sunken'
                   }`}>
                   {m.label}
                 </button>
@@ -740,13 +771,13 @@ export function PosTerminal({
             </div>
 
             {metodo === 'EFECTIVO' && (
-              <div className="mt-2 flex items-center gap-2">
+              <div className="mt-3 flex items-center gap-3">
                 <input
                   type="number" inputMode="decimal" value={recibido}
                   onChange={(e) => setRecibido(e.target.value)}
                   placeholder="Recibido"
                   aria-label="Efectivo recibido"
-                  className="h-touch-lg min-w-0 flex-1 rounded-xl border border-hairline bg-surface px-4 text-lg font-bold text-ink"
+                  className="h-14 min-w-0 flex-1 rounded-2xl border-2 border-hairline bg-surface px-4 text-xl font-bold text-ink focus:border-industrial-600 focus:outline-none"
                 />
                 <p className="shrink-0 text-sm text-ink-muted">
                   Vuelto <span className="text-base font-bold text-ink">{money(Math.max(vuelto, 0))}</span>
@@ -777,13 +808,13 @@ export function PosTerminal({
 
             </>)}
 
-            <div className="mt-2 flex gap-2">
+            <div className="mt-3 flex gap-3">
               {!pedido && puedeArmarPedido && (
                 <button
                   type="button"
                   onClick={enviarACaja}
                   disabled={pendiente || carrito.some((l) => l.quantity <= 0)}
-                  className={`h-touch-xl rounded-2xl text-sm font-bold transition active:scale-95 disabled:opacity-40 ${
+                  className={`h-16 rounded-2xl text-base font-bold transition active:scale-95 disabled:opacity-40 ${
                     puedeCobrar ? 'shrink-0 border border-graphite-900 px-4 text-ink dark:border-graphite-50' : 'min-w-0 flex-1 bg-industrial-600 text-lg text-white'
                   }`}
                 >
@@ -794,7 +825,7 @@ export function PosTerminal({
                 type="button"
                 onClick={cotizar}
                 disabled={pendiente || carrito.some((l) => l.quantity <= 0)}
-                className="h-touch-xl shrink-0 rounded-2xl border border-graphite-900 px-4 text-sm font-bold text-ink transition active:scale-95 disabled:opacity-40 dark:border-graphite-50"
+                className="h-16 shrink-0 rounded-2xl border-2 border-graphite-900 px-5 text-base font-bold text-ink transition active:scale-95 disabled:opacity-40 dark:border-graphite-50"
               >
                 Cotizar
                 <span className="hidden text-xs font-normal opacity-70 lg:block">Ctrl+G</span>
@@ -803,7 +834,7 @@ export function PosTerminal({
                 type="button"
                 onClick={cobrar}
                 disabled={pendiente || carrito.some((l) => l.quantity <= 0)}
-                className="h-touch-xl min-w-0 flex-1 rounded-2xl bg-industrial-600 text-lg font-bold text-white transition active:scale-95 disabled:opacity-40"
+                className="h-16 min-w-0 flex-1 rounded-2xl bg-industrial-600 text-xl font-bold text-white shadow-md transition active:scale-95 disabled:opacity-40"
               >
                 {pendiente ? 'Registrando…' : `Cobrar ${money(totales.total)}`}
                 <span className="hidden text-xs font-normal opacity-75 lg:block">F9</span>

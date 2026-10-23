@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useRef, useState, useTransition } from 'react'
-import { InventoryScannerModal } from '@/components/inventory/InventoryScannerModal'
+import { InventoryScannerModal, type ResultadoLectura } from '@/components/inventory/InventoryScannerModal'
 import { QuantityInput } from '@/components/ui/quantity-input'
 import { getStockStatusView } from '@/lib/stock-status'
 import { formatQuantity, stepsFor, unitLabel } from '@/lib/quantity'
@@ -64,25 +64,20 @@ export function ScanToStockSheet() {
   // --- Escaneo -> búsqueda -------------------------------------------------
   // El escáner espera esta promesa antes de aceptar otra lectura, así que el
   // anti-rebote y la consulta al servidor están encadenados de verdad.
-  const onDetected = useCallback(async (code: string) => {
+  const onDetected = useCallback(async (code: string): Promise<ResultadoLectura | void> => {
     setError(null)
     const res = await findProductByCode({ code })
 
     if (!res.ok) {
-      setError(res.message)
-      setPhase({ kind: 'idle' })
-      return
+      // El escáner se queda abierto y lo muestra DENTRO del visor.
+      return { tipo: 'error', mensaje: res.message }
     }
 
     if (!res.data) {
       // El alta exprés necesita un almacén, y aquí todavía no hay producto
       // del que sacarlo.
       const w = await getDefaultWarehouse()
-      if (!w.ok) {
-        setError(w.message)
-        setPhase({ kind: 'idle' })
-        return
-      }
+      if (!w.ok) return { tipo: 'error', mensaje: w.message }
       setPhase({
         kind: 'unknown',
         code,
@@ -189,7 +184,11 @@ export function ScanToStockSheet() {
 
       <InventoryScannerModal
         open={phase.kind === 'scanning'}
-        onClose={() => phase.kind === 'scanning' && setPhase({ kind: 'idle' })}
+        // Actualización FUNCIONAL, nunca `phase` capturado: el escáner llama a
+        // onClose justo después de que onDetected haya puesto la fase `product`
+        // o `unknown`, y un `phase` capturado (aún `scanning`) la pisaría con
+        // `idle`: el modal desaparecía sin mostrar el producto ni ningún aviso.
+        onClose={() => setPhase((p) => (p.kind === 'scanning' ? { kind: 'idle' } : p))}
         onDetected={onDetected}
         // Se cierra tras la primera lectura: el siguiente paso es elegir la
         // cantidad, y mantener la cámara viva detrás gasta batería para nada.

@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { Component, useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { esRepeticion } from '@/lib/codigos-barras'
 import type { LectorCamara } from '@/lib/lector-camara'
 
 /**
@@ -28,14 +29,30 @@ import type { LectorCamara } from '@/lib/lector-camara'
  *    ellas 10 movimientos de stock.
  */
 
+/**
+ * Lo que el padre puede devolver tras una lectura para que se VEA dentro del
+ * escáner. Sin esto, el aviso del padre se pinta detrás de la hoja y tras la
+ * vibración no se sabe si se agregó, no existe o falló.
+ */
+export interface ResultadoLectura {
+  tipo: 'ok' | 'aviso' | 'error'
+  mensaje: string
+}
+
 export interface InventoryScannerModalProps {
   open: boolean
+  /**
+   * Se invoca justo DESPUÉS de `onDetected` cuando `continuous` es false. Tiene que
+   * ser idempotente y no leer estado capturado: usa actualizaciones funcionales
+   * (`setX((p) => …)`), porque el estado que ve esta función puede ser anterior
+   * a lo que `onDetected` acaba de fijar. (tests/lector.ts lo vigila.)
+   */
   onClose: () => void
   /**
    * Recibe el código leído. Si devuelve una promesa, el escáner queda en
    * pausa hasta que resuelva (evita lecturas en ráfaga).
    */
-  onDetected: (code: string) => void | Promise<void>
+  onDetected: (code: string) => void | ResultadoLectura | Promise<void | ResultadoLectura>
   title?: string
   hint?: string
   /**
@@ -87,7 +104,7 @@ function pulse() {
   }
 }
 
-export function InventoryScannerModal({
+function EscanerInterno({
   open,
   onClose,
   onDetected,
@@ -98,7 +115,7 @@ export function InventoryScannerModal({
 }: InventoryScannerModalProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const controlsRef = useRef<LectorCamara | null>(null)
-  const lastScanRef = useRef<{ code: string; at: number } | null>(null)
+  const lastScanRef = useRef<{ code: string; seen: number } | null>(null)
   /** Evita procesar lecturas mientras `onDetected` sigue en vuelo. */
   const lockRef = useRef(false)
 
@@ -107,6 +124,24 @@ export function InventoryScannerModal({
   const [manualCode, setManualCode] = useState('')
   const [lastCode, setLastCode] = useState<string | null>(null)
   const [motor, setMotor] = useState<'nativo' | 'zxing' | null>(null)
+  const [resultado, setResultado] = useState<ResultadoLectura | null>(null)
+
+  /*
+   * Los callbacks del padre se guardan en refs. El padre suele pasar funciones
+   * NUEVAS en cada render (`onClose={() => …}`), y si el efecto de la cámara
+   * dependiera de ellas, cada lectura —que hace re-renderizar al padre— apagaría
+   * y reabriría la cámara: el visor «se sale» justo al leer.
+   */
+  const onDetectedRef = useRef(onDetected)
+  const onCloseRef = useRef(onClose)
+  const continuousRef = useRef(continuous)
+  const dedupeRef = useRef(dedupeMs)
+  useEffect(() => {
+    onDetectedRef.current = onDetected
+    onCloseRef.current = onClose
+    continuousRef.current = continuous
+    dedupeRef.current = dedupeMs
+  })
 
   const headingId = useId()
 
@@ -116,38 +151,38 @@ export function InventoryScannerModal({
     setTorchOn(false)
   }, [])
 
-  const handleCode = useCallback(
-    async (code: string) => {
-      const now = Date.now()
-      const last = lastScanRef.current
+  const handleCode = useCallback(async (code: string) => {
+    const now = Date.now()
+    const last = lastScanRef.current
 
-      // Anti-rebote: el mismo código frente a la cámara dispara ~10 lecturas/s.
-      if (last && last.code === code && now - last.at < dedupeMs) return
-      if (lockRef.current) return
+    // Anti-rebote (ver `esRepeticion`): sostener el código no suma otra unidad.
+    if (esRepeticion(last, code, now, dedupeRef.current)) return
+    if (lockRef.current) return
 
-      lockRef.current = true
-      lastScanRef.current = { code, at: now }
-      setLastCode(code)
-      pulse()
-      setState({ phase: 'busy' })
+    lockRef.current = true
+    lastScanRef.current = { code, seen: now }
+    setLastCode(code)
+    setResultado(null)
+    pulse()
+    setState({ phase: 'busy' })
 
-      try {
-        await onDetected(code)
-        if (!continuous) {
-          onClose()
-          return
-        }
-        setState({ phase: 'scanning' })
-      } catch {
-        // El error de negocio lo comunica el padre (§6.7); aquí solo se
-        // reanuda para que el operario pueda seguir trabajando.
-        setState({ phase: 'scanning' })
-      } finally {
-        lockRef.current = false
+    try {
+      const r = await onDetectedRef.current(code)
+      if (r) setResultado(r)
+      // Un error se queda en pantalla para que se vea; lo demás cierra si no es continuo.
+      if (!continuousRef.current && r?.tipo !== 'error') {
+        onCloseRef.current()
+        return
       }
-    },
-    [continuous, dedupeMs, onClose, onDetected],
-  )
+    } catch {
+      // Un fallo del padre (red, servidor) nunca debe cerrar ni romper el
+      // visor: se avisa dentro y se sigue escaneando.
+      setResultado({ tipo: 'error', mensaje: 'No pude registrar esa lectura. Intenta de nuevo.' })
+    } finally {
+      lockRef.current = false
+    }
+    setState((e) => (e.phase === 'busy' ? { phase: 'scanning' } : e))
+  }, [])
 
   // --- Arranque y parada de la cámara -------------------------------------
   useEffect(() => {
@@ -210,17 +245,24 @@ export function InventoryScannerModal({
       cancelled = true
       stop()
     }
-  }, [open, handleCode, stop])
+  }, [open, handleCode, stop]) // handleCode y stop son estables ([]): la cámara solo se reinicia al abrir/cerrar
 
   // Cerrar con Escape (útil en el POS de escritorio).
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') onCloseRef.current()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open])
+
+  // El mensaje de la última lectura se retira solo.
+  useEffect(() => {
+    if (!resultado) return
+    const t = setTimeout(() => setResultado(null), 3500)
+    return () => clearTimeout(t)
+  }, [resultado])
 
   // Bloquea el scroll del fondo mientras el sheet está abierto.
   useEffect(() => {
@@ -344,9 +386,20 @@ export function InventoryScannerModal({
             </div>
           )}
 
+          {resultado && (
+            <div
+              role="status"
+              className={`absolute inset-x-3 top-3 rounded-xl px-4 py-3 text-center text-sm font-bold text-white shadow-lg ${
+                resultado.tipo === 'ok' ? 'bg-stock-ok' : resultado.tipo === 'aviso' ? 'bg-stock-low' : 'bg-stock-out'
+              }`}
+            >
+              {resultado.mensaje}
+            </div>
+          )}
+
           {state.phase === 'busy' && (
             <div className="absolute inset-x-0 bottom-0 bg-industrial-600 px-4 py-2 text-center text-sm font-semibold text-white">
-              Registrando {lastCode}…
+              Registrando {lastCode && lastCode.length > 40 ? `${lastCode.slice(0, 40)}…` : lastCode}…
             </div>
           )}
 
@@ -402,3 +455,44 @@ export function InventoryScannerModal({
 }
 
 export default InventoryScannerModal
+
+/**
+ * Barrera de errores del escáner: si algo lanza al renderizar, se cierra SOLO el
+ * escáner con un aviso, en vez de tumbar el Punto de Venta entero.
+ */
+class BarreraEscaner extends Component<
+  { onClose: () => void; children: ReactNode },
+  { fallo: boolean }
+> {
+  state = { fallo: false }
+  static getDerivedStateFromError() { return { fallo: true } }
+  componentDidCatch(error: unknown) {
+    console.error('[escáner] fallo al renderizar', error instanceof Error ? error.message : error)
+  }
+  render() {
+    if (!this.state.fallo) return this.props.children
+    return (
+      <div className="fixed inset-0 z-50 grid place-items-center bg-graphite-950/90 px-6 text-center" role="alert">
+        <div className="max-w-sm rounded-2xl bg-surface p-5">
+          <p className="text-lg font-bold text-ink">El escáner tuvo un problema</p>
+          <p className="mt-1 text-sm text-ink-muted">Tu venta sigue intacta. Puedes escribir el código a mano en el buscador.</p>
+          <button
+            type="button"
+            onClick={() => { this.setState({ fallo: false }); this.props.onClose() }}
+            className="mt-4 h-touch-lg w-full rounded-xl bg-industrial-600 font-bold text-white"
+          >
+            Cerrar escáner
+          </button>
+        </div>
+      </div>
+    )
+  }
+}
+
+export function InventoryScannerModal(props: InventoryScannerModalProps) {
+  return (
+    <BarreraEscaner onClose={props.onClose}>
+      <EscanerInterno {...props} />
+    </BarreraEscaner>
+  )
+}

@@ -45,3 +45,21 @@ export function formatoDeDetector(nombre: string): FormatoLectura {
   const conocidos: FormatoLectura[] = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code']
   return (conocidos as string[]).includes(n) ? (n as FormatoLectura) : 'otro'
 }
+
+export interface UltimaLectura { code: string; seen: number }
+
+/**
+ * Anti-rebote del escáner. El mismo código frente a la cámara se lee ~10 veces
+ * por segundo; cada avistamiento RENUEVA la ventana, así que sostener el código
+ * no suma otra unidad: hay que dejar de verlo `ventanaMs` para volver a contarlo.
+ * Muta `seen` de la última lectura cuando es una repetición.
+ */
+export function esRepeticion(
+  ultima: UltimaLectura | null, code: string, ahora: number, ventanaMs: number,
+): boolean {
+  if (ultima && ultima.code === code && ahora - ultima.seen < ventanaMs) {
+    ultima.seen = ahora
+    return true
+  }
+  return false
+}

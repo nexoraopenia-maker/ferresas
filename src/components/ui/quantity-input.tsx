@@ -41,6 +41,7 @@ export function QuantityInput({
   ariaLabel,
   className,
   showStepper = true,
+  grande = false,
 }: {
   value: number
   onChange: (n: number) => void
@@ -50,6 +51,8 @@ export function QuantityInput({
   ariaLabel: string
   className?: string
   showStepper?: boolean
+  /** Botones − / + de 56 px y cifra mayor: para el mostrador, donde se toca con prisa. */
+  grande?: boolean
 }) {
   // Borrador local. Se sincroniza con `value` solo cuando el cambio viene de
   // FUERA (un botón de atajo), no mientras el usuario escribe: si no, cada
@@ -103,7 +106,7 @@ export function QuantityInput({
           type="button"
           aria-label={`Quitar ${paso} ${unitLabel(unitType)}`}
           onClick={() => mover(-paso)}
-          className="size-touch shrink-0 rounded-xl bg-surface-sunken text-2xl font-bold text-ink active:scale-95"
+          className={`shrink-0 rounded-xl bg-surface-sunken font-bold text-ink active:scale-95 ${grande ? 'size-touch-lg border border-hairline text-3xl' : 'size-touch text-2xl'}`}
         >
           −
         </button>
@@ -137,7 +140,7 @@ export function QuantityInput({
             if (e.key === 'ArrowUp') { e.preventDefault(); mover(paso) }
             if (e.key === 'ArrowDown') { e.preventDefault(); mover(-paso) }
           }}
-          className="h-touch-lg w-full rounded-xl border border-hairline bg-surface pr-12 text-center text-xl font-bold text-ink focus:border-industrial-600 focus:outline-none focus:ring-2 focus:ring-industrial-600/40"
+          className={`w-full rounded-xl border border-hairline bg-surface pr-12 text-center font-bold text-ink focus:border-industrial-600 focus:outline-none focus:ring-2 focus:ring-industrial-600/40 ${grande ? 'h-touch-lg text-2xl' : 'h-touch-lg text-xl'}`}
         />
         <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-ink-muted">
           {unitLabel(unitType)}
@@ -149,7 +152,7 @@ export function QuantityInput({
           type="button"
           aria-label={`Añadir ${paso} ${unitLabel(unitType)}`}
           onClick={() => mover(paso)}
-          className="size-touch shrink-0 rounded-xl bg-surface-sunken text-2xl font-bold text-ink active:scale-95"
+          className={`shrink-0 rounded-xl bg-surface-sunken font-bold text-ink active:scale-95 ${grande ? 'size-touch-lg border border-hairline text-3xl' : 'size-touch text-2xl'}`}
         >
           +
         </button>
