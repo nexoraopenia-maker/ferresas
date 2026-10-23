@@ -3,7 +3,8 @@ import { correr } from './teardown'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
-import { asegurarDatosDemo, correoDemo, prepararCuentaDemo, PRODUCTOS_DEMO, sembrarDatosDemo } from '../src/features/demo/seed'
+import { asegurarDatosDemo, CATEGORIAS_DEMO, CLIENTES_DEMO, correoDemo, prepararCuentaDemo, PRODUCTOS_DEMO, sembrarDatosDemo } from '../src/features/demo/seed'
+import { esGs1Valido } from '../src/lib/codigos-barras'
 import { alertasDeStock, rendimientoDeCaja, resumenDeVentas } from '../src/features/dashboard/service'
 import { diaLocal } from '../src/lib/periodos'
 import type { TenantContext } from '../src/lib/tenant-context'
@@ -58,7 +59,7 @@ async function main() {
   console.log('\n5) Lo que ve quien entra')
   const nProductos = await prisma.product.count({ where: { tenantId: c.tenantId, deletedAt: null } })
   check(`${PRODUCTOS_DEMO.length} productos`, nProductos === PRODUCTOS_DEMO.length, String(nProductos))
-  check('6 clientes ficticios', (await prisma.customer.count({ where: { tenantId: c.tenantId } })) === 6)
+  check(`${CLIENTES_DEMO.length} clientes ficticios`, (await prisma.customer.count({ where: { tenantId: c.tenantId } })) === CLIENTES_DEMO.length)
   check('4 cotizaciones', (await prisma.quote.count({ where: { tenantId: c.tenantId } })) === 4)
   const ventas = await prisma.sale.findMany({ where: { tenantId: c.tenantId, status: 'COMPLETADA' }, select: { completedAt: true, total: true, number: true, documentType: true } })
   check('>>> 15 ventas completadas (14 + una cotización convertida)', ventas.length === 15, String(ventas.length))
@@ -68,6 +69,24 @@ async function main() {
   check('>>> y salen ACEPTADOS (por el proveedor simulado), no pendientes',
     (await prisma.taxDocument.count({ where: { tenantId: c.tenantId, status: 'ACEPTADO' } })) === (await prisma.taxDocument.count({ where: { tenantId: c.tenantId } })))
   check('los números de venta son únicos', new Set(ventas.map((v) => v.number)).size === ventas.length)
+
+  console.log('\n5b) Catálogo ferretero realista, listo para el POS y el escáner')
+  const todos = await prisma.product.findMany({ where: { tenantId: c.tenantId, deletedAt: null }, select: { sku: true, barcode: true, qrCode: true, categoryId: true, salePrice: true } })
+  check('>>> decenas de productos (60 o más)', todos.length >= 60, String(todos.length))
+  check('SKU únicos en el catálogo definido', new Set(PRODUCTOS_DEMO.map((p) => p.sku)).size === PRODUCTOS_DEMO.length)
+  const barras = PRODUCTOS_DEMO.map((p) => p.barcode).filter((b): b is string => !!b)
+  check('códigos de barras únicos', new Set(barras).size === barras.length)
+  check('>>> TODOS los códigos de barras son EAN-13 con dígito de control válido (el escáner descarta los demás)', barras.length >= 30 && barras.every((b) => esGs1Valido(b, 13)), barras.filter((b) => !esGs1Valido(b, 13)).join(','))
+  check('hay productos con QR propio para probar su lectura', todos.filter((p) => p.qrCode).length >= 3)
+  check('>>> cada producto del catálogo tiene UNA categoría definida', PRODUCTOS_DEMO.every((p) => CATEGORIAS_DEMO.filter((k) => k.skus.includes(p.sku)).length === 1),
+    PRODUCTOS_DEMO.filter((p) => CATEGORIAS_DEMO.filter((k) => k.skus.includes(p.sku)).length !== 1).map((p) => p.sku).join(','))
+  check('...y ninguna categoría nombra un SKU que no existe', CATEGORIAS_DEMO.every((k) => k.skus.every((sk) => PRODUCTOS_DEMO.some((p) => p.sku === sk))))
+  check('>>> en la base, todos los productos quedaron con categoría', todos.every((p) => p.categoryId !== null))
+  check(`las ${CATEGORIAS_DEMO.length} categorías existen`, (await prisma.category.count({ where: { tenantId: c.tenantId } })) === CATEGORIAS_DEMO.length)
+  check('los ejemplos pedidos están: martillo, cinta métrica, tubo PVC, clavos, interruptores',
+    ['martillo', 'cinta métrica', 'tubo pvc', 'clavos', 'interruptor'].every((k) => PRODUCTOS_DEMO.some((p) => p.name.toLowerCase().includes(k))))
+  check('precios positivos', PRODUCTOS_DEMO.every((p) => p.salePrice > 0))
+  check('hay clientes con línea de crédito (maestros de obra)', (await prisma.customer.count({ where: { tenantId: c.tenantId, creditLimit: { gt: 0 } } })) >= 4)
 
   console.log('\n6) >>> El libro de inventario cuadra')
   const stocks = await prisma.stock.findMany({ where: { tenantId: c.tenantId } })
@@ -102,7 +121,11 @@ async function main() {
   const { obtenerProveedor } = await import('../src/features/invoicing/providers')
   process.env.FACTURACION_PROVEEDOR = 'mock'
   check('>>> sus comprobantes usan SIEMPRE el proveedor simulado', obtenerProveedor('mock', { esDemo: true }) === obtenerProveedor('mock'))
+  // La demo que ya existía (sin categorías) debe ponerse al día sola.
+  await prisma.product.updateMany({ where: { tenantId: c.tenantId }, data: { categoryId: null } })
   const resiembra = await sembrarDatosDemo(c.tenantId)
+  check('>>> una demo antigua (sin categorías) las recupera al volver a sembrar',
+    (await prisma.product.count({ where: { tenantId: c.tenantId, categoryId: null } })) === 0)
   check('>>> sembrar de nuevo no duplica ventas ni números', resiembra.ventas === 0 && (await prisma.sale.count({ where: { tenantId: c.tenantId } })) === 15)
 
   await prisma.tenant.deleteMany({ where: { id: { in: [c.tenantId, real.id] } } })

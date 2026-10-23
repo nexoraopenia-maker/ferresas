@@ -63,3 +63,9 @@ export function esRepeticion(
   }
   return false
 }
+
+/** EAN-13 completo a partir de sus 12 primeros dígitos (añade el dígito de control). */
+export function ean13(cuerpo12: string): string {
+  if (!/^\d{12}$/.test(cuerpo12)) throw new Error('El cuerpo de un EAN-13 son 12 dígitos.')
+  return cuerpo12 + digitoControlGs1(cuerpo12)
+}
