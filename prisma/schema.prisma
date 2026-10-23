@@ -179,6 +179,26 @@ enum PaymentMethod {
   OTRO
 }
 
+/// Estado de una entrada de la cola de envío fiscal.
+enum FiscalDispatchStatus {
+  /// Esperando su turno (`nextAttemptAt`).
+  PENDIENTE
+  /// Reclamada por un worker; vale mientras `lockedUntil` esté en el futuro.
+  EN_CURSO
+  /// El proveedor dio una respuesta definitiva (aceptado, observado o rechazado).
+  COMPLETADO
+  /// Agotó los reintentos SIN respuesta del proveedor. El comprobante sigue PENDIENTE: requiere atención.
+  AGOTADO
+}
+
+/// Qué hace la cola con el documento.
+enum FiscalDispatchOp {
+  /// Enviarlo al proveedor.
+  ENVIAR
+  /// Ya enviado y a la espera: consultar su estado.
+  CONSULTAR
+}
+
 enum CustomerDocType {
   DNI
   RUC
@@ -416,6 +436,7 @@ model Tenant {
   invitations        Invitation[]
   dispatchGuides     DispatchGuide[]
   dispatchGuideItems DispatchGuideItem[]
+  fiscalDispatches   FiscalDispatch[]
   discountCaps       DiscountCap[]
   warehouses         Warehouse[]
   categories         Category[]
@@ -1510,9 +1531,11 @@ model TaxDocument {
   voidedAt   DateTime?
   voidReason String?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  dispatch  FiscalDispatch?
 
+  @@unique([tenantId, id])
   @@unique([tenantId, saleId])
   /// La restricción LEGAL: no puede haber dos comprobantes con el mismo
   /// tipo, serie y correlativo en un mismo negocio.
@@ -2065,4 +2088,51 @@ model DispatchGuideItem {
   @@index([tenantId, guideId])
   @@index([tenantId, productId])
   @@map("dispatch_guide_items")
+}
+
+/**
+ * Cola de envío fiscal (patrón «outbox»).
+ * Una fila por documento a enviar. El comprobante REAL se encola en la MISMA transacción que lo
+ * crea; un worker disparado por un programador externo toma las filas vencidas con reclamo atómico
+ * (`FOR UPDATE SKIP LOCKED`) y un lease (`lockedUntil`): si el worker se cae a mitad de un envío,
+ * la fila vuelve a estar disponible al vencer el lease. Los documentos de PRUEBA nunca se encolan,
+ * y aunque alguien insertara una fila a mano la consulta de reclamo los excluye.
+ * Nada se marca ACEPTADO sin respuesta del proveedor: agotados los reintentos la fila queda AGOTADO
+ * y el comprobante sigue PENDIENTE, con alarma al dueño y al SuperAdmin.
+ */
+model FiscalDispatch {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  taxDocumentId String
+  taxDocument   TaxDocument @relation(fields: [tenantId, taxDocumentId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  op     FiscalDispatchOp     @default(ENVIAR)
+  status FiscalDispatchStatus @default(PENDIENTE)
+
+  /// Intentos hechos (se cuenta al RECLAMAR, así que un worker que se cae también gasta uno).
+  attempts      Int      @default(0)
+  nextAttemptAt DateTime @default(now())
+
+  /// Lease: mientras sea futuro, nadie más la toma. Vencido, se recupera.
+  lockedUntil   DateTime?
+  lockedBy      String?
+  lastAttemptAt DateTime?
+  lastError     String?
+
+  /// Estable por documento y operación: la misma en cada reintento.
+  idempotencyKey String
+
+  completedAt DateTime?
+  exhaustedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([tenantId, taxDocumentId])
+  @@unique([idempotencyKey])
+  @@index([status, nextAttemptAt])
+  @@index([status, lockedUntil])
+  @@index([tenantId, status])
+  @@map("fiscal_dispatches")
 }
