@@ -3,7 +3,7 @@ import { correr } from './teardown'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
-import { asegurarDatosDemo, CATEGORIAS_DEMO, CLIENTES_DEMO, correoDemo, prepararCuentaDemo, PRODUCTOS_DEMO, sembrarDatosDemo } from '../src/features/demo/seed'
+import { asegurarDatosDemo, CATEGORIAS_DEMO, CLIENTES_DEMO, correoDemo, prepararCuentaDemo, PRODUCTOS_DEMO, RUC_EMISOR_DEMO, sembrarDatosDemo } from '../src/features/demo/seed'
 import { esGs1Valido } from '../src/lib/codigos-barras'
 import { alertasDeStock, rendimientoDeCaja, resumenDeVentas } from '../src/features/dashboard/service'
 import { diaLocal } from '../src/lib/periodos'
@@ -16,7 +16,25 @@ const check = (n: string, ok: boolean, extra = '') => {
 }
 const code = (p: Promise<unknown>) => p.then(() => null).catch((e) => e.code ?? e.name ?? String(e))
 
+/**
+ * La demo usa un RUC emisor FIJO y el RUC es único en todo el SaaS. Una base que ya tiene su cuenta demo
+ * (p. ej. una rama de staging clonada de producción) chocaría con la que crea esta prueba. En vez de borrar
+ * la cuenta existente, se le quita el RUC mientras dura la prueba y se le devuelve en el `finally`.
+ */
 async function main() {
+  const previos = await prisma.tenant.findMany({ where: { taxId: RUC_EMISOR_DEMO }, select: { id: true } })
+  if (previos.length > 0) {
+    console.log(`   ℹ ya existe ${previos.length} negocio con el RUC de la demo: se libera durante la prueba y se restituye al final`)
+    await prisma.tenant.updateMany({ where: { id: { in: previos.map((p) => p.id) } }, data: { taxId: null } })
+  }
+  try {
+    return await cuerpo()
+  } finally {
+    for (const p of previos) await prisma.tenant.update({ where: { id: p.id }, data: { taxId: RUC_EMISOR_DEMO } })
+  }
+}
+
+async function cuerpo() {
   console.log('\n1) El correo de la demo')
   check('por defecto es pool@fer.pe', correoDemo() === 'pool@fer.pe' || !!process.env.DEMO_EMAIL)
 

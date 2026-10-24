@@ -280,7 +280,17 @@ async function main() {
   const prismaMulti = new PrismaClient({ adapter: new PrismaPg({ connectionString: urlMulti }) })
   const dbMulti = (prismaMulti as any).$extends({
     name: 'tenant-test',
-    query: { $allModels: { async $allOperations({ args, query }: any) { return query(args) } } },
+    query: {
+      $allModels: {
+        // Este cliente no está acotado al negocio: sin esto, `tenant.findFirst` (el ajuste «caja obligatoria»)
+        // devolvería OTRO negocio de la base —p. ej. la cuenta demo, que exige caja— y la prueba fallaría según
+        // lo que haya en la base. Se acota la lectura del negocio, como hace el cliente aislado.
+        async $allOperations({ model, operation, args, query }: any) {
+          if (model === 'Tenant' && operation === 'findFirst') return query({ ...args, where: { ...(args?.where ?? {}), id: t.id } })
+          return query(args)
+        },
+      },
+    },
   }) as unknown as typeof db
   const ventas = await Promise.all(
     Array.from({ length: 12 }, () =>

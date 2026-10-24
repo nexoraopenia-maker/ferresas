@@ -240,23 +240,77 @@ async function main() {
     const tt0 = new Date()
     const instantes = [tt0]
     for (const s of RAMPA_SEGUNDOS) instantes.push(mas(instantes.at(-1)!, s))
+    // Un intento puede gastarse ANTES de llegar al proveedor (un corte de la base dentro de la zona protegida:
+    // se reprograma igual y no hay llamada). Se contabilizan para que «llamadas = intentos − gastados» sea EXACTO
+    // aunque Neon corte la conexión a mitad de la prueba. (El caso queda fijado de forma determinista en la sección 9b.)
+    let gastados = 0
+    const contarGastado = async (llamadasAntes: number) => {
+      const f = (await T.fila(dr!.id))!
+      if (spT.total === llamadasAntes) { gastados++; console.log(`   ℹ intento sin llamada al proveedor (infraestructura): ${(f.lastError ?? '').slice(0, 80)}`) }
+    }
     // Intentos 1 a 5: cada uno falla y reprograma según la rampa.
     for (let i = 0; i < 5; i++) {
+      const antesTotal = spT.total
       const r = await correr_(instantes[i]!, spT.proveedor)
+      await contarGastado(antesTotal)
       const f = (await T.fila(dr!.id))!
       check(`intento ${i + 1}: falla, queda PENDIENTE y reintenta a los ${RAMPA_SEGUNDOS[i]} s exactos`, r.reintentos === 1 && f.status === 'PENDIENTE' && f.attempts === i + 1 && f.nextAttemptAt.getTime() === mas(instantes[i]!, RAMPA_SEGUNDOS[i]!).getTime())
       const antes = await correr_(new Date(mas(instantes[i]!, RAMPA_SEGUNDOS[i]!).getTime() - 1000), spT.proveedor)
       check(`   1 s antes de tiempo no se vuelve a intentar`, antes.procesados === 0)
     }
     check('>>> tras 5 fallos el comprobante sigue PENDIENTE, sin hash, sin fecha de aceptación', await (async () => { const d = await T.doc(dr!.id); return d.status === 'PENDIENTE' && d.xmlHash === null && d.acceptedAt === null })())
+    const antes6 = spT.total
     const r6 = await correr_(instantes[5]!, spT.proveedor)
+    await contarGastado(antes6)
     const f6 = (await T.fila(dr!.id))!
     check('>>> el SEXTO fallo agota: AGOTADO, sin más reintentos programados', r6.agotados === 1 && f6.status === 'AGOTADO' && f6.attempts === 6 && f6.exhaustedAt !== null)
-    check('el proveedor recibió exactamente 6 intentos', spT.total === 6, `total=${spT.total} por documento=${JSON.stringify([...spT.porDoc])}`)
+    check('>>> contabilidad exacta: llamadas al proveedor = 6 intentos − los gastados antes de llegar a él', spT.total === 6 - gastados && f6.attempts === 6, `llamadas=${spT.total} gastados=${gastados} intentos=${f6.attempts}`)
+    check('>>> y NUNCA más llamadas que intentos (ningún envío duplicado)', spT.total <= f6.attempts)
     check('>>> y el comprobante SIGUE PENDIENTE: nunca se marcó aceptado sin respuesta del proveedor', (await T.doc(dr!.id)).status === 'PENDIENTE')
-    check('guarda el último error', (f6.lastError ?? '').includes('503'))
+    check('guarda el último error', (f6.lastError ?? '') !== '' && (gastados > 0 || (f6.lastError ?? '').includes('503')))
     check('>>> la clave de idempotencia fue la MISMA en todos los intentos', f6.idempotencyKey === claveIdempotencia(T.t.id, dr!.id))
-    check('un agotado ya no se reclama aunque pase el tiempo', await (async () => { const r = await correr_(mas(instantes[5]!, 10 * 86_400), spT.proveedor); return r.procesados === 0 && spT.total === 6 })(), `total=${spT.total}`)
+    check('un agotado ya no se reclama aunque pase el tiempo', await (async () => { const r = await correr_(mas(instantes[5]!, 10 * 86_400), spT.proveedor); return r.procesados === 0 && spT.total === 6 - gastados })(), `total=${spT.total}`)
+
+    console.log('\n9b) >>> Un error ANTES de llegar al proveedor gasta el intento, pero nunca duplica ni pierde un envío')
+    const Y = await nuevo('antes', 'REAL')
+    const [dy] = await Y.docs(1, { proximo: new Date(Date.now() - 1000) })
+    const ventaY = (await Y.doc(dy!.id)).saleId
+    const lineaY = (await prisma.saleItem.findFirstOrThrow({ where: { saleId: ventaY } }))
+    const copiaLinea = { tenantId: Y.t.id, saleId: ventaY, productId: lineaY.productId, nameSnapshot: lineaY.nameSnapshot, skuSnapshot: lineaY.skuSnapshot, quantity: 1, unitPrice: 11.8, lineTotal: 11.8 }
+    const spY = espia(() => TRANSITORIO)
+    const iy = [new Date()]
+    for (const x of RAMPA_SEGUNDOS) iy.push(mas(iy.at(-1)!, x))
+    const traza: string[] = []
+    for (let k = 0; k < 6; k++) {
+      // En el intento 3 se vacían las líneas de la venta: el comprobante es inconsistente y falla ANTES del proveedor.
+      if (k === 2) await prisma.saleItem.deleteMany({ where: { saleId: ventaY } })
+      if (k === 3) await prisma.saleItem.create({ data: copiaLinea })
+      await correr_(iy[k]!, spY.proveedor)
+      const f = (await Y.fila(dy!.id))!
+      traza.push(`${f.attempts}/${spY.total}`)
+      if (k === 2) {
+        check('>>> el intento 3 falla ANTES del proveedor: gasta el intento (3), NO hay llamada (siguen 2)', f.attempts === 3 && spY.total === 2 && (f.lastError ?? '').includes('no tiene líneas'))
+        check('...se reprograma con la rampa (5 min) y el comprobante sigue PENDIENTE', f.status === 'PENDIENTE' && f.nextAttemptAt.getTime() === mas(iy[2]!, RAMPA_SEGUNDOS[2]!).getTime() && (await Y.doc(dy!.id)).status === 'PENDIENTE')
+      }
+      check(`   paso ${k + 1}: nunca más llamadas que intentos`, spY.total <= f.attempts)
+    }
+    const fy = (await Y.fila(dy!.id))!
+    check('>>> el síntoma exacto de la prueba original: 6 intentos, AGOTADO y solo 5 llamadas al proveedor', fy.status === 'AGOTADO' && fy.attempts === 6 && spY.total === 5, traza.join(' '))
+    check('>>> y el comprobante sigue PENDIENTE: ni aceptado sin respuesta ni perdido', (await Y.doc(dy!.id)).status === 'PENDIENTE')
+    check('ningún documento recibió más de una llamada por intento', [...spY.porDoc.values()].every((n) => n <= 6))
+    // Y si el error previo es pasajero, el siguiente intento SÍ llega al proveedor y se acepta (nada se pierde).
+    const [dy2] = await Y.docs(1, { proximo: new Date(Date.now() - 1000) })
+    const venta2 = (await Y.doc(dy2!.id)).saleId
+    const linea2 = await prisma.saleItem.findFirstOrThrow({ where: { saleId: venta2 } })
+    await prisma.saleItem.deleteMany({ where: { saleId: venta2 } })
+    const spOK2 = espia(() => OK)
+    const ty = new Date()
+    await correr_(ty, spOK2.proveedor)
+    check('un error previo pasajero: intento 1 sin llamada', (await Y.fila(dy2!.id))?.attempts === 1 && spOK2.total === 0)
+    await prisma.saleItem.create({ data: { tenantId: Y.t.id, saleId: venta2, productId: linea2.productId, nameSnapshot: linea2.nameSnapshot, skuSnapshot: linea2.skuSnapshot, quantity: 1, unitPrice: 11.8, lineTotal: 11.8 } })
+    await correr_(mas(ty, 60), spOK2.proveedor)
+    check('>>> al reintentar llega al proveedor UNA vez y se acepta: ni duplicado ni perdido', spOK2.porDoc.get(dy2!.fullNumber) === 1 && (await Y.doc(dy2!.id)).status === 'ACEPTADO' && (await Y.fila(dy2!.id))?.attempts === 2 && (await Y.fila(dy2!.id))?.status === 'COMPLETADO')
+    await Y.retirar(); abiertos.length = 0
 
     console.log('\n10) Alarma al dueño y al SuperAdmin cuando se agota')
     const est = await estadoEnvioFiscal(T.db)

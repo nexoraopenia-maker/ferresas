@@ -46,7 +46,7 @@ let INICIO = new Date()
 const LOCK_KEY = 7_424_001_001
 
 /** Nunca se tocan, ni estando dentro de la ventana. */
-const INTOCABLES = new Set(['sol', 'luna'])
+const INTOCABLES = new Set(['sol', 'luna', 'ferreteria-demo'])
 
 /** Prefijos esperados. Solo para avisar de lo inesperado. */
 const PREFIJOS_CONOCIDOS = [

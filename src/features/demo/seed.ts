@@ -189,7 +189,7 @@ export const CATEGORIAS_DEMO: ReadonlyArray<{ slug: string; name: string; skus: 
  * números de prueba construidos aquí, no empresas; pueden coincidir por azar
  * con uno real, y por eso todo lo demo lleva «(demo)» y el aviso permanente.
  */
-const RUC_EMISOR_DEMO = completarRuc('2099999990')
+export const RUC_EMISOR_DEMO = completarRuc('2099999990')
 const RUC_CLIENTE_1 = completarRuc('2000000001')
 const RUC_CLIENTE_2 = completarRuc('2000000002')
 
