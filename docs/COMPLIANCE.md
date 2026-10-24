@@ -335,3 +335,7 @@ La serie de una nota empieza por la **misma letra** que la serie del comprobante
 - El plazo máximo para emitir una nota sobre un comprobante, y si una nota de crédito total (01/06) debe además anular el comprobante.
 - Que una boleta pueda ser corregida con nota o solo anulada por resumen diario (fase 1A.4).
 - Reglas de importes: que la suma de las notas de crédito no supere el comprobante relacionado.
+
+### Estado de un comprobante en un negocio real
+
+Con la facturación electrónica activa (real o en pausa) **ningún estado se declara a mano**: ni Enviado, ni Aceptado, ni Rechazado, ni Observado. Lo fija solo la respuesta del proveedor, por la cola fiscal o por «Consultar» (sincronización explícita). El servicio lo rechaza y la lista no lo ofrece. Solo la demo y el ensayo, que no hablan con un proveedor real, conservan el cambio manual. Una nota de crédito exige además que el original lleve el identificador (`externalId`) que le dio el proveedor.

@@ -6,6 +6,8 @@ import { listarSeriesConfigurables } from '@/features/invoicing/counter-service'
 import { puede } from '@/lib/puede'
 import { PseConfig } from '@/features/invoicing/components/PseConfig'
 import { estadoConfigPse } from '@/features/invoicing/pse-config'
+import { modoFiscal } from '@/features/invoicing/modo-fiscal'
+import { CODIGOS_NOTA_CREDITO_TOTAL } from '@/features/invoicing/notas'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,7 +31,13 @@ export default async function ComprobantesPage() {
         receiverDocType: true, receiverDocNumber: true, receiverName: true,
         currency: true, subtotal: true, taxTotal: true, total: true,
         issuedAt: true,
-        saleId: true, isTrial: true,
+        saleId: true, isTrial: true, externalId: true, reasonCode: true,
+        relatedDocument: { select: { fullNumber: true } },
+        // La nota de crédito total VIVA de este comprobante (una rechazada no cuenta): el índice único parcial la garantiza.
+        notes: {
+          where: { documentType: 'NOTA_CREDITO', reasonCode: { in: [...CODIGOS_NOTA_CREDITO_TOTAL] }, status: { not: 'RECHAZADO' } },
+          take: 1, select: { fullNumber: true },
+        },
         dispatch: { select: { status: true, attempts: true, nextAttemptAt: true, lastError: true } },
         sale: { select: { number: true } },
       },
@@ -40,7 +48,9 @@ export default async function ComprobantesPage() {
     db.taxDocument.groupBy({ by: ['status'], where: { isTrial: false }, _count: { _all: true } }),
   ])
 
-  const tenant = await db.tenant.findFirst({ select: { timezone: true } })
+  const tenant = await db.tenant.findFirst({ select: { timezone: true, isDemo: true, realBillingEnabledAt: true, realBillingPausedAt: true } })
+  const modo = tenant ? modoFiscal(tenant) : 'ENSAYO'
+  const facturacionActiva = modo === 'REAL' || modo === 'PAUSADO'
 
   /*
    * Series configurables de la sucursal activa. Solo para quien puede
@@ -100,6 +110,8 @@ export default async function ComprobantesPage() {
 
       <TaxDocumentList
         canManage={puede(ctx, 'comprobantes.anular')}
+        puedeEmitirNota={puede(ctx, 'comprobantes.anular') && (ctx.access === 'FULL' || ctx.access === 'WARN')}
+        facturacionActiva={facturacionActiva}
         puedeEmitirGuia={puede(ctx, 'guias.emitir')}
         puedeEnviar={puede(ctx, 'comprobantes.emitir') && (ctx.access === 'FULL' || ctx.access === 'WARN')}
         zonaHoraria={tenant?.timezone ?? 'America/Lima'}
@@ -119,6 +131,11 @@ export default async function ComprobantesPage() {
           saleNumber: d.sale.number,
           saleId: d.saleId,
           isTrial: d.isTrial,
+          series: d.series,
+          documentoRelacionado: d.relatedDocument?.fullNumber ?? null,
+          motivo: d.reasonCode,
+          notaTotal: d.notes[0]?.fullNumber ?? null,
+          tieneIdProveedor: !!d.externalId,
           cola: d.dispatch ? { estado: d.dispatch.status, intentos: d.dispatch.attempts, proximo: d.dispatch.nextAttemptAt.toISOString(), error: d.dispatch.lastError } : null,
         }))}
       />

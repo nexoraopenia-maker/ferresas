@@ -6,9 +6,10 @@ import { getTenantPrisma, type TenantPrismaClient } from '@/lib/tenant-prisma'
 import { requireTenantContext } from '@/lib/session'
 import { isBusinessError, type ActionResult } from '@/lib/errors'
 import type { TenantContext } from '@/lib/tenant-context'
-import { fijarArranqueSchema } from './schemas'
+import { emitirNotaCreditoSchema, fijarArranqueSchema } from './schemas'
 import { fijarArranqueSerie, listarSeriesConfigurables } from './counter-service'
 import { guardarConfigPse, probarConexionPse, quitarConfigPse } from './pse-config'
+import { emitirNotaCreditoTotal } from './service'
 
 /**
  * Server Actions de comprobantes.
@@ -66,6 +67,28 @@ export async function setArranqueSerie(raw: unknown) {
       scope: parsed.data.scope,
       startNumber: parsed.data.startNumber,
     })
+    revalidatePath('/comprobantes')
+    return { ok: true as const, data: r }
+  })
+}
+
+/**
+ * Emite la nota de crédito TOTAL de una venta. La validación y el permiso (`comprobantes.anular`) viven en el
+ * servicio: esto es un endpoint HTTP y cualquiera puede invocarlo a mano.
+ */
+export async function emitirNotaCreditoAction(raw: unknown) {
+  const parsed = emitirNotaCreditoSchema.safeParse(raw)
+  if (!parsed.success) {
+    return {
+      ok: false as const,
+      code: 'VALIDATION' as const,
+      message: 'Revisa el motivo y el sustento.',
+      details: z.flattenError(parsed.error).fieldErrors,
+    }
+  }
+
+  return withTenant('emitirNotaCreditoAction', async (db, ctx) => {
+    const r = await emitirNotaCreditoTotal(db, ctx, parsed.data)
     revalidatePath('/comprobantes')
     return { ok: true as const, data: r }
   })

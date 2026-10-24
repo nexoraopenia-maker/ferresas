@@ -4,6 +4,8 @@ import { useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { formatearFechaLocal } from '@/lib/fecha-local'
+import { EmitirNotaCreditoDialog } from './EmitirNotaCreditoDialog'
+import { nombreMotivo, razonSinNota } from '../motivos-nota'
 
 export interface TaxDocRow {
   id: string
@@ -23,6 +25,14 @@ export interface TaxDocRow {
   saleId: string
   /** Documento de PRUEBA: serie PB001/PF001, sin valor tributario; no se envía ni cambia de estado. */
   isTrial: boolean
+  series: string
+  /** Notas: número del comprobante que modifican, y el código de su motivo. */
+  documentoRelacionado: string | null
+  motivo: string | null
+  /** Boleta/factura: número de su nota de crédito total viva, si ya la tiene. */
+  notaTotal: string | null
+  /** El proveedor le dio un identificador (prueba de que lo conoce). */
+  tieneIdProveedor: boolean
   /** Estado de su fila en la cola de envío (null si no está en cola). */
   cola: { estado: string; intentos: number; proximo: string; error: string | null } | null
 }
@@ -35,6 +45,9 @@ const ESTADO: Record<string, { texto: string; cls: string }> = {
   RECHAZADO: { texto: 'Rechazado', cls: 'bg-stock-out-soft text-stock-out' },
   ANULADO: { texto: 'Anulado', cls: 'bg-surface-sunken text-ink-muted' },
 }
+
+const TIPO: Record<string, string> = { FACTURA: 'Factura', BOLETA: 'Boleta', NOTA_CREDITO: 'Nota de crédito', NOTA_DEBITO: 'Nota de débito' }
+const esNota = (d: { documentType: string }) => d.documentType === 'NOTA_CREDITO' || d.documentType === 'NOTA_DEBITO'
 
 /** Transiciones permitidas; deben coincidir con las del servicio. */
 const SIGUIENTES: Record<string, string[]> = {
@@ -51,6 +64,8 @@ export function TaxDocumentList({
   canManage,
   puedeEnviar = false,
   puedeEmitirGuia = false,
+  puedeEmitirNota = false,
+  facturacionActiva = false,
   zonaHoraria,
 }: {
   docs: TaxDocRow[]
@@ -59,6 +74,13 @@ export function TaxDocumentList({
   puedeEnviar?: boolean
   /** Puede emitir guías de remisión: muestra el enlace en cada comprobante. */
   puedeEmitirGuia?: boolean
+  /** Puede emitir notas de crédito (comprobantes.anular). */
+  puedeEmitirNota?: boolean
+  /**
+   * Facturación electrónica REAL o en pausa: el estado lo fija solo la respuesta del proveedor (cola o «Consultar»),
+   * así que no se ofrece cambiarlo a mano (el servicio también lo rechaza).
+   */
+  facturacionActiva?: boolean
   /** Zona del negocio: ver la nota en CashPanel. */
   zonaHoraria: string
 }) {
@@ -70,6 +92,8 @@ export function TaxDocumentList({
   const [pendiente, startTransition] = useTransition()
 
   const [aviso, setAviso] = useState<string | null>(null)
+  // Facturación activa: ningún estado se declara a mano; lo fija la cola o «Consultar».
+  const siguientes = (estado: string) => (facturacionActiva ? [] : SIGUIENTES[estado] ?? [])
   const enviar = (id: string) => {
     setAviso(null)
     startTransition(async () => {
@@ -154,12 +178,18 @@ export function TaxDocumentList({
                     <td className="px-3 py-3">
                       <p className="font-mono font-bold text-ink">{d.fullNumber}</p>
                       <p className="text-xs text-ink-muted">
-                        {d.documentType === 'FACTURA' ? 'Factura' : 'Boleta'} · venta {d.saleNumber}
+                        {TIPO[d.documentType] ?? d.documentType} · venta {d.saleNumber}
                       </p>
+                      {esNota(d) && (
+                        <p className="text-xs font-semibold text-ink">
+                          Modifica a <span className="font-mono">{d.documentoRelacionado ?? '—'}</span>
+                          {d.motivo && <> · motivo {d.motivo}{nombreMotivo(d.motivo) ? ` (${nombreMotivo(d.motivo)})` : ''}</>}
+                        </p>
+                      )}
                       <p className="text-xs text-ink-muted">
                         {formatearFechaLocal(d.issuedAt, zonaHoraria)}
                       </p>
-                      {puedeEmitirGuia && (
+                      {puedeEmitirGuia && !esNota(d) && (
                         <Link href={`/guias/nueva?venta=${d.saleId}`} className="mt-1 inline-block text-xs font-semibold text-industrial-700 underline dark:text-industrial-300">
                           Emitir guía de remisión
                         </Link>
@@ -202,14 +232,18 @@ export function TaxDocumentList({
                         * a cualquier rol: el cliente que vuelve con el ticket
                         * perdido lo atiende quien esté en el mostrador.
                         */}
-                      <a
-                        href={`/imprimir/comprobante/${d.id}?auto=1`}
-                        target="_blank"
-                        rel="noopener"
-                        className="h-touch inline-flex items-center rounded-lg border border-hairline px-3 text-sm font-semibold text-ink"
-                      >
-                        80 mm
-                      </a>
+                      {esNota(d) ? (
+                        <span className="text-xs text-ink-muted">Impresión próximamente</span>
+                      ) : (
+                        <a
+                          href={`/imprimir/comprobante/${d.id}?auto=1`}
+                          target="_blank"
+                          rel="noopener"
+                          className="h-touch inline-flex items-center rounded-lg border border-hairline px-3 text-sm font-semibold text-ink"
+                        >
+                          80 mm
+                        </a>
+                      )}
                       {puedeEnviar && !d.isTrial && (d.status === 'PENDIENTE' || d.status === 'ENVIADO') && (
                         <button
                           type="button" disabled={pendiente} onClick={() => enviar(d.id)}
@@ -221,23 +255,37 @@ export function TaxDocumentList({
                     </td>
                     {canManage && (
                       <td className="px-3 py-3">
-                        {d.isTrial ? (
-                          <span className="text-xs text-ink-muted">—</span>
-                        ) : SIGUIENTES[d.status]?.length ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditando(d)
-                              setNuevoEstado(SIGUIENTES[d.status]![0]!)
-                              setError(null)
-                            }}
-                            className="h-touch rounded-lg border border-hairline px-3 text-sm font-semibold text-ink"
-                          >
-                            Cambiar
-                          </button>
-                        ) : (
-                          <span className="text-xs text-ink-muted">Final</span>
-                        )}
+                        <div className="flex flex-col items-start gap-2">
+                          {d.isTrial ? (
+                            <span className="text-xs text-ink-muted">—</span>
+                          ) : siguientes(d.status).length ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditando(d)
+                                setNuevoEstado(siguientes(d.status)[0]!)
+                                setError(null)
+                              }}
+                              className="h-touch rounded-lg border border-hairline px-3 text-sm font-semibold text-ink"
+                            >
+                              Cambiar
+                            </button>
+                          ) : (
+                            <span className="text-xs text-ink-muted">
+                              {facturacionActiva && !['ACEPTADO', 'OBSERVADO', 'ANULADO'].includes(d.status) ? 'Lo fija el proveedor' : 'Final'}
+                            </span>
+                          )}
+                          {puedeEmitirNota && !esNota(d) && (
+                            <EmitirNotaCreditoDialog
+                              saleId={d.saleId}
+                              razonBloqueo={razonSinNota(d, facturacionActiva)}
+                              doc={{
+                                fullNumber: d.fullNumber, receiverName: d.receiverName, receiverDocNumber: d.receiverDocNumber,
+                                currency: d.currency, total: d.total, fecha: formatearFechaLocal(d.issuedAt, zonaHoraria),
+                              }}
+                            />
+                          )}
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -259,7 +307,7 @@ export function TaxDocumentList({
               <span className="text-sm font-medium text-ink-muted">Nuevo estado</span>
               <select value={nuevoEstado} onChange={(e) => setNuevoEstado(e.target.value)}
                 className="h-touch-lg rounded-xl border border-hairline bg-surface px-4 text-base text-ink">
-                {SIGUIENTES[editando.status]!.map((s) => (
+                {siguientes(editando.status).map((s) => (
                   <option key={s} value={s}>{ESTADO[s]?.texto ?? s}</option>
                 ))}
               </select>

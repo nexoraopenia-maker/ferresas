@@ -341,6 +341,24 @@ export async function updateTaxStatus(
     throw new BusinessError('TENANT_MISMATCH', 'El comprobante no existe.')
   }
 
+  /*
+   * Con la facturación electrónica ACTIVA (real o en pausa) NINGÚN cambio de estado se declara a mano: ni Enviado,
+   * ni Aceptado, ni Rechazado, ni Observado. El estado de un comprobante real lo fija SOLO la respuesta del proveedor,
+   * por la cola fiscal o por la sincronización explícita (`refrescarEstado`, el botón «Consultar»). Declararlo a mano
+   * permitiría marcar aceptado un comprobante que ningún proveedor vio —y emitir notas sobre él— o esconder un
+   * rechazo real. La demo y el ensayo no envían a un proveedor real: ahí el cambio manual sigue existiendo.
+   */
+  const modo = modoFiscal(await db.tenant.findFirstOrThrow({
+    select: { isDemo: true, realBillingEnabledAt: true, realBillingPausedAt: true },
+  }))
+  if (modo === 'REAL' || modo === 'PAUSADO') {
+    throw new BusinessError(
+      'INVALID_DOCUMENT',
+      'Con la facturación electrónica activa el estado del comprobante lo fija solo la respuesta del proveedor. ' +
+        'Usa «Consultar» para sincronizarlo, o «Reintentar» si el envío se agotó.',
+    )
+  }
+
   const PERMITIDO: Record<string, string[]> = {
     PENDIENTE: ['ENVIADO', 'ACEPTADO', 'RECHAZADO'],
     ENVIADO: ['ACEPTADO', 'RECHAZADO'],
@@ -468,6 +486,7 @@ export async function emitirNotaCreditoTotal(
     where: { saleId: input.saleId, documentType: { in: ['BOLETA', 'FACTURA'] } },
     select: {
       id: true, documentType: true, series: true, fullNumber: true, status: true, isTrial: true, currency: true,
+      externalId: true,
       issuerTaxId: true, issuerLegalName: true,
       receiverDocType: true, receiverDocNumber: true, receiverName: true, receiverAddress: true,
       subtotal: true, taxTotal: true, discountTotal: true, total: true,
@@ -485,6 +504,15 @@ export async function emitirNotaCreditoTotal(
       original.status === 'PENDIENTE' || original.status === 'ENVIADO'
         ? `El comprobante ${original.fullNumber} aún no está aceptado: la nota se puede emitir cuando SUNAT lo acepte.`
         : `El comprobante ${original.fullNumber} está ${original.status.toLowerCase()}: no admite notas.`,
+    )
+  }
+
+  // En un negocio real, el original debe llevar el identificador que le dio el proveedor: es la prueba de que el
+  // proveedor lo conoce (un «ACEPTADO» sin él pudo ponerse a mano o venir de un simulado).
+  if ((modo === 'REAL' || modo === 'PAUSADO') && !original.externalId) {
+    throw new BusinessError(
+      'INVALID_DOCUMENT',
+      `El comprobante ${original.fullNumber} no tiene el identificador de su proveedor: usa «Consultar» para sincronizarlo antes de emitir la nota.`,
     )
   }
 

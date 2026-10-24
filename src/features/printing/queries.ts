@@ -310,6 +310,11 @@ async function comprobante(db: TenantPrismaClient, id: string, emisor: Emisor, r
     },
   })
   if (!doc) throw new BusinessError('NOT_FOUND', 'El comprobante no existe.')
+  // Pospuesto: la representación impresa de las notas aún no existe. Mejor un aviso claro que un ticket de boleta
+  // con el número de una nota.
+  if (doc.documentType === 'NOTA_CREDITO' || doc.documentType === 'NOTA_DEBITO') {
+    throw new BusinessError('INVALID_DOCUMENT', 'La representación impresa de las notas de crédito y débito aún no está disponible.')
+  }
 
   const lineas = mapLineas(doc.sale.items)
   const pagos = doc.sale.payments.map((p) => ({

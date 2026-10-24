@@ -29,12 +29,12 @@ async function negocio(tag: string, o: { demo?: boolean } = {}) {
   const ctx = (u: { id: string }, role: 'OWNER' | 'VENDEDOR'): TenantContext => ({ tenantId: t.id, userId: u.id, role, access: 'FULL', branchId: branch.id, branchIds: [branch.id] })
   let n = 0
   /** Comprobante de venta ya emitido, en el estado y serie dados. */
-  const original = async (o: { tipo?: 'FACTURA' | 'BOLETA'; status?: 'PENDIENTE' | 'ENVIADO' | 'ACEPTADO' | 'OBSERVADO' | 'RECHAZADO'; trial?: boolean; serie?: string } = {}) => {
+  const original = async (o: { tipo?: 'FACTURA' | 'BOLETA'; status?: 'PENDIENTE' | 'ENVIADO' | 'ACEPTADO' | 'OBSERVADO' | 'RECHAZADO'; trial?: boolean; serie?: string; sinIdProveedor?: boolean } = {}) => {
     const tipo = o.tipo ?? 'FACTURA'
     const sale = await prisma.sale.create({ data: { tenantId: t.id, branchId: branch.id, warehouseId: w.id, userId: owner.id, number: `V-${tag}-${randomUUID().slice(0, 6)}`, status: 'COMPLETADA' } })
     n++
     const serie = o.serie ?? (tipo === 'FACTURA' ? 'F001' : 'B001')
-    return prisma.taxDocument.create({ data: { tenantId: t.id, saleId: sale.id, documentType: tipo, series: serie, correlativo: n, fullNumber: `${serie}-${String(n).padStart(8, '0')}`, status: o.status ?? 'ACEPTADO', isTrial: !!o.trial, receiverDocType: 'RUC', receiverDocNumber: completarRuc('2055555555'), receiverName: 'CLIENTE SAC', receiverAddress: 'Jr. Cliente 1', issuerTaxId: taxId, issuerLegalName: `NC ${tag.toUpperCase()} SAC`, subtotal: 100, taxTotal: 18, discountTotal: 0, total: 118 } })
+    return prisma.taxDocument.create({ data: { tenantId: t.id, saleId: sale.id, documentType: tipo, series: serie, correlativo: n, fullNumber: `${serie}-${String(n).padStart(8, '0')}`, status: o.status ?? 'ACEPTADO', isTrial: !!o.trial, externalId: o.sinIdProveedor ? null : `ext-${randomUUID().slice(0, 8)}`, receiverDocType: 'RUC', receiverDocNumber: completarRuc('2055555555'), receiverName: 'CLIENTE SAC', receiverAddress: 'Jr. Cliente 1', issuerTaxId: taxId, issuerLegalName: `NC ${tag.toUpperCase()} SAC`, subtotal: 100, taxTotal: 18, discountTotal: 0, total: 118 } })
   }
   const db = getTenantPrisma(ctx(owner, 'OWNER'))
   return { t, owner, vend, ctx, db, original, branch }
@@ -78,6 +78,9 @@ async function main() {
   const oBig = await A.original({ serie: 'F101' })
   check('>>> sucursal ≥ 100 (F101): no cabe en 4 caracteres → bloqueado con mensaje', (await lanza(() => emitirNotaCreditoTotal(A.db, ctxA, { saleId: oBig.saleId, reasonCode: '01', reasonDescription: SUSTENTO })))?.message.includes('1 a 99') === true)
 
+  const oSin = await A.original({ sinIdProveedor: true })
+  check('>>> real sin identificador del proveedor (¿aceptado a mano?) → bloqueado, con el camino «Consultar»', (await lanza(() => emitirNotaCreditoTotal(A.db, ctxA, { saleId: oSin.saleId, reasonCode: '01', reasonDescription: SUSTENTO })))?.message.includes('Consultar') === true)
+
   console.log('\n4) Una sola nota total por comprobante')
   const dup = await lanza(() => emitirNotaCreditoTotal(A.db, ctxA, { saleId: f1.saleId, reasonCode: '01', reasonDescription: SUSTENTO }))
   check('>>> la segunda se BLOQUEA y dice cuál es la existente', dup?.code === 'INVALID_DOCUMENT' && dup.message.includes('FC01-00000001'))
@@ -108,9 +111,9 @@ async function main() {
 
   console.log('\n7) Negocio demo: se crea, pero no entra a la cola')
   const D = await negocio('d', { demo: true })
-  const fd = await D.original()
+  const fd = await D.original({ sinIdProveedor: true })
   const nd = await emitirNotaCreditoTotal(D.db, D.ctx(D.owner, 'OWNER'), { saleId: fd.saleId, reasonCode: '01', reasonDescription: SUSTENTO })
-  check('>>> la demo emite su nota, sin fila en la cola (envía por su propio camino)', !!nd.id && (await prisma.fiscalDispatch.count({ where: { taxDocumentId: nd.id } })) === 0)
+  check('>>> la demo emite su nota aun sin identificador de proveedor, y sin fila en la cola (envía por su propio camino)', !!nd.id && (await prisma.fiscalDispatch.count({ where: { taxDocumentId: nd.id } })) === 0)
 
   console.log('\n8) La base tiene la última palabra')
   const f5 = await A.original()

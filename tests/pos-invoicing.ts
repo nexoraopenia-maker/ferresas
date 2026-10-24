@@ -336,6 +336,13 @@ async function main() {
   check('el número reservado se devuelve al rollback', antes === despues, `${antes} -> ${despues}`)
 
   console.log('\n12) Transiciones de estado tributario')
+  const manualReal = (st: 'ENVIADO' | 'ACEPTADO' | 'RECHAZADO') =>
+    updateTaxStatus(db, ctx, { taxDocumentId: b1.id, status: st, motivo: 'Prueba automatizada del cambio de estado' }).then(() => null).catch((e) => e.code)
+  check('>>> negocio con facturación REAL: NINGÚN estado se declara a mano (Enviado, Aceptado, Rechazado)',
+    (await manualReal('ENVIADO')) === 'INVALID_DOCUMENT' && (await manualReal('ACEPTADO')) === 'INVALID_DOCUMENT' && (await manualReal('RECHAZADO')) === 'INVALID_DOCUMENT' &&
+    (await db.taxDocument.findFirstOrThrow({ where: { id: b1.id } })).status === 'PENDIENTE')
+  // Fuera de la facturación real (ensayo o demo) el cambio manual sigue existiendo: el resto de la sección lo prueba así.
+  await prisma.tenant.update({ where: { id: ctx.tenantId }, data: { realBillingEnabledAt: null } })
   await updateTaxStatus(db, ctx, { taxDocumentId: b1.id, status: 'ENVIADO', motivo: 'Prueba automatizada del cambio de estado' })
   check('PENDIENTE -> ENVIADO',
     (await db.taxDocument.findFirstOrThrow({ where: { id: b1.id } })).status === 'ENVIADO')
@@ -394,10 +401,13 @@ async function main() {
       taxDocumentId: f1.id, status: 'ACEPTADO', motivo: 'Intento de un cajero sin permiso',
     }).then(() => null).catch((e) => e.code) === 'FORBIDDEN_ROLE')
   const ctxAdm: TenantContext = { ...ctx, role: 'ADMIN' }
-  check('un ADMIN sí puede',
+  check('un ADMIN sí puede (otros estados: aquí lo rechaza el proveedor a mano)',
     await updateTaxStatus(getTenantPrisma(ctxAdm), ctxAdm, {
-      taxDocumentId: f1.id, status: 'ACEPTADO', motivo: 'SUNAT respondió aceptado; CDR guardado aparte',
+      taxDocumentId: f1.id, status: 'RECHAZADO', motivo: 'SUNAT respondió rechazado; CDR guardado aparte',
     }).then(() => 'ok').catch((e) => e.code) === 'ok')
+
+  // Se devuelve el negocio a la facturación real para el resto del fichero.
+  await prisma.tenant.update({ where: { id: ctx.tenantId }, data: { realBillingEnabledAt: new Date() } })
 
   console.log('\n13) Aislamiento y suscripción')
   const otro = await prisma.tenant.create({ data: { slug: `ot-${M}`, name: 'Otro', planId: plan.id } })

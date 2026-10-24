@@ -67,6 +67,22 @@ export const updateTaxStatusSchema = z.object({
 export type UpdateTaxStatusInput = z.infer<typeof updateTaxStatusSchema>
 
 /**
+ * Nota de crédito TOTAL. Los motivos son los de `MOTIVOS_NOTA_CREDITO_TOTAL` (01, 02, 06); un test comprueba que no
+ * se desalineen del servicio. ⚠️ Catálogo 09 sin validar.
+ */
+export const emitirNotaCreditoSchema = z.object({
+  saleId: id,
+  reasonCode: z.enum(['01', '02', '06'], { error: 'Elige un motivo.' }),
+  reasonDescription: z
+    .string()
+    .trim()
+    .min(3, 'Escribe el sustento (al menos 3 caracteres).')
+    .max(250, 'El sustento admite hasta 250 caracteres.'),
+})
+
+export type EmitirNotaCreditoInput = z.infer<typeof emitirNotaCreditoSchema>
+
+/**
  * Series de la PRIMERA sucursal (seriesNumber = 1). Cada tipo lleva la suya,
  * como exige la norma.
  *

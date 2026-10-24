@@ -17,6 +17,7 @@
  *
  * ─── BARRERAS ────────────────────────────────────────────────────────────────────────────────────
  *  · La guardia de huella (lista blanca de STAGING_DB_FINGERPRINT) y el blindaje de scripts: se niega contra producción.
+ *  · PSE_SANDBOX_HOSTS: solo envía si el host del proveedor del negocio está EXACTAMENTE en esa lista (sin ella, nada).
  *  · Sin --ejecutar es un ensayo: comprueba las condiciones y se detiene.
  *  · Una nota emitida es un documento real ante el proveedor: no se borra ni se repite con el mismo motivo
  *    (la segunda sería rechazada por el índice de "una nota total por comprobante").
@@ -36,6 +37,7 @@ import { emitirNotaCreditoTotal } from '../src/features/invoicing/service'
 import { cargarComprobanteFiscal } from '../src/features/invoicing/envio'
 import { construirXmlUbl } from '../src/features/invoicing/ubl'
 import { modoFiscal } from '../src/features/invoicing/modo-fiscal'
+import { evaluarHostSandbox } from '../src/features/invoicing/sandbox-hosts'
 import { reclamarPorId } from '../src/features/cola-fiscal/repositorio'
 import { procesarFila } from '../src/features/cola-fiscal/procesar'
 
@@ -63,6 +65,11 @@ async function main() {
   console.log(`Negocio: ${tenant.slug} · modo fiscal: ${modo} · proveedor configurado: ${tenant.pseConfiguredAt ? 'sí' : 'NO'}`)
   if (modo !== 'REAL') parar(`El negocio está en modo ${modo}: la certificación necesita modo REAL (lo habilita un SuperAdmin tras validar el sandbox).`)
   if (!tenant.pseConfiguredAt || !tenant.pseEndpointUrl) parar('El negocio no tiene su proveedor (PSE) configurado. Se configura desde la pantalla del negocio; este script no maneja credenciales.')
+
+  // Barrera de entorno: solo a un host declarado como SANDBOX (lista exacta). Sin la variable, no se envía nada.
+  const sandbox = evaluarHostSandbox(tenant.pseEndpointUrl)
+  if (!sandbox.ok) parar(sandbox.motivo)
+  console.log(`Proveedor: ${sandbox.motivo}`)
 
   const dueño = await prisma.user.findFirst({ where: { tenantId: tenant.id, role: 'OWNER', deletedAt: null }, select: { id: true } })
   if (!dueño) return parar('El negocio no tiene un usuario dueño activo.')
