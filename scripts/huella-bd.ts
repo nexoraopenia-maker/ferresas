@@ -43,25 +43,40 @@ export interface Veredicto {
 }
 
 /**
- * ¿Es seguro escribir en estos destinos? `destinos` son las URL a las que se conectaría el proceso;
- * `produccion` son las huellas conocidas de producción (la variable explícita y la de `.env`).
- * Se niega si: falta la huella explícita (no se puede garantizar nada), algún destino no se puede leer,
- * o algún destino coincide en host Y base con producción.
+ * LISTA BLANCA. Se puede escribir en un destino solo si es staging identificado POSITIVAMENTE:
+ * todas las URL de conexión deben tener la huella de `STAGING_DB_FINGERPRINT`. No basta con «no es producción»:
+ * una base desconocida, una local olvidada o una URL mal copiada también se niegan.
+ *
+ * Además se niega si falta cualquiera de las dos huellas, si son la misma, si algún destino coincide con
+ * producción (la variable explícita o lo que diga `.env`) o si alguna URL no se puede interpretar.
  */
-export function evaluarDestinos(destinos: Record<string, string | undefined>, huellaExplicita: string | undefined, huellasExtra: string[] = []): Veredicto {
-  const prod = normalizarHuella(huellaExplicita)
+export function evaluarDestinos(
+  destinos: Record<string, string | undefined>,
+  huellaProduccion: string | undefined,
+  huellasExtraProduccion: string[] = [],
+  huellaStaging?: string | undefined,
+): Veredicto {
+  const prod = normalizarHuella(huellaProduccion)
   if (!prod) {
     return { ok: false, motivo: 'PROD_DB_FINGERPRINT no está definida o no tiene la forma «host/nombre_de_base». Sin la huella de producción no se puede comprobar que el destino sea otro.' }
   }
-  const conocidas = new Set([prod, ...huellasExtra])
+  const conocidas = new Set([prod, ...huellasExtraProduccion])
   const definidos = Object.entries(destinos).filter(([, v]) => v)
   if (definidos.length === 0) return { ok: false, motivo: 'No hay ninguna URL de base de datos definida.' }
+  // Producción primero: es el caso grave y tiene su propio camino (despliegue a propósito).
   for (const [nombre, url] of definidos) {
     const h = huella(url)
     if (!h) return { ok: false, motivo: `${nombre} no se puede interpretar como URL con host y nombre de base.` }
     if (conocidas.has(h)) return { ok: false, contraProduccion: true, motivo: `${nombre} apunta a PRODUCCIÓN (${h}): mismo host y mismo nombre de base.` }
   }
-  return { ok: true, motivo: 'ningún destino coincide con la huella de producción' }
+  const stg = normalizarHuella(huellaStaging)
+  if (!stg) return { ok: false, motivo: 'STAGING_DB_FINGERPRINT no está definida o no tiene la forma «host/nombre_de_base»: solo se corre contra staging identificado positivamente.' }
+  if (conocidas.has(stg)) return { ok: false, motivo: 'STAGING_DB_FINGERPRINT es igual a la de producción: las dos huellas deben ser distintas.' }
+  for (const [nombre, url] of definidos) {
+    const h = huella(url)
+    if (h !== stg) return { ok: false, motivo: `${nombre} (${h}) no es el staging declarado (${stg}): se niega por lista blanca.` }
+  }
+  return { ok: true, motivo: 'todos los destinos son el staging declarado' }
 }
 
 /** Lee un archivo .env SIN tocar process.env. */
@@ -78,7 +93,7 @@ export function evaluarEntorno(env: Record<string, string | undefined> = process
   for (const k of VARIABLES_DE_CONEXION) destinos[k] = env[k]
   const delArchivo = leerEnv(rutaEnvProd)
   const extra = VARIABLES_DE_CONEXION.map((k) => huella(delArchivo[k])).filter((x): x is string => !!x)
-  return evaluarDestinos(destinos, env.PROD_DB_FINGERPRINT ?? delArchivo.PROD_DB_FINGERPRINT, extra)
+  return evaluarDestinos(destinos, env.PROD_DB_FINGERPRINT ?? delArchivo.PROD_DB_FINGERPRINT, extra, env.STAGING_DB_FINGERPRINT ?? delArchivo.STAGING_DB_FINGERPRINT)
 }
 
 // ─── Guardia del CLI de Prisma ──────────────────────────────────────────────────────────────────
@@ -111,7 +126,7 @@ export function evaluarComandoPrisma(argv: string[], env: Record<string, string 
   })
   const delArchivo = leerEnv(rutaEnvProd)
   const extra = VARIABLES_DE_CONEXION.map((k) => huella(delArchivo[k])).filter((x): x is string => !!x)
-  const v = evaluarDestinos(destinos, env.PROD_DB_FINGERPRINT ?? delArchivo.PROD_DB_FINGERPRINT, extra)
+  const v = evaluarDestinos(destinos, env.PROD_DB_FINGERPRINT ?? delArchivo.PROD_DB_FINGERPRINT, extra, env.STAGING_DB_FINGERPRINT ?? delArchivo.STAGING_DB_FINGERPRINT)
   if (v.ok || !v.contraProduccion) return v
 
   // Es producción: solo `migrate deploy|status`, y solo en el build de producción de Vercel o con el
@@ -132,6 +147,7 @@ if (process.argv[1] && /huella-bd\.ts$/.test(process.argv[1])) {
   const mostrar = (k: string) => `${k}: ${huella(env[k]) ?? '—'}`
   console.log(['DATABASE_URL', 'DIRECT_URL'].map(mostrar).join('\n'))
   console.log(`producción (huella explícita): ${normalizarHuella(env.PROD_DB_FINGERPRINT) ?? '—'}`)
+  console.log(`staging    (huella explícita): ${normalizarHuella(env.STAGING_DB_FINGERPRINT) ?? '—'}`)
   console.log(v.ok ? `✓ ${v.motivo}` : `✗ ${v.motivo}`)
   process.exit(v.ok ? 0 : 2)
 }

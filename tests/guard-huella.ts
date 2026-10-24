@@ -19,6 +19,8 @@ const PROD_DIRECTA = 'postgresql://u:clave-falsa@ep-aaa.c-5.us-east-2.aws.neon.t
 const OTRA_BASE_MISMO_HOST = 'postgresql://u:x@ep-aaa-pooler.c-5.us-east-2.aws.neon.tech/staging'
 const OTRO_HOST_MISMA_BASE = 'postgresql://u:x@ep-bbb-pooler.c-5.us-east-2.aws.neon.tech/neondb'
 const HUELLA = 'ep-aaa.c-5.us-east-2.aws.neon.tech/neondb'
+const STG = 'ep-aaa.c-5.us-east-2.aws.neon.tech/staging'
+const STG2 = 'ep-bbb.c-5.us-east-2.aws.neon.tech/neondb'
 
 console.log('\n1) La huella')
 check('«host/base», sin usuario, clave ni parámetros', huella(PROD) === HUELLA && !huella(PROD)!.includes('clave'))
@@ -33,12 +35,19 @@ console.log('\n2) Veredicto')
 check('>>> mismo host Y misma base → NEGADO', !evaluarDestinos({ DATABASE_URL: PROD }, HUELLA).ok)
 check('>>> también por la conexión directa → NEGADO', !evaluarDestinos({ DATABASE_URL: OTRO_HOST_MISMA_BASE.replace('ep-bbb', 'ep-ccc'), DIRECT_URL: PROD_DIRECTA }, HUELLA).ok)
 check('>>> basta UNA variable apuntando a producción (p. ej. la sombra)', !evaluarDestinos({ DATABASE_URL: OTRA_BASE_MISMO_HOST, SHADOW_DATABASE_URL: PROD }, HUELLA).ok)
-check('mismo host pero OTRA base → permitido', evaluarDestinos({ DATABASE_URL: OTRA_BASE_MISMO_HOST }, HUELLA).ok)
-check('otro host con el mismo nombre de base → permitido', evaluarDestinos({ DATABASE_URL: OTRO_HOST_MISMA_BASE }, HUELLA).ok)
-check('>>> sin la variable explícita → NEGADO (no se puede garantizar nada)', !evaluarDestinos({ DATABASE_URL: OTRA_BASE_MISMO_HOST }, undefined).ok)
-check('>>> variable mal formada → NEGADO', !evaluarDestinos({ DATABASE_URL: OTRA_BASE_MISMO_HOST }, 'host-sin-base').ok)
-check('>>> sin ninguna URL → NEGADO', !evaluarDestinos({}, HUELLA).ok)
-check('>>> URL ilegible → NEGADO', !evaluarDestinos({ DATABASE_URL: 'basura' }, HUELLA).ok)
+check('mismo host pero OTRA base, declarada como staging → permitido', evaluarDestinos({ DATABASE_URL: OTRA_BASE_MISMO_HOST }, HUELLA, [], STG).ok)
+check('otro host con el mismo nombre de base, declarado como staging → permitido', evaluarDestinos({ DATABASE_URL: OTRO_HOST_MISMA_BASE }, HUELLA, [], STG2).ok)
+check('>>> sin la variable explícita → NEGADO (no se puede garantizar nada)', !evaluarDestinos({ DATABASE_URL: OTRA_BASE_MISMO_HOST }, undefined, [], STG).ok)
+check('>>> variable mal formada → NEGADO', !evaluarDestinos({ DATABASE_URL: OTRA_BASE_MISMO_HOST }, 'host-sin-base', [], STG).ok)
+check('>>> sin ninguna URL → NEGADO', !evaluarDestinos({}, HUELLA, [], STG).ok)
+check('>>> URL ilegible → NEGADO', !evaluarDestinos({ DATABASE_URL: 'basura' }, HUELLA, [], STG).ok)
+console.log('\n2b) LISTA BLANCA: solo staging identificado positivamente')
+check('>>> una base DESCONOCIDA (ni producción ni staging) → NEGADA', !evaluarDestinos({ DATABASE_URL: 'postgresql://u:x@localhost:5432/dev' }, HUELLA, [], STG).ok)
+check('>>> sin STAGING_DB_FINGERPRINT → NEGADO aunque no sea producción', !evaluarDestinos({ DATABASE_URL: OTRA_BASE_MISMO_HOST }, HUELLA).ok)
+check('>>> STAGING_DB_FINGERPRINT mal formada → NEGADO', !evaluarDestinos({ DATABASE_URL: OTRA_BASE_MISMO_HOST }, HUELLA, [], 'sin-base').ok)
+check('>>> staging igual a producción → NEGADO', !evaluarDestinos({ DATABASE_URL: PROD }, HUELLA, [], HUELLA).ok)
+check('>>> una variable en staging y otra desconocida → NEGADO', !evaluarDestinos({ DATABASE_URL: OTRA_BASE_MISMO_HOST, DIRECT_URL: 'postgresql://u:x@otro.host/staging' }, HUELLA, [], STG).ok)
+check('pooler y directa del staging declarado → permitido', evaluarDestinos({ DATABASE_URL: OTRA_BASE_MISMO_HOST, DIRECT_URL: 'postgresql://u:x@ep-aaa.c-5.us-east-2.aws.neon.tech/staging' }, HUELLA, [], STG).ok)
 check('el motivo NO contiene la clave', !evaluarDestinos({ DATABASE_URL: PROD }, HUELLA).motivo.includes('clave'))
 
 console.log('\n3) Contra el .env de producción, aunque nadie defina la variable a mano')
@@ -49,13 +58,14 @@ check('>>> destino = el de .env → NEGADO', !evaluarEntorno({ DATABASE_URL: PRO
 const envSinVariable = join(dir, '.env.sin')
 writeFileSync(envSinVariable, `DATABASE_URL="${PROD}"\n`)
 check('>>> sin variable, pero el destino coincide con .env → NEGADO', !evaluarEntorno({ DATABASE_URL: PROD }, envSinVariable).ok)
-check('destino distinto de .env y de la variable → permitido', evaluarEntorno({ DATABASE_URL: OTRA_BASE_MISMO_HOST, PROD_DB_FINGERPRINT: HUELLA }, envProd).ok)
-check('la variable puede venir solo de .env', evaluarEntorno({ DATABASE_URL: OTRA_BASE_MISMO_HOST }, envProd).ok)
+check('destino distinto de .env y de la variable → permitido', evaluarEntorno({ DATABASE_URL: OTRA_BASE_MISMO_HOST, PROD_DB_FINGERPRINT: HUELLA, STAGING_DB_FINGERPRINT: STG }, envProd).ok)
+check('la variable puede venir solo de .env', evaluarEntorno({ DATABASE_URL: OTRA_BASE_MISMO_HOST, STAGING_DB_FINGERPRINT: STG }, envProd).ok)
 
 console.log('\n4) Guardia del CLI de Prisma')
 const A = ['node', 'prisma']
 const E = (extra: Record<string, string | undefined> = {}) => ({ DATABASE_URL: PROD, PROD_DB_FINGERPRINT: HUELLA, ...extra })
-const ES = { DATABASE_URL: OTRA_BASE_MISMO_HOST, PROD_DB_FINGERPRINT: HUELLA }
+const ES = { DATABASE_URL: OTRA_BASE_MISMO_HOST, PROD_DB_FINGERPRINT: HUELLA, STAGING_DB_FINGERPRINT: STG }
+const desconocida = { DATABASE_URL: 'postgresql://u:x@localhost:5432/dev', PROD_DB_FINGERPRINT: HUELLA, STAGING_DB_FINGERPRINT: STG }
 check('>>> migrate dev contra producción → NEGADO', !evaluarComandoPrisma([...A, 'migrate', 'dev'], E(), envProd).ok)
 check('>>> db push / db seed / migrate reset contra producción → NEGADOS, aun con el permiso', ['db push', 'db seed', 'migrate reset', 'db execute'].every((c) => !evaluarComandoPrisma([...A, ...c.split(' ')], E({ I_UNDERSTAND_THIS_IS_PRODUCTION: 'true' }), envProd).ok))
 check('>>> migrate deploy contra producción SIN intención → NEGADO', !evaluarComandoPrisma([...A, 'migrate', 'deploy'], E(), envProd).ok)
@@ -66,6 +76,7 @@ check('>>> sin PROD_DB_FINGERPRINT ni siquiera Vercel migra (no se puede comprob
 check('contra staging todo se permite', ['migrate dev', 'migrate deploy', 'db push', 'db seed', 'migrate reset'].every((c) => evaluarComandoPrisma([...A, ...c.split(' ')], ES, envProd).ok))
 check('>>> --url a producción desde la línea de comandos → NEGADO', !evaluarComandoPrisma([...A, 'db', 'execute', '--url', PROD], ES, envProd).ok && !evaluarComandoPrisma([...A, 'migrate', 'diff', `--from-url=${PROD_DIRECTA}`], ES, envProd).ok)
 check('>>> --config (saltaría la guardia) → NEGADO', !evaluarComandoPrisma([...A, 'migrate', 'deploy', '--config', 'otra.ts'], ES, envProd).ok)
+check('>>> prisma migrate / db contra una base DESCONOCIDA → NEGADO (lista blanca)', ['migrate deploy', 'migrate dev', 'db push', 'db seed'].every((c) => !evaluarComandoPrisma([...A, ...c.split(' ')], desconocida, envProd).ok))
 check('generate / validate / format no tocan la base → permitidos siempre', ['generate', 'validate', 'format'].every((c) => evaluarComandoPrisma([...A, c], E(), envProd).ok))
 const cfg = readFileSync('prisma.config.ts', 'utf8')
 check('>>> prisma.config.ts ejecuta la guardia ANTES de defineConfig', cfg.indexOf('evaluarComandoPrisma(process.argv)') > 0 && cfg.indexOf('evaluarComandoPrisma(process.argv)') < cfg.indexOf('export default defineConfig'))
