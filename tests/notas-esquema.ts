@@ -80,7 +80,9 @@ async function main() {
   const dir = readdirSync('prisma/migrations').filter((d) => d.endsWith('init_notas_credito_debito'))[0]!
   const sql = readFileSync(`prisma/migrations/${dir}/migration.sql`, 'utf8')
   const todas = readdirSync('prisma/migrations').filter((d) => /^\d{14}_/.test(d)).sort()
-  check('>>> su marca es la MAYOR de todas (el orden no retrocede)', todas.at(-1) === dir && todas.length === new Set(todas.map((d) => d.slice(0, 14))).size, dir)
+  // Las migraciones posteriores (p. ej. el índice de una nota total) la superan: lo que importa es que sea MAYOR que la anterior y no se repitan marcas.
+  const previa = todas[todas.indexOf(dir) - 1]!
+  check('>>> su marca es MAYOR que la de la migración anterior y las marcas no se repiten (el orden no retrocede)', dir.slice(0, 14) > previa.slice(0, 14) && todas.length === new Set(todas.map((d) => d.slice(0, 14))).size, `${previa} < ${dir}`)
   check('lleva el índice único parcial y el CHECK a mano', /CREATE UNIQUE INDEX "tax_documents_un_comprobante_por_venta"[\s\S]*WHERE "documentType" IN \('BOLETA', 'FACTURA'\)/.test(sql) && sql.includes('tax_documents_nota_campos_chk'))
   check('>>> no usa NOTA_CREDITO/NOTA_DEBITO dentro de un CHECK o índice (un valor de enum nuevo no se puede usar en la misma transacción)', !/(CHECK|WHERE)[\s\S]*NOTA_(CREDITO|DEBITO)/.test(sql.replace(/ALTER TYPE[^;]*;/g, '')))
   check('trae down.sql que se niega a borrar notas emitidas', existsSync(`prisma/migrations/${dir}/down.sql`) && readFileSync(`prisma/migrations/${dir}/down.sql`, 'utf8').includes('RAISE EXCEPTION'))

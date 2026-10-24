@@ -141,7 +141,9 @@ async function main() {
   const origT = await A.factura('ACEPTADO', LEJOS, true)
   const nT = await A.notaSobre(origT, { serie: 'FC01', cola: LEJOS })
   check('>>> nota REAL sobre un original de PRUEBA → rechazada al cargar', (await lanza(() => cargarComprobanteFiscal(A.db, nT.id)))?.code === 'INVALID_DOCUMENT')
-  const nS = await A.notaSobre(origA, { serie: 'BC01', cola: LEJOS })
+  // Una sola nota total viva por comprobante (índice único parcial): la de serie incorrecta va sobre OTRO original.
+  const origS = await A.factura('ACEPTADO', LEJOS)
+  const nS = await A.notaSobre(origS, { serie: 'BC01', cola: LEJOS })
   check('>>> serie incorrecta al cargar → rechazada', (await lanza(() => cargarComprobanteFiscal(A.db, nS.id)))?.message.includes('serie') === true)
 
   console.log('\n8) En la cola: la nota espera a su original SIN gastar intentos')

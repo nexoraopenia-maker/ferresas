@@ -282,7 +282,9 @@ El criterio para habilitar no es técnico: es haber validado el XML, los catálo
 
 ## 10. Notas de crédito y de débito
 
-Estado: **modelo de datos listo (migración `20261104120000_init_notas_credito_debito`); falta la emisión, el XML y el envío por la cola.**
+Estado: **modelo de datos (`20261104120000_init_notas_credito_debito`), envío por la cola (UBL 07/08) y emisión de la nota de crédito TOTAL (`emitirNotaCreditoTotal`, motivos 01, 02 y 06) listos; ninguno validado con un proveedor real.** Falta la pantalla, las notas parciales y de débito (`TaxDocumentItem`, fase 1A.3b) y la certificación empírica (`scripts/certificar-nota.ts`, que necesita un PSE de pruebas configurado).
+
+La emisión NO devuelve stock, no toca la caja y no cambia la venta; solo crea la nota. Una sola nota total viva por comprobante: índice único parcial `20261105120000_nota_credito_total_unica` (una nota rechazada no cuenta). La serie se hereda del original (`F007` → `FC07`, `B012` → `BC12`) y solo cabe hasta la sucursal 99.
 
 > ⚠️ **Todo lo normativo de esta sección está pendiente de validación oficial.** Los catálogos 09 y 10, la regla de series y los plazos están escritos de memoria para poder construir el modelo; no los ha contrastado ninguna fuente de SUNAT. Antes de habilitar notas a un negocio real hay que cotejarlos con el Anexo de catálogos y la Guía de elaboración del XML vigentes (o con el contador / el proveedor PSE) y quitar este aviso.
 

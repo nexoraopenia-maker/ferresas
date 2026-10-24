@@ -15,6 +15,7 @@ import {
   type UpdateTaxStatusInput,
 } from './schemas'
 import { puede } from '@/lib/puede'
+import { CODIGOS_NOTA_CREDITO_TOTAL } from './notas'
 
 const P2002_UNIQUE = 'P2002'
 
@@ -402,4 +403,179 @@ export async function updateTaxStatus(
   ])
 
   return actualizado
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  NOTA DE CRÉDITO TOTAL
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface NotaCreditoEmitida {
+  id: string
+  series: string
+  correlativo: number
+  fullNumber: string
+  status: string
+  total: number
+  /** Comprobante que la nota anula, tal como se imprime: "F001-00000123". */
+  comprobanteOriginal: string
+}
+
+const TOPE_SUSTENTO = 250
+
+/**
+ * Emite la nota de crédito TOTAL de la venta `saleId` (motivos 01, 02 y 06).
+ *
+ * ⚠️ Fase 1A.3: solo notas totales. Las parciales y las de débito necesitan líneas propias
+ * (`TaxDocumentItem`, fase 1A.3b). Las reglas normativas están en docs/COMPLIANCE.md §10, sin validar.
+ *
+ * Lo que HACE: crea la nota (serie propia, correlativo sin huecos, importes y partes COPIADOS del original) y,
+ * si el negocio es real, la encola en la misma transacción. El envío lo hace la cola, y la nota espera a que
+ * su original esté aceptado (ver `NotaEsperaOriginal`).
+ *
+ * Lo que NO hace (a propósito): no devuelve el stock, no toca la caja, no cambia la venta. Si hay que reponer
+ * mercadería o devolver dinero, es una operación aparte que decide una persona.
+ *
+ *  · SERIE HEREDADA: F001 → FC01, B007 → BC07. Solo hasta la sucursal 99 (la serie de una nota son 4 caracteres).
+ *  · UNA SOLA nota total viva por comprobante: lo garantiza un índice único parcial (el chequeo previo solo da
+ *    el mensaje claro; la carrera la corta la base). Una nota RECHAZADA no cuenta.
+ */
+export async function emitirNotaCreditoTotal(
+  db: TenantPrismaClient,
+  ctx: TenantContext,
+  input: { saleId: string; reasonCode: string; reasonDescription: string },
+): Promise<NotaCreditoEmitida> {
+  if (!puede(ctx, 'comprobantes.anular')) {
+    throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para emitir notas de crédito.')
+  }
+
+  if (!CODIGOS_NOTA_CREDITO_TOTAL.includes(input.reasonCode)) {
+    throw new BusinessError(
+      'INVALID_DOCUMENT',
+      `El motivo ${input.reasonCode} no está disponible: por ahora solo notas de crédito totales (${CODIGOS_NOTA_CREDITO_TOTAL.join(', ')}).`,
+    )
+  }
+  const sustento = input.reasonDescription.trim()
+  if (sustento.length < 3 || sustento.length > TOPE_SUSTENTO) {
+    throw new BusinessError('INVALID_DOCUMENT', `El sustento debe tener entre 3 y ${TOPE_SUSTENTO} caracteres.`)
+  }
+
+  const estado = await db.tenant.findFirstOrThrow({
+    select: { isDemo: true, realBillingEnabledAt: true, realBillingPausedAt: true },
+  })
+  const modo = modoFiscal(estado)
+
+  const original = await db.taxDocument.findFirst({
+    where: { saleId: input.saleId, documentType: { in: ['BOLETA', 'FACTURA'] } },
+    select: {
+      id: true, documentType: true, series: true, fullNumber: true, status: true, isTrial: true, currency: true,
+      issuerTaxId: true, issuerLegalName: true,
+      receiverDocType: true, receiverDocNumber: true, receiverName: true, receiverAddress: true,
+      subtotal: true, taxTotal: true, discountTotal: true, total: true,
+      sale: { select: { branchId: true } },
+    },
+  })
+  if (!original) throw new BusinessError('NOT_FOUND', 'Esa venta no tiene un comprobante de venta al que emitir una nota.')
+
+  if (original.isTrial) {
+    throw new BusinessError('INVALID_DOCUMENT', 'Ese comprobante es de prueba, sin valor tributario: no admite notas.')
+  }
+  if (original.status !== 'ACEPTADO') {
+    throw new BusinessError(
+      'INVALID_DOCUMENT',
+      original.status === 'PENDIENTE' || original.status === 'ENVIADO'
+        ? `El comprobante ${original.fullNumber} aún no está aceptado: la nota se puede emitir cuando SUNAT lo acepte.`
+        : `El comprobante ${original.fullNumber} está ${original.status.toLowerCase()}: no admite notas.`,
+    )
+  }
+
+  // F007 → FC07, B012 → BC12. Un número de sucursal de tres dígitos (≥ 100) no cabe en los 4 caracteres de la serie.
+  const m = /^([FB])0(\d{2})$/.exec(original.series)
+  if (!m) {
+    throw new BusinessError(
+      'INVALID_DOCUMENT',
+      `La serie ${original.series} no permite derivar la serie de la nota (solo sucursales 1 a 99).`,
+    )
+  }
+  const series = `${m[1]}C${m[2]}`
+  const scope = m[1] === 'F' ? 'TAX_NC_FACTURA' : 'TAX_NC_BOLETA'
+
+  const yaExiste = async () => db.taxDocument.findFirst({
+    where: {
+      relatedDocumentId: original.id, documentType: 'NOTA_CREDITO',
+      reasonCode: { in: [...CODIGOS_NOTA_CREDITO_TOTAL] }, status: { not: 'RECHAZADO' },
+    },
+    select: { fullNumber: true },
+  })
+  const bloquear = (n: { fullNumber: string }) => new BusinessError(
+    'INVALID_DOCUMENT',
+    `El comprobante ${original.fullNumber} ya tiene una nota de crédito total: ${n.fullNumber}.`,
+    { existente: n.fullNumber },
+  )
+  const previa = await yaExiste()
+  if (previa) throw bloquear(previa)
+
+  await ensureCounter(db, ctx.tenantId, original.sale.branchId, scope, series, '')
+
+  try {
+    return await db.$transaction(async (tx) => {
+      const t = tx as unknown as TenantPrismaClient
+      const { correlativo } = await claimNextNumber(t, ctx.tenantId, scope, series)
+      const fullNumber = formatFullNumber(series, correlativo)
+
+      const nota = await t.taxDocument.create({
+        data: {
+          tenantId: ctx.tenantId,
+          saleId: input.saleId,
+          documentType: 'NOTA_CREDITO',
+          series, correlativo, fullNumber,
+          status: 'PENDIENTE',
+          isTrial: false,
+          relatedDocumentId: original.id,
+          reasonCode: input.reasonCode,
+          reasonDescription: sustento,
+          // Todo se COPIA del original: es una nota total, por el mismo importe y para el mismo receptor.
+          issuerTaxId: original.issuerTaxId,
+          issuerLegalName: original.issuerLegalName,
+          receiverDocType: original.receiverDocType,
+          receiverDocNumber: original.receiverDocNumber,
+          receiverName: original.receiverName,
+          receiverAddress: original.receiverAddress,
+          currency: original.currency,
+          subtotal: original.subtotal,
+          taxTotal: original.taxTotal,
+          discountTotal: original.discountTotal,
+          total: original.total,
+        },
+        select: { id: true, series: true, correlativo: true, fullNumber: true, status: true, total: true },
+      })
+
+      if (seEncola({ isTrial: false }, modo)) await encolarComprobante(t, ctx.tenantId, nota.id)
+
+      await t.auditLog.create({
+        data: {
+          tenantId: ctx.tenantId,
+          actorId: ctx.userId,
+          actorRole: ctx.role,
+          action: 'taxdocument.nota_credito',
+          entityType: 'TaxDocument',
+          entityId: nota.id,
+          after: { nota: fullNumber, original: original.fullNumber, motivo: input.reasonCode, sustento, modo, total: num(original.total) },
+          impersonationId: ctx.impersonationId ?? null,
+        },
+      })
+
+      return {
+        id: nota.id, series: nota.series, correlativo: nota.correlativo, fullNumber: nota.fullNumber,
+        status: nota.status, total: num(nota.total), comprobanteOriginal: original.fullNumber,
+      }
+    }, { maxWait: 15_000, timeout: 30_000 })
+  } catch (e) {
+    // Carrera: dos personas emitiendo la nota del mismo comprobante a la vez. El índice único parcial corta a la
+    // segunda; su transacción se deshace entera (el correlativo reservado se devuelve: no queda quemado).
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === P2002_UNIQUE) {
+      const ganadora = await yaExiste()
+      if (ganadora) throw bloquear(ganadora)
+    }
+    throw e
+  }
 }
