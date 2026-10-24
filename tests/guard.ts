@@ -1,4 +1,5 @@
 import { config } from 'dotenv'
+import { evaluarEntorno, huella } from '../scripts/huella-bd'
 
 /**
  * Guardia obligatoria de la suite de pruebas.
@@ -58,12 +59,29 @@ if (!PERMITIDO) {
   process.exit(1)
 }
 
-/** Aviso si el destino huele a producción aun con el permiso puesto. */
-const url = process.env.DATABASE_URL ?? ''
-if (/prod|production/i.test(url)) {
-  console.warn(
-    `⚠️  ALLOW_DESTRUCTIVE_TESTS está activo y la URL contiene "prod": ${host(url)}`,
-  )
+/**
+ * Segunda barrera, INDEPENDIENTE del permiso: aunque ALLOW_DESTRUCTIVE_TESTS esté puesto, la suite se niega
+ * si algún destino coincide en host Y nombre de base con producción (PROD_DB_FINGERPRINT o lo que diga
+ * `.env`). El permiso lo puede arrastrar un `.env.local` copiado de producción; la huella no.
+ * Sin PROD_DB_FINGERPRINT también se niega: sin ella no se puede garantizar nada.
+ */
+const veredicto = evaluarEntorno()
+if (!veredicto.ok) {
+  console.error(`
+╔════════════════════════════════════════════════════════════════════════╗
+║  SUITE DETENIDA — el destino puede ser PRODUCCIÓN                      ║
+╚════════════════════════════════════════════════════════════════════════╝
+
+  ${veredicto.motivo}
+
+  Destino actual:  ${host(process.env.DATABASE_URL)}
+  Huella:          ${huella(process.env.DATABASE_URL) ?? '—'}
+
+  Apunta DATABASE_URL (y DIRECT_URL) de .env.local a una base de STAGING
+  distinta, y define PROD_DB_FINGERPRINT=host/nombre_de_base de producción
+  (sin usuario ni clave; ver .env.example).
+`)
+  process.exit(1)
 }
 
 console.log(`▸ suite habilitada contra ${host(process.env.DATABASE_URL)}\n`)

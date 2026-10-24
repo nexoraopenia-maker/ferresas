@@ -11,6 +11,15 @@ import { config } from 'dotenv'
 config({ path: '.env.local' })
 config({ path: '.env' })
 import path from 'node:path'
+import { evaluarComandoPrisma } from './scripts/huella-bd'
+
+// Guardia de huella: ningún comando que toque la base corre contra producción sin intención explícita
+// (ver scripts/huella-bd.ts). Se evalúa en CADA invocación del CLI, incluido el .env por defecto.
+const veredicto = evaluarComandoPrisma(process.argv)
+if (!veredicto.ok) {
+  console.error(`\n✗ prisma detenido por la guardia de huella de producción.\n  ${veredicto.motivo}\n`)
+  process.exit(2)
+}
 import { defineConfig, env } from 'prisma/config'
 
 /**

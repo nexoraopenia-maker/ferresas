@@ -42,3 +42,12 @@ hora real quedara por detrás). Las ya aplicadas en algún entorno no se renombr
 Un `down.sql` no vale hasta que se ha probado: se aplican todas las migraciones en un esquema
 temporal, se ejecuta el `down.sql` y se comprueba con `prisma migrate diff` contra el esquema
 anterior que no queda **ninguna** diferencia. (Hecho para `20261102120000_fiscal_modo_ensayo`.)
+
+## Guardia de huella de producción
+
+`prisma.config.ts` evalúa `scripts/huella-bd.ts` en **cada** comando de prisma que toca la base (`migrate`, `db`, `studio`), incluido el `.env` por defecto. La huella es `host/nombre_de_base` (sin `-pooler`, usuario ni clave) y se compara contra `PROD_DB_FINGERPRINT` y contra lo que diga `.env`.
+
+- Sin `PROD_DB_FINGERPRINT`: se niega todo (no se puede comprobar). **Hay que definirla también en las variables de Vercel**, o el build de producción no migrará.
+- Contra producción solo se permiten `migrate deploy` y `migrate status`, y solo en el build de producción de Vercel (`VERCEL_ENV=production`) o con `I_UNDERSTAND_THIS_IS_PRODUCTION=true` escrito en la línea de comandos.
+- `--config` y las URL pasadas por opción (`--url`, `--from-url`, `--to-url`, `--shadow-database-url`) se evalúan o se prohíben: no hay forma de saltarse la guardia.
+- La suite (`tests/guard.ts`) y `scripts/migrar-staging.sh` usan la misma comprobación.
