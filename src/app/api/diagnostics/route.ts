@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { hayClaveMaestra } from '@/lib/cifrado'
 import { prisma } from '@/lib/prisma'
+import { clasificarMigraciones, diagnosticarHuella } from '@/lib/diagnostico-base'
 
 /**
  * GET /api/diagnostics?key=$CRON_SECRET — estado de la configuración.
@@ -179,9 +180,9 @@ export async function GET(req: NextRequest) {
       }),
     ])
 
-    const aplicadas = migraciones.filter((m) => m.ok).map((m) => m.migration_name)
-    // Fallidas o revertidas: existen en la tabla pero NO están aplicadas.
-    const fallidas = migraciones.filter((m) => !m.ok).map((m) => m.migration_name)
+    // Una migración reintentada tras un fallo deja DOS filas (la revertida y la buena): solo es «fallida» si NINGUNA
+    // terminó bien. Ver `clasificarMigraciones`.
+    const { aplicadas, fallidas, reintentadas } = clasificarMigraciones(migraciones)
 
     /**
      * Migraciones PENDIENTES: las que vienen en el repositorio y no están
@@ -212,6 +213,8 @@ export async function GET(req: NextRequest) {
       migracionesAplicadas: aplicadas,
       migracionesPendientes: pendientes,
       migracionesFallidas: fallidas,
+      /** Fallaron antes y hoy están aplicadas: informativo. */
+      migracionesReintentadas: reintentadas,
       planesActivos: planes,
       superadminsActivos: superadmins,
       tenants,
@@ -244,7 +247,11 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const problemas: string[] = []
+  // ¿La app está conectada a la base que dice ser la de producción? (sin revelar credenciales)
+  const huellaBase = diagnosticarHuella(process.env)
+  baseDatos = { ...baseDatos, conectadaA: huellaBase.conectadaA, huellaProduccionDeclarada: huellaBase.esperada, coincideConHuellaProduccion: huellaBase.coincide }
+
+  const problemas: string[] = [...huellaBase.problemas]
   if (!entorno.AUTH_SECRET.presente && !entorno.NEXTAUTH_SECRET.presente) {
     problemas.push('Falta AUTH_SECRET: las sesiones no se pueden firmar ni verificar.')
   }

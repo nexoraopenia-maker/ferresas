@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { parse } from 'dotenv'
+import { huella, normalizarHuella } from '../src/lib/huella-bd'
 
 /**
  * Huella de una base de datos: «host/nombre», SIN usuario, clave ni parámetros.
@@ -14,25 +15,7 @@ import { parse } from 'dotenv'
 /** Variables de entorno que el código o el CLI de Prisma usan para conectarse. */
 export const VARIABLES_DE_CONEXION = ['DATABASE_URL', 'DIRECT_URL', 'SHADOW_DATABASE_URL'] as const
 
-export function huella(url: string | undefined | null): string | null {
-  if (!url) return null
-  try {
-    const u = new URL(url)
-    const host = u.hostname.toLowerCase().replace(/-pooler(?=\.)/, '')
-    const base = decodeURIComponent(u.pathname.replace(/^\/+/, '')).toLowerCase()
-    if (!host || !base) return null
-    return `${host}/${base}`
-  } catch {
-    return null
-  }
-}
-
-/** Normaliza lo escrito en `PROD_DB_FINGERPRINT` (acepta «host/base» con o sin `-pooler`). */
-export function normalizarHuella(texto: string | undefined | null): string | null {
-  const t = (texto ?? '').trim().toLowerCase().replace(/^[a-z]+:\/\//, '')
-  const m = /^([^/\s:]+)(?::\d+)?\/([^/?\s]+)$/.exec(t)
-  return m ? `${m[1]!.replace(/-pooler(?=\.)/, '')}/${m[2]}` : null
-}
+export { huella, normalizarHuella }
 
 export interface Veredicto {
   ok: boolean
