@@ -69,8 +69,8 @@ export interface LineaFiscal {
 }
 
 export interface ComprobanteFiscal {
-  /** Catálogo 01: "01" factura, "03" boleta, "07" nota de crédito. */
-  tipoComprobante: '01' | '03' | '07'
+  /** Catálogo 01: "01" factura, "03" boleta, "07" nota de crédito, "08" nota de débito. ⚠️ 07/08 sin validar. */
+  tipoComprobante: '01' | '03' | '07' | '08'
   serie: string
   correlativo: number
   fechaEmision: string
@@ -87,12 +87,12 @@ export interface ComprobanteFiscal {
   total: number
   /** Importe en letras: lo exige el Reglamento de Comprobantes de Pago. */
   totalEnLetras: string
-  /** Para una nota de crédito: el comprobante que corrige. */
+  /** Para una nota de crédito o de débito: el comprobante que corrige o aumenta. ⚠️ Sin validar. */
   documentoRelacionado?: {
     tipoComprobante: '01' | '03'
     serie: string
     correlativo: number
-    /** Catálogo 09: motivo de la nota de crédito. */
+    /** Catálogo 09 (crédito) o 10 (débito): código del motivo. ⚠️ Pendiente de validación oficial. */
     motivo: string
     descripcionMotivo: string
   }

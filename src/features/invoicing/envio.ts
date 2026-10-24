@@ -15,6 +15,9 @@ import type {
 } from './providers/types'
 import { construirXmlUbl } from './ubl'
 import { bloqueoDeEnvio, modoFiscal } from './modo-fiscal'
+import { documentoRelacionadoDe } from './notas'
+
+export { NotaEsperaOriginal } from './notas'
 
 /**
  * Envío de un comprobante al proveedor de facturación (PSE/OSE).
@@ -75,7 +78,12 @@ export async function cargarComprobanteFiscal(
     where: { id: taxDocumentId },
     select: {
       id: true, status: true, saleId: true, documentType: true, series: true, correlativo: true,
-      fullNumber: true, issuedAt: true, currency: true, isTrial: true,
+      fullNumber: true, issuedAt: true, currency: true, isTrial: true, total: true,
+      // Solo las notas tienen estos campos; el comprobante original llega por la clave foránea compuesta (mismo negocio).
+      reasonCode: true, reasonDescription: true,
+      relatedDocument: {
+        select: { documentType: true, series: true, correlativo: true, status: true, isTrial: true, total: true, currency: true },
+      },
       receiverDocType: true, receiverDocNumber: true, receiverName: true, receiverAddress: true,
       sale: {
         select: {
@@ -95,6 +103,18 @@ export async function cargarComprobanteFiscal(
 
   const tipo = tipoComprobante(doc.documentType)
   if (!tipo) throw new BusinessError('INVALID_DOCUMENT', 'Este documento no es un comprobante electrónico.')
+
+  // Nota de crédito/débito: se valida ANTES de armar nada (lanza `NotaEsperaOriginal` o un error permanente).
+  const documentoRelacionado = tipo === '07' || tipo === '08'
+    ? documentoRelacionadoDe({
+        documentType: doc.documentType as 'NOTA_CREDITO' | 'NOTA_DEBITO',
+        series: doc.series, isTrial: doc.isTrial, total: Number(doc.total), currency: doc.currency,
+        reasonCode: doc.reasonCode, reasonDescription: doc.reasonDescription,
+        relatedDocument: doc.relatedDocument && {
+          ...doc.relatedDocument, total: Number(doc.relatedDocument.total),
+        },
+      })
+    : undefined
 
   const tenant = await db.tenant.findFirstOrThrow({
     select: { taxId: true, legalName: true, name: true, address: true, ubigeo: true, timezone: true },
@@ -163,6 +183,7 @@ export async function cargarComprobanteFiscal(
     totalDescuentos: 0,
     total,
     totalEnLetras: montoALetras(total, doc.currency),
+    ...(documentoRelacionado ? { documentoRelacionado } : {}),
   }
   return { comprobante, doc: { id: doc.id, status: doc.status, saleId: doc.saleId, fullNumber: doc.fullNumber, isTrial: doc.isTrial } }
 }

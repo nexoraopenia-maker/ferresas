@@ -29,6 +29,7 @@ import type { ComprobanteFiscal, LineaFiscal } from './providers/types'
 const NS = {
   inv: 'urn:oasis:names:specification:ubl:schema:xsd:Invoice-2',
   nc: 'urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2',
+  nd: 'urn:oasis:names:specification:ubl:schema:xsd:DebitNote-2',
   cac: 'urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2',
   cbc: 'urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2',
   ext: 'urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2',
@@ -83,12 +84,19 @@ function parte(
     `</cac:Party></cac:${etiqueta}>`
 }
 
-function linea(l: LineaFiscal, c: ComprobanteFiscal, esNota: boolean): string {
+/** ⚠️ Nombres de línea y de cantidad de cada raíz UBL (Invoice / CreditNote / DebitNote): sin validar contra el XSD. */
+const LINEA = {
+  '01': { tag: 'InvoiceLine', cant: 'InvoicedQuantity' },
+  '03': { tag: 'InvoiceLine', cant: 'InvoicedQuantity' },
+  '07': { tag: 'CreditNoteLine', cant: 'CreditedQuantity' },
+  '08': { tag: 'DebitNoteLine', cant: 'DebitedQuantity' },
+} as const
+
+function linea(l: LineaFiscal, c: ComprobanteFiscal): string {
   const t = tributo(l.tipoAfectacionIgv)
   const moneda = c.moneda
   const base = l.valorUnitario * l.cantidad
-  const tag = esNota ? 'CreditNoteLine' : 'InvoiceLine'
-  const cant = esNota ? 'CreditedQuantity' : 'InvoicedQuantity'
+  const { tag, cant } = LINEA[c.tipoComprobante]
   return `<cac:${tag}><cbc:ID>${l.numero}</cbc:ID>` +
     `<cbc:${cant} unitCode="${escaparXml(l.unidadMedida)}" unitCodeListID="UN/ECE rec 20" ` +
     `unitCodeListAgencyName="United Nations Economic Commission for Europe">${cantidad(l.cantidad)}</cbc:${cant}>` +
@@ -135,16 +143,22 @@ export function verificarTotales(c: ComprobanteFiscal): void {
   revisar('Total inafecto', ina, c.totalInafecto)
   revisar('IGV', igv, c.totalIgv)
   revisar('Total', c.totalGravado + c.totalExonerado + c.totalInafecto + c.totalIgv, c.total)
-  if (c.tipoComprobante === '07' && !c.documentoRelacionado) {
-    throw new ComprobanteInconsistente('Una nota de crédito necesita el comprobante que modifica.')
+  if ((c.tipoComprobante === '07' || c.tipoComprobante === '08') && !c.documentoRelacionado) {
+    throw new ComprobanteInconsistente(`Una nota de ${c.tipoComprobante === '07' ? 'crédito' : 'débito'} necesita el comprobante que modifica.`)
+  }
+  if ((c.tipoComprobante === '01' || c.tipoComprobante === '03') && c.documentoRelacionado) {
+    throw new ComprobanteInconsistente('Una factura o boleta no lleva comprobante relacionado.')
   }
 }
 
 export function construirXmlUbl(c: ComprobanteFiscal): string {
   verificarTotales(c)
 
-  const esNota = c.tipoComprobante === '07'
-  const raiz = esNota ? 'CreditNote' : 'Invoice'
+  const esCredito = c.tipoComprobante === '07'
+  const esDebito = c.tipoComprobante === '08'
+  const esNota = esCredito || esDebito
+  const raiz = esCredito ? 'CreditNote' : esDebito ? 'DebitNote' : 'Invoice'
+  const nsRaiz = esCredito ? NS.nc : esDebito ? NS.nd : NS.inv
   const id = `${c.serie}-${c.correlativo}`
   const moneda = c.moneda
   const rel = c.documentoRelacionado
@@ -176,7 +190,7 @@ export function construirXmlUbl(c: ComprobanteFiscal): string {
 
   const xml =
     `<?xml version="1.0" encoding="UTF-8"?>` +
-    `<${raiz} xmlns="${esNota ? NS.nc : NS.inv}" xmlns:cac="${NS.cac}" xmlns:cbc="${NS.cbc}" xmlns:ds="${NS.ds}" xmlns:ext="${NS.ext}">` +
+    `<${raiz} xmlns="${nsRaiz}" xmlns:cac="${NS.cac}" xmlns:cbc="${NS.cbc}" xmlns:ds="${NS.ds}" xmlns:ext="${NS.ext}">` +
     // Aquí se inserta la firma digital (ds:Signature) al firmar. Vacío = sin firmar.
     `<ext:UBLExtensions><ext:UBLExtension><ext:ExtensionContent/></ext:UBLExtension></ext:UBLExtensions>` +
     `<cbc:UBLVersionID>2.1</cbc:UBLVersionID><cbc:CustomizationID>2.0</cbc:CustomizationID>` +
@@ -190,7 +204,9 @@ export function construirXmlUbl(c: ComprobanteFiscal): string {
     `<cbc:DocumentCurrencyCode listID="ISO 4217 Alpha" listName="Currency" listAgencyName="United Nations Economic Commission for Europe">${moneda}</cbc:DocumentCurrencyCode>` +
     (esNota && rel
       ? `<cac:DiscrepancyResponse><cbc:ReferenceID>${escaparXml(`${rel.serie}-${rel.correlativo}`)}</cbc:ReferenceID>` +
-        `<cbc:ResponseCode listName="Tipo de nota de credito" listAgencyName="PE:SUNAT" listURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo09">${escaparXml(rel.motivo)}</cbc:ResponseCode>` +
+        // ⚠️ Catálogo 09 (crédito) o 10 (débito): códigos y nombres de lista sin validar.
+        `<cbc:ResponseCode listName="${esCredito ? 'Tipo de nota de credito' : 'Tipo de nota de debito'}" listAgencyName="PE:SUNAT" ` +
+        `listURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo${esCredito ? '09' : '10'}">${escaparXml(rel.motivo)}</cbc:ResponseCode>` +
         `<cbc:Description>${escaparXml(rel.descripcionMotivo)}</cbc:Description></cac:DiscrepancyResponse>` +
         `<cac:BillingReference><cac:InvoiceDocumentReference><cbc:ID>${escaparXml(`${rel.serie}-${rel.correlativo}`)}</cbc:ID>` +
         `<cbc:DocumentTypeCode listAgencyName="PE:SUNAT" listName="Tipo de Documento" listURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo01">${rel.tipoComprobante}</cbc:DocumentTypeCode>` +
@@ -205,12 +221,13 @@ export function construirXmlUbl(c: ComprobanteFiscal): string {
       { ubigeo: c.emisor.ubigeo, establecimiento: c.emisor.codigoEstablecimiento }) +
     parte('AccountingCustomerParty', receptorDoc, c.receptor.razonSocial, null, c.receptor.direccion) +
     `<cac:TaxTotal><cbc:TaxAmount currencyID="${moneda}">${monto(c.totalIgv)}</cbc:TaxAmount>${subtotales.join('')}</cac:TaxTotal>` +
-    `<cac:LegalMonetaryTotal>` +
+    // ⚠️ La nota de débito lleva RequestedMonetaryTotal en lugar de LegalMonetaryTotal (sin validar contra el XSD).
+    `<cac:${esDebito ? 'RequestedMonetaryTotal' : 'LegalMonetaryTotal'}>` +
     `<cbc:LineExtensionAmount currencyID="${moneda}">${monto(c.totalGravado + c.totalExonerado + c.totalInafecto)}</cbc:LineExtensionAmount>` +
     `<cbc:TaxInclusiveAmount currencyID="${moneda}">${monto(c.total)}</cbc:TaxInclusiveAmount>` +
     (c.totalDescuentos > 0 ? `<cbc:AllowanceTotalAmount currencyID="${moneda}">${monto(c.totalDescuentos)}</cbc:AllowanceTotalAmount>` : '') +
-    `<cbc:PayableAmount currencyID="${moneda}">${monto(c.total)}</cbc:PayableAmount></cac:LegalMonetaryTotal>` +
-    c.lineas.map((l) => linea(l, c, esNota)).join('') +
+    `<cbc:PayableAmount currencyID="${moneda}">${monto(c.total)}</cbc:PayableAmount></cac:${esDebito ? 'RequestedMonetaryTotal' : 'LegalMonetaryTotal'}>` +
+    c.lineas.map((l) => linea(l, c)).join('') +
     `</${raiz}>`
 
   return xml

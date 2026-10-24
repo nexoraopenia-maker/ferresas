@@ -1,7 +1,7 @@
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import type { TenantContext } from '@/lib/tenant-context'
 import {
-  consultarInterno, enviarInterno, type ActorEnvio, type DependenciasEnvio,
+  consultarInterno, enviarInterno, NotaEsperaOriginal, type ActorEnvio, type DependenciasEnvio,
 } from '@/features/invoicing/envio'
 import { modoFiscal } from '@/features/invoicing/modo-fiscal'
 import { agotar, completar, liberar, pasarAConsulta, reprogramar, type FilaReclamada } from './repositorio'
@@ -25,6 +25,8 @@ const actorCola = (tenantId: string): ActorEnvio => ({ tenantId, id: null, role:
 
 const ESPERA_CONSULTA_S = 60
 const ESPERA_LIBERACION_S = 60
+/** Una nota espera a que su comprobante original esté aceptado: se vuelve a mirar en 5 min, sin gastar el intento. */
+const ESPERA_NOTA_S = 300
 
 export async function procesarFila(
   fila: FilaReclamada, deps: DependenciasEnvio = {}, ahora: Date = new Date(),
@@ -70,6 +72,8 @@ export async function procesarFila(
     if (r.estado === 'ENVIADO') return (await pasarAConsulta(fila, en(ESPERA_CONSULTA_S))) ? 'consulta' : 'perdido'
     return fallo(`Respuesta sin estado definitivo (${r.estado}).`)
   } catch (e) {
+    // La nota depende de su original: no es un fallo suyo. Se libera SIN gastar el intento (como un negocio pausado).
+    if (e instanceof NotaEsperaOriginal) return (await liberar(fila, en(ESPERA_NOTA_S), e.message)) ? 'liberado' : 'perdido'
     return fallo(recortarError(e))
   }
 }

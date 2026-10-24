@@ -18,7 +18,7 @@ import type { TaxDocumentStatus } from '@/generated/prisma/enums'
 
 export interface DatosQr {
   ruc: string
-  tipoComprobante: '01' | '03' | '07'
+  tipoComprobante: '01' | '03' | '07' | '08'
   serie: string
   correlativo: number
   igv: number

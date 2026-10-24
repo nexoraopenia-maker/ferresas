@@ -31,10 +31,15 @@ export const UNIDAD_SUNAT: Record<UnitType, string> = {
   SERVICIO: 'ZZ',
 }
 
-/** Catálogo 01. Las notas de venta y los tickets internos NO son comprobantes electrónicos. */
-export function tipoComprobante(t: DocumentType): '01' | '03' | null {
+/**
+ * Catálogo 01. Las notas de venta y los tickets internos NO son comprobantes electrónicos.
+ * ⚠️ 07 (nota de crédito) y 08 (nota de débito): pendiente de validación oficial (docs/COMPLIANCE.md §10).
+ */
+export function tipoComprobante(t: DocumentType): '01' | '03' | '07' | '08' | null {
   if (t === 'FACTURA') return '01'
   if (t === 'BOLETA') return '03'
+  if (t === 'NOTA_CREDITO') return '07'
+  if (t === 'NOTA_DEBITO') return '08'
   return null
 }
 

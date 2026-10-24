@@ -187,11 +187,17 @@ export async function pasarAConsulta(f: FilaReclamada, cuando: Date): Promise<bo
   return r.count === 1
 }
 
-/** El negocio dejó de ser enviable entre el reclamo y el envío (p. ej. se pausó): no se gasta el intento. */
-export async function liberar(f: FilaReclamada, cuando: Date): Promise<boolean> {
+/**
+ * No era el momento de enviarlo (el negocio se pausó, o una nota espera a su comprobante original): no se
+ * gasta el intento. `motivo` queda en `lastError` para que se vea POR QUÉ espera.
+ */
+export async function liberar(f: FilaReclamada, cuando: Date, motivo: string | null = null): Promise<boolean> {
   const r = await prisma.fiscalDispatch.updateMany({
     where: dueño(f),
-    data: { status: 'PENDIENTE', attempts: Math.max(0, f.attempts - 1), nextAttemptAt: cuando, ...sinLease },
+    data: {
+      status: 'PENDIENTE', attempts: Math.max(0, f.attempts - 1), nextAttemptAt: cuando, ...sinLease,
+      ...(motivo ? { lastError: recortarError(motivo) } : {}),
+    },
   })
   return r.count === 1
 }
