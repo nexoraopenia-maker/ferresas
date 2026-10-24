@@ -279,3 +279,57 @@ El criterio para habilitar no es técnico: es haber validado el XML, los catálo
 **Garantiza:** que ningún comprobante se envíe dos veces desde FerreSaaS aunque haya varios workers o ejecuciones solapadas; que un worker caído a mitad de un envío no deje la fila bloqueada; que nada se marque ACEPTADO sin una respuesta del proveedor; que un documento de prueba jamás llegue a un proveedor; y que un envío que se rinde (AGOTADO) sea visible para el dueño y el SuperAdmin.
 
 **No garantiza** (⚠️): que el proveedor no duplique un comprobante si ignora su clave de idempotencia (la clave se envía, pero que la respete es cosa suya y de su contrato), ni los **plazos** de SUNAT para enviar: los umbrales de la alarma (24 h / 72 h por defecto) no son plazos oficiales y los confirma el responsable fiscal. Tampoco hay todavía envío real: hasta que haya un PSE contratado la cola solo se ha probado contra proveedores simulados.
+
+## 10. Notas de crédito y de débito
+
+Estado: **modelo de datos listo (migración `20261104120000_init_notas_credito_debito`); falta la emisión, el XML y el envío por la cola.**
+
+> ⚠️ **Todo lo normativo de esta sección está pendiente de validación oficial.** Los catálogos 09 y 10, la regla de series y los plazos están escritos de memoria para poder construir el modelo; no los ha contrastado ninguna fuente de SUNAT. Antes de habilitar notas a un negocio real hay que cotejarlos con el Anexo de catálogos y la Guía de elaboración del XML vigentes (o con el contador / el proveedor PSE) y quitar este aviso.
+
+### Modelo
+
+- Una nota es un `TaxDocument` con `documentType` `NOTA_CREDITO` o `NOTA_DEBITO`, **serie propia**, su propio correlativo sin huecos y la misma clave fiscal que el resto: `(tenantId, documentType, series, correlativo)`. No se añadió un campo `number`: el número es `correlativo`, y duplicarlo permitiría que se desalinearan.
+- `relatedDocumentId`: el comprobante que corrige o aumenta. Clave foránea compuesta con el negocio (una nota nunca apunta al comprobante de otro negocio) y `ON DELETE RESTRICT`.
+- `reasonCode` (código de dos dígitos del catálogo) y `reasonDescription` (sustento escrito).
+- `saleId` de la nota es la venta de su comprobante relacionado. Por eso se eliminó el único `(tenantId, saleId)`: ahora lo sustituye un **índice único parcial** que impone un solo comprobante de venta (boleta o factura) por venta; las notas no cuentan.
+- Un `CHECK` en la base obliga a que una nota lleve comprobante relacionado (distinto de sí misma), código de dos dígitos y sustento, y a que boletas y facturas no lleven ninguno.
+- Las notas corrigen, nunca borran: el comprobante original no se modifica.
+
+### Herencia del prefijo de la serie (F / B) ⚠️
+
+La serie de una nota empieza por la **misma letra** que la serie del comprobante que modifica: una nota sobre una factura (serie `F…`) lleva serie `F…`; una nota sobre una boleta (`B…`), serie `B…`. Propuesta de formato: `FC01`/`FD01` (crédito/débito sobre facturas) y `BC01`/`BD01` (sobre boletas). ⚠️ La longitud de cuatro caracteres, la letra de tipo (`C`/`D`) y el correlativo de dos dígitos son nuestra convención y se validan con SUNAT/el PSE. Las notas sobre documentos de prueba (series `PB`/`PF`) **no se admiten todavía** (ver §8).
+
+### Catálogo 09: tipo de nota de crédito ⚠️
+
+| Código | Descripción |
+|---|---|
+| 01 | Anulación de la operación |
+| 02 | Anulación por error en el RUC |
+| 03 | Corrección por error en la descripción |
+| 04 | Descuento global |
+| 05 | Descuento por ítem |
+| 06 | Devolución total |
+| 07 | Devolución por ítem |
+| 08 | Bonificación |
+| 09 | Disminución en el valor |
+| 10 | Otros conceptos |
+| 11 | Ajustes de operaciones de exportación |
+| 12 | Ajustes afectos al IVAP |
+| 13 | Corrección del monto neto pendiente de pago y/o de las fechas de vencimiento del pago único o de las cuotas y/o los montos correspondientes a cada cuota, de ser el caso |
+
+### Catálogo 10: tipo de nota de débito ⚠️
+
+| Código | Descripción |
+|---|---|
+| 01 | Intereses por mora |
+| 02 | Aumento en el valor |
+| 03 | Penalidades / otros conceptos |
+| 10 | Ajustes de operaciones de exportación |
+| 11 | Ajustes afectos al IVAP |
+
+### Lo que NO está decidido todavía ⚠️
+
+- Qué códigos del catálogo 09 se ofrecen a una ferretería (propuesta inicial: 01 a 07, 09 y 10; fuera de alcance 08, 11, 12 y 13).
+- El plazo máximo para emitir una nota sobre un comprobante, y si una nota de crédito total (01/06) debe además anular el comprobante.
+- Que una boleta pueda ser corregida con nota o solo anulada por resumen diario (fase 1A.4).
+- Reglas de importes: que la suma de las notas de crédito no supere el comprobante relacionado.

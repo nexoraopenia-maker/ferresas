@@ -90,7 +90,10 @@ export async function issueTaxDocument(
       customer: {
         select: { docType: true, docNumber: true, name: true, address: true },
       },
-      taxDocument: {
+      // El comprobante de venta (boleta o factura); las notas de crédito/débito de la venta no cuentan.
+      taxDocuments: {
+        where: { documentType: { in: ['BOLETA', 'FACTURA'] } },
+        take: 1,
         select: {
           id: true, documentType: true, series: true, isTrial: true,
           correlativo: true, fullNumber: true, status: true, total: true,
@@ -105,8 +108,9 @@ export async function issueTaxDocument(
 
   // Reintento: se devuelve el comprobante que ya existe. No es un error —
   // es lo que pasa cuando el cajero toca dos veces o se le cae la red.
-  if (sale.taxDocument) {
-    const d = sale.taxDocument
+  const existente = sale.taxDocuments[0]
+  if (existente) {
+    const d = existente
     return {
       id: d.id,
       documentType: d.documentType,

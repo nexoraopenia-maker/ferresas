@@ -165,6 +165,10 @@ enum DocumentType {
   NOTA_VENTA
   BOLETA
   FACTURA
+  /// Nota de crédito (07): corrige o anula un comprobante ya emitido. Siempre lleva `relatedDocumentId`.
+  NOTA_CREDITO
+  /// Nota de débito (08): aumenta el valor de un comprobante ya emitido. Siempre lleva `relatedDocumentId`.
+  NOTA_DEBITO
   TICKET
 }
 
@@ -1082,7 +1086,10 @@ model Sale {
 
   items          SaleItem[]
   payments       Payment[]
-  taxDocument    TaxDocument?
+  /// El comprobante de la venta (boleta o factura) MÁS las notas de crédito/débito que se le emitan.
+  /// Que haya UN solo comprobante de venta lo garantiza el índice único parcial de la migración
+  /// `init_notas_credito_debito` (Prisma no sabe expresar índices parciales).
+  taxDocuments   TaxDocument[]
   dispatchGuides DispatchGuide[]
 
   @@unique([tenantId, id])
@@ -1473,8 +1480,9 @@ model TaxDocument {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  /// Un comprobante por venta. Corregir uno emitido se hace con nota de
-  /// crédito, nunca reemplazándolo — de ahí el único y no una lista.
+  /// Venta de origen. Una venta tiene UN comprobante de venta (boleta o factura, índice único
+  /// parcial en la migración) y todas las notas que se le emitan: corregir un comprobante emitido
+  /// se hace con una nota, nunca reemplazándolo. Una nota lleva la venta de su comprobante relacionado.
   saleId String
   sale   Sale   @relation(fields: [tenantId, saleId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
 
@@ -1487,6 +1495,18 @@ model TaxDocument {
   correlativo  Int
   /// Representación impresa: "F001-00000123".
   fullNumber   String
+
+  // --- Notas de crédito y débito (documentType NOTA_CREDITO / NOTA_DEBITO) ---
+  /// Comprobante que la nota corrige o aumenta. Obligatorio en las notas, nulo en boletas y facturas
+  /// (CHECK en la migración). La clave foránea es compuesta con el negocio: una nota jamás apunta al
+  /// comprobante de otro negocio.
+  relatedDocumentId String?
+  relatedDocument   TaxDocument?  @relation("NotaRelacionada", fields: [tenantId, relatedDocumentId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+  notes             TaxDocument[] @relation("NotaRelacionada")
+  /// Código del motivo: catálogo 09 (crédito) o 10 (débito) de SUNAT. ⚠️ Pendiente de validación oficial.
+  reasonCode        String?
+  /// Sustento escrito del motivo, tal como saldrá en la nota.
+  reasonDescription String?
 
   /**
    * Documento de PRUEBA: emitido por un negocio que aún no habilitó la facturación
@@ -1536,13 +1556,14 @@ model TaxDocument {
   dispatch  FiscalDispatch?
 
   @@unique([tenantId, id])
-  @@unique([tenantId, saleId])
   /// La restricción LEGAL: no puede haber dos comprobantes con el mismo
   /// tipo, serie y correlativo en un mismo negocio.
   @@unique([tenantId, documentType, series, correlativo])
   @@index([tenantId, status, issuedAt])
   @@index([tenantId, documentType, series])
   @@index([tenantId, isTrial, status, issuedAt])
+  @@index([tenantId, relatedDocumentId])
+  @@index([tenantId, saleId])
   @@map("tax_documents")
 }
 

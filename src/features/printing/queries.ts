@@ -227,7 +227,7 @@ async function venta(db: TenantPrismaClient, id: string, emisor: Emisor, reloj: 
       user: { select: { name: true, email: true } },
       warehouse: { select: { name: true } },
       customer: { select: { name: true, docType: true, docNumber: true, address: true } },
-      taxDocument: { select: { fullNumber: true } },
+      taxDocuments: { where: { documentType: { in: ['BOLETA', 'FACTURA'] } }, take: 1, select: { fullNumber: true } },
     },
   })
   if (!sale) throw new BusinessError('NOT_FOUND', 'La venta no existe.')
@@ -241,7 +241,7 @@ async function venta(db: TenantPrismaClient, id: string, emisor: Emisor, reloj: 
 
   // Si la venta ya tiene comprobante, el ticket es un documento interno: lo
   // dice en voz alta para que nadie lo entregue como si fuera la boleta.
-  const conComprobante = sale.taxDocument?.fullNumber ?? null
+  const conComprobante = sale.taxDocuments[0]?.fullNumber ?? null
 
   return {
     ...reloj,
