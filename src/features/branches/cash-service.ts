@@ -161,7 +161,7 @@ export async function closeCashSession(
         if (p.method === 'EFECTIVO') {
           cashTotal = redondearCentimos(cashTotal + num(p.amount))
         }
-        // El vuelto sale del cajón sea cual sea el medio de pago.
+        // El vuelto se guarda solo en líneas de EFECTIVO (`pagos.ts`): sale del cajón.
         changeTotal = redondearCentimos(changeTotal + num(p.change))
       }
     }

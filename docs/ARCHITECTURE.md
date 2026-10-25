@@ -717,3 +717,14 @@ El stock vive **siempre en la unidad base** del producto (`Product.unitType`). U
 - **Límite conocido:** `navigator.onLine` solo detecta equipo sin conexión; un wifi sin salida a internet figura «en línea». Ahí la protección es el servidor (la petición falla y se muestra su error; el cobro es idempotente).
 - **No hay ESLint en el proyecto** (ni script `lint`): la comprobación estática es `tsc --noEmit` y `next build`. Añadirlo requeriría una dependencia nueva.
 - Pruebas: `tests/pwa.ts` ejecuta el `sw.js` real en un sandbox (HTML/API/RSC/POST/otro origen/cookies, versiones), valida íconos (PNG con el tamaño declarado), proxy y cabeceras, y los bloqueos sin red.
+
+## Fase 3, Paso 1: pagos mixtos correctos (`src/features/pos/pagos.ts`)
+
+Antes de introducir la deuda (fiado), el dinero de una venta tiene que cuadrar al céntimo: **Σ pagos − Σ vuelto = total**.
+
+- **Bug corregido (caja).** El vuelto solo se guardaba si el *primer* pago era efectivo. Con `[Yape 50, efectivo 60]` sobre 100 el vuelto de 10 se perdía y el cierre de caja (`fondo + efectivo − vueltos`) esperaba 10 de más en el cajón. Ahora el vuelto se reparte en las líneas de **efectivo**, en orden y sin pasar de lo que recibió cada una. Reproducido en `tests/pagos-mixtos.ts` antes de corregir (cajón esperado 160 en vez de 150).
+- **Solo el efectivo da vuelto.** Si lo pagado con Yape/tarjeta/transferencia ya supera el total, se rechaza (`INVALID_DOCUMENT`); antes se aceptaba un sobrepago sin devolución registrada.
+- **`CREDITO` ya no se acepta como pago** (esquema y servicio, con mensaje claro) hasta que existan cliente, límite y deuda (Pasos 2-3): aceptarlo equivalía a dar la venta por cobrada sin registrar a quién la debe. El valor sigue en el enum de la base.
+- Las reglas son lógica pura en céntimos enteros (`resolverPagos`) y se aplican en `registerSale`, por donde pasan también el cobro de cotizaciones y de pedidos. Un rechazo no escribe nada ni gasta número de comprobante.
+- La pantalla del POS cobra el total exacto con métodos que no son efectivo (el «recibido» solo cuenta en efectivo).
+- **Datos históricos:** las ventas ya registradas con el bug conservan su vuelto mal guardado; los cierres de caja pasados no se recalculan.

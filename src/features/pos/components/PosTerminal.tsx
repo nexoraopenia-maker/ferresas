@@ -310,7 +310,8 @@ export function PosTerminal({
     setError(null)
     idemRef.current ??= crypto.randomUUID()
 
-    const entregado = Number(recibido) || totales.total
+    // Solo el efectivo da vuelto: con Yape o tarjeta se cobra el total exacto (aunque se hubiera tecleado un «recibido» antes).
+    const entregado = metodo === 'EFECTIVO' ? Number(recibido) || totales.total : totales.total
 
     startTransition(async () => {
       // Pedido de la cola: se cobra EL PEDIDO (sus líneas y precios congelados), no el carrito.

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { tieneMaxDecimales } from '@/lib/dinero'
+import { MENSAJE_SIN_FIADO } from './pagos'
 
 /**
  * Validación del Punto de Venta (§5.4).
@@ -56,7 +57,7 @@ export const paymentLineSchema = z.object({
   ]),
   amount: importe.refine((n) => n > 0, 'El monto debe ser mayor que cero.'),
   reference: z.string().trim().max(60).optional(),
-})
+}).refine((p) => p.method !== 'CREDITO', { message: MENSAJE_SIN_FIADO, path: ['method'] })
 
 export const registerSaleSchema = z.object({
   warehouseId: id,

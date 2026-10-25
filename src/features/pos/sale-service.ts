@@ -8,6 +8,7 @@ import {
 } from '@/features/branches/queries'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { applyStockMovement } from '@/features/inventory/stock-service'
+import { resolverPagos } from './pagos'
 import { cargarPresentaciones, resolverLineaDeVenta, trazaDe, type Traza } from '@/features/inventory/presentacion-linea'
 import { puede } from '@/lib/puede'
 import type { RegisterSaleInput } from './schemas'
@@ -345,14 +346,8 @@ export async function registerSale(
 
       const total = cent(subtotal + taxTotal)
 
-      const pagado = cent(input.payments.reduce((s, p) => s + p.amount, 0))
-      if (pagado + 0.009 < total) {
-        throw new BusinessError(
-          'INSUFFICIENT_STOCK',
-          'Los pagos no cubren el total de la venta.',
-          { total, pagado },
-        )
-      }
+      // Pagos mixtos: ver `pagos.ts`. Rechaza lo que no cubre el total, el vuelto que no sale del efectivo y el fiado.
+      const { pagos } = resolverPagos(total, input.payments)
 
       // --- 3. Numeración sin huecos --------------------------------------
       const { correlativo, prefix, series } = await claimNextNumber(
@@ -401,18 +396,16 @@ export async function registerSale(
       })
 
       // --- 6. Pagos ------------------------------------------------------
-      const vuelto = cent(pagado - total)
       await t.payment.createMany({
-        data: input.payments.map((p, i) => ({
+        data: pagos.map((p) => ({
           tenantId: ctx.tenantId,
           saleId: sale.id,
           userId: ctx.userId,
           method: p.method,
           amount: p.amount,
-          reference: p.reference ?? null,
-          // El vuelto se registra en el primer pago en efectivo; si no hay
-          // efectivo, no hay vuelto que dar.
-          change: i === 0 && p.method === 'EFECTIVO' ? vuelto : 0,
+          reference: p.reference,
+          // El vuelto va en las líneas de EFECTIVO (ver `pagos.ts`), sea cual sea su posición.
+          change: p.change,
         })),
       })
 

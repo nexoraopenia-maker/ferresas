@@ -55,7 +55,7 @@ async function negocio(tag: string, opts: { demo?: boolean; fiscal?: boolean } =
     const v = await registerSale(owner.db, owner.ctx, registerSaleSchema.parse({
       warehouseId: w.id, customerId: dni.id,
       items: [{ productId: kilo.id, quantity: 2.5 }, { productId: bolsa.id, quantity: 3, discount: 1.1 }],
-      payments: [{ method: 'YAPE', amount: 116.5 }], idempotencyKey: randomUUID(),
+      payments: [{ method: 'YAPE', amount: 116.35 }], idempotencyKey: randomUUID(),
     }))
     const d = await issueTaxDocument(owner.db, owner.ctx, { saleId: v.saleId, documentType: 'BOLETA' })
     return { sale: v, doc: d }
