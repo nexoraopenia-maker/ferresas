@@ -441,6 +441,7 @@ model Tenant {
   dispatchGuides     DispatchGuide[]
   dispatchGuideItems DispatchGuideItem[]
   fiscalDispatches   FiscalDispatch[]
+  productCodes       ProductCode[]
   discountCaps       DiscountCap[]
   warehouses         Warehouse[]
   categories         Category[]
@@ -857,6 +858,7 @@ model Product {
   deletedAt DateTime?
 
   variants      ProductVariant[]
+  codes         ProductCode[]
   stocks        Stock[]
   guideItems    DispatchGuideItem[]
   movements     StockMovement[]
@@ -902,6 +904,7 @@ model ProductVariant {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
+  codes         ProductCode[]
   stocks        Stock[]
   movements     StockMovement[]
   saleItems     SaleItem[]
@@ -2156,4 +2159,49 @@ model FiscalDispatch {
   @@index([status, lockedUntil])
   @@index([tenantId, status])
   @@map("fiscal_dispatches")
+}
+
+enum ProductCodeType {
+  EAN13
+  EAN8
+  UPC
+  CODE128
+  /// QR propio del negocio.
+  QR
+  /// Código generado por el propio sistema (etiquetas internas).
+  INTERNO
+}
+
+/// Un código (de barras, QR o interno) que identifica un producto, una variante o —más adelante— una presentación.
+/// Un código pertenece a UNA sola cosa en todo el negocio: `(tenantId, code)` es único, así que escanear resuelve a
+/// exactamente un dueño. Reemplaza, de forma gradual, las columnas `barcode` y `qrCode` de Product y ProductVariant
+/// (siguen existiendo durante la transición y se mantienen sincronizadas).
+model ProductCode {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  /// Si el código es de una variante concreta. La variante debe ser del producto (lo comprueba el servicio).
+  variantId String?
+  variant   ProductVariant? @relation(fields: [tenantId, variantId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  /// Presentación (caja, saco…) a la que identifica. Llega en el paso 2 (tabla ProductPresentation): hoy es solo una
+  /// columna sin clave foránea, siempre nula.
+  presentationId String?
+
+  code      String
+  type      ProductCodeType
+  /// Código principal de su dueño (el que se imprime y se muestra). Como mucho uno por dueño: índice único parcial en la migración.
+  isPrimary Boolean         @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, code])
+  @@index([tenantId, productId])
+  @@index([tenantId, variantId])
+  @@map("product_codes")
 }

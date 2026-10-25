@@ -1,3 +1,4 @@
+import { registrarCodigosProducto } from './codigos'
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
 import { type TenantContext } from '@/lib/tenant-context'
@@ -469,7 +470,8 @@ export async function commitImport(
             : null)
 
         if (existente) {
-          await t.product.update({
+          const antes = await t.product.findUniqueOrThrow({ where: { id: existente.id }, select: { barcode: true, qrCode: true } })
+          const despues = await t.product.update({
             where: { id: existente.id },
             data: {
               name: d.name,
@@ -484,7 +486,9 @@ export async function commitImport(
               ...(d.qrCode ? { qrCode: d.qrCode } : {}),
               isActive: true,
             },
+            select: { barcode: true, qrCode: true },
           })
+          await registrarCodigosProducto(t, ctx.tenantId, { productId: existente.id }, despues, antes)
           actualizados++
           continue
         }
@@ -505,6 +509,7 @@ export async function commitImport(
           },
           select: { id: true },
         })
+        await registrarCodigosProducto(t, ctx.tenantId, { productId: producto.id }, { barcode: d.barcode, qrCode: d.qrCode })
 
         await t.stock.create({
           data: {

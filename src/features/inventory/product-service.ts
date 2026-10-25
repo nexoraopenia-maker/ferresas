@@ -1,3 +1,4 @@
+import { registrarCodigosProducto } from './codigos'
 import { randomUUID } from 'node:crypto'
 import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
@@ -126,6 +127,8 @@ export async function createProductExpress(
         },
         select: { id: true, sku: true, barcode: true, name: true },
       })
+      // Sus códigos también van a la tabla de códigos, en la misma transacción (rechaza uno que ya sea de otro).
+      await registrarCodigosProducto(t, ctx.tenantId, { productId: product.id }, { barcode: input.barcode, qrCode: input.qrCode })
 
       const stock = await t.stock.create({
         data: {

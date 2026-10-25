@@ -1,5 +1,6 @@
 'use server'
 
+import { resolverCodigo, mensajeAmbiguo } from './codigos'
 import { revalidatePath } from 'next/cache'
 import { filtroAlmacen } from '@/features/branches/queries'
 import { z } from 'zod'
@@ -144,56 +145,36 @@ export async function findProductByCode(
       }
     }
 
-    // Se busca por código de barras, QR y SKU en la misma consulta: el
-    // operario no sabe —ni tiene por qué— qué clase de código está leyendo.
-    const product = await db.product.findFirst({
-      where: {
-        deletedAt: null,
-        isActive: true,
-        OR: [{ barcode: code }, { qrCode: code }, { sku: code }],
-      },
-      select: {
-        id: true,
-        name: true,
-        sku: true,
-        barcode: true,
-        qrCode: true,
-        unitType: true,
-        salePrice: true,
-        minStock: true,
-        stocks: {
-          where: { warehouseId: warehouse.id, variantId: null },
-          select: { quantity: true, minStock: true, version: true },
-          take: 1,
-        },
-      },
-    })
+    // Un código, un dueño: la tabla de códigos resuelve a {producto, variante, presentación} en una consulta (con el respaldo
+    // de las columnas antiguas mientras no se haya rellenado). El operario no sabe —ni tiene por qué— qué clase de código lee.
+    const r = await resolverCodigo(db, code, { almacenId: warehouse.id })
 
     // `null` no es un error: es "este código todavía no existe" y dispara el
     // alta exprés en la UI (§5.1). Devolverlo como error obligaría a la UI a
     // distinguir un fallo real de un caso de uso normal.
-    if (!product) return { ok: true, data: null }
+    if (!r) return { ok: true, data: null }
+    if (r.estado === 'ambiguo') return { ok: false, code: 'DUPLICATE_CODE', message: mensajeAmbiguo(r) }
 
-    const stock = product.stocks[0]
-    const quantity = stock ? Number(stock.quantity) : 0
-    const minStock = Number(stock?.minStock ?? product.minStock)
+    const { producto: product, variante } = r
+    const quantity = r.stock ? Number(r.stock.quantity) : 0
+    const minStock = Number(r.stock?.minStock ?? variante?.minStock ?? product.minStock)
 
     return {
       ok: true,
       data: {
         productId: product.id,
-        variantId: null,
-        name: product.name,
-        sku: product.sku,
-        barcode: product.barcode,
+        variantId: variante?.id ?? null,
+        name: variante ? `${product.name} ${variante.name}` : product.name,
+        sku: variante?.sku ?? product.sku,
+        barcode: variante?.barcode ?? product.barcode,
         unitType: product.unitType,
-        salePrice: product.salePrice.toString(),
+        salePrice: (variante?.salePrice ?? product.salePrice).toString(),
         warehouseId: warehouse.id,
         warehouseName: warehouse.name,
         quantity,
         minStock,
         status: getStockStatus(quantity, minStock),
-        version: stock?.version ?? 0,
+        version: r.stock?.version ?? 0,
       },
     }
   })

@@ -668,3 +668,15 @@ apoya en eso. Comprobado: `ts-morph` no añade ninguna vulnerabilidad al árbol.
 - **Endpoint** `POST /api/fiscal/worker`: lo dispara un programador EXTERNO (QStash, n8n con cron…), no el cron de Vercel. Secreto compartido `FISCAL_WORKER_SECRET` (`Authorization: Bearer` o `x-worker-secret`), comparado en tiempo constante; sin secreto (o menor de 16 caracteres) responde 503 y no ejecuta. Responde **200 también sin trabajo**. Cada llamada procesa un lote con tope de tiempo derivado de `maxDuration` y de filas, y devuelve `restante: true` si queda más. Es seguro que se solape o se repita. La validación de firmas de QStash queda para más adelante.
 - **Envío manual** («Enviar» / «Reintentar»): pasa por la **misma** cola (reclama la fila con lease), así que un clic y el worker no envían el mismo comprobante dos veces.
 - **Alarma:** `estadoEnvioFiscal` cuenta los AGOTADO (siempre crítico, sin esperar umbrales de horas).
+
+## Códigos de producto (`ProductCode`) y el resolvedor único
+
+Un código (EAN-13/EAN-8/UPC, CODE128, QR propio o interno) tiene **un solo dueño** en todo el negocio: `(tenantId, code)` es único. Antes los códigos vivían en cuatro columnas (`barcode` y `qrCode` de producto y de variante) y dos cosas distintas podían compartir el mismo; el escaneo devolvía una cualquiera.
+
+- **Tabla `product_codes`**: `productId`, `variantId?`, `presentationId?` (reservado para el paso 2, hoy siempre nulo y sin clave foránea), `code`, `type`, `isPrimary` (como mucho un principal por dueño, índice parcial). Claves foráneas compuestas con el negocio.
+- **Transición (expand):** las columnas antiguas siguen y los escritores (alta exprés, importación de catálogo) mantienen la tabla en la misma transacción (`registrarCodigosProducto`). Un código que ya es de otro dueño se rechaza con `DUPLICATE_CODE`.
+- **Resolvedor** (`inventory/codigos.ts › resolverCodigo`): consulta la tabla en UNA consulta y devuelve `{producto, variante, presentación, stock}`; si el código no está, cae a las columnas antiguas y al SKU. Un código con más de un dueño se devuelve como `ambiguo` y la pantalla lo dice: **nunca se adivina**. Solo productos y variantes activos.
+- **Relleno** (`scripts/poblar-codigos.ts`): ensayo por defecto; `--ejecutar` inserta los códigos sin colisión. **No muta nada de lo antiguo**: los códigos con varios dueños se informan (SKU, nombre y columna de cada uno) y se quedan fuera hasta que una persona decida. Idempotente.
+- **Auditoría** (`auditarCoherenciaCodigos`): cuenta productos sin su fila y filas cuyo código ya no está en las columnas de su dueño.
+- **Limitación conocida:** `registerSale` cobra el precio del PRODUCTO aunque el código sea de una variante; la pantalla muestra ese mismo precio.
+

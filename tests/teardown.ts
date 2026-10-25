@@ -53,6 +53,7 @@ const PREFIJOS_CONOCIDOS = [
   'f-', 'co-', 'mp-', 'tr-', 'wh-', 'sa-', 'suc-', 'f3-', 'dbg-', 'sm-', 's3-',
   'print-', 'print2-', 'pos-', 'tope-', 'ferre-a-', 'ferre-b-', 'qty-',
   'ferreteria-sol-', 'ferreteria-norte', 'stock-', 'imp-', 'iso-',
+  'cod-',
 ]
 
 export interface ResultadoTeardown {

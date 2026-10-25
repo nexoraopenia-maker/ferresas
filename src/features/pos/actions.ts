@@ -1,5 +1,6 @@
 'use server'
 
+import { resolverCodigo, mensajeAmbiguo } from '@/features/inventory/codigos'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { getTenantPrisma, type TenantPrismaClient } from '@/lib/tenant-prisma'
@@ -124,42 +125,30 @@ export async function lookupForPos(
       }
     }
 
-    const product = await db.product.findFirst({
-      where: {
-        deletedAt: null,
-        isActive: true,
-        OR: [{ barcode: code }, { qrCode: code }, { sku: code }],
-      },
-      select: {
-        id: true, name: true, sku: true, barcode: true, qrCode: true,
-        unitType: true, salePrice: true, taxRate: true, minStock: true,
-        trackStock: true,
-        stocks: {
-          where: { warehouseId: warehouse.id, variantId: null },
-          select: { quantity: true, minStock: true },
-          take: 1,
-        },
-      },
-    })
+    // Un código, un dueño: la tabla de códigos resuelve a {producto, variante, presentación} en UNA consulta (con el
+    // respaldo de las columnas antiguas mientras no se haya rellenado). Un código de varios dueños no se adivina.
+    const r = await resolverCodigo(db, code, { almacenId: warehouse.id })
 
     // `null` es "no existe ese código", no un error: la UI ofrece buscar por
     // nombre o dar de alta el producto.
-    if (!product) return { ok: true, data: null }
+    if (!r) return { ok: true, data: null }
+    if (r.estado === 'ambiguo') return { ok: false, code: 'DUPLICATE_CODE', message: mensajeAmbiguo(r) }
 
-    const s = product.stocks[0]
-    const stock = s ? Number(s.quantity) : 0
-    const minStock = Number(s?.minStock ?? product.minStock)
+    const { producto: product, variante } = r
+    const stock = r.stock ? Number(r.stock.quantity) : 0
+    const minStock = Number(r.stock?.minStock ?? variante?.minStock ?? product.minStock)
 
     return {
       ok: true,
       data: {
         productId: product.id,
-        variantId: null,
-        name: product.name,
-        sku: product.sku,
-        barcode: product.barcode,
-        qrCode: product.qrCode,
+        variantId: variante?.id ?? null,
+        name: variante ? `${product.name} ${variante.name}` : product.name,
+        sku: variante?.sku ?? product.sku,
+        barcode: variante?.barcode ?? product.barcode,
+        qrCode: variante?.qrCode ?? product.qrCode,
         unitType: product.unitType,
+        // La venta cobra el precio del PRODUCTO (el de la variante aún no lo usa `registerSale`): se muestra el mismo.
         salePrice: Number(product.salePrice),
         taxRate: Number(product.taxRate),
         trackStock: product.trackStock,
