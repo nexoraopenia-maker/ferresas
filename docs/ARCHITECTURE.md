@@ -701,3 +701,10 @@ El stock vive **siempre en la unidad base** del producto (`Product.unitType`). U
 - **Stock.** Se mueve únicamente en unidad base; las columnas de presentación son trazabilidad. Entradas y salidas manuales aceptan presentación; AJUSTE (conteo absoluto) no.
 - **Límites conocidos.** No existe servicio de compras (`PurchaseItem` tiene las columnas, nada las escribe); cotizaciones y pedidos siguen en unidad base; el XML fiscal sigue en unidad base (catálogo de unidades SUNAT ⚠️); variantes y presentaciones no se combinan; `registerSale` sigue cobrando el precio del producto en variantes.
 - Pruebas: `tests/presentaciones-integracion.ts`.
+
+### Pantallas (Paso 3b)
+
+- **Carrito del POS.** La lógica pura vive en `src/features/pos/carrito.ts` (`brutoDe`, `descuentoDe`, `conContada`, `itemDe`, `mismaLinea`). Una línea de presentación guarda `quantity` (base, la que mueve el stock) e `ingresada` (lo que cuenta el cajero). Se agrupa por producto **y** presentación: una caja y sueltas del mismo producto son líneas distintas. `tests/presentaciones-pantallas.ts` comprueba que el total en pantalla es idéntico al que cobra `registerSale`.
+- **Cotizaciones y pedidos a caja** siguen en unidad base: con una presentación en el carrito se bloquean con un mensaje claro (cobrar directo o quitarla), en vez de enviar el precio equivocado.
+- **Hoja de ingresos** (`ScanToStockSheet`): con una presentación escaneada, ENTRADA/SALIDA cuentan cajas/bultos y envían `presentationId`, `enteredQuantity` y la cantidad base; AJUSTE sigue siendo un conteo absoluto en base. Al cambiar de tipo la cantidad vuelve a 1 para no mezclar unidades.
+- No probado en real: cámara/lector físico y la interacción en navegador (solo la lógica y la estructura).

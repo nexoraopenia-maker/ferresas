@@ -4,7 +4,7 @@ import { useCallback, useRef, useState, useTransition } from 'react'
 import { InventoryScannerModal, type ResultadoLectura } from '@/components/inventory/InventoryScannerModal'
 import { QuantityInput } from '@/components/ui/quantity-input'
 import { getStockStatusView } from '@/lib/stock-status'
-import { formatQuantity, stepsFor, unitLabel } from '@/lib/quantity'
+import { formatQuantity, redondear, stepsFor, unitLabel } from '@/lib/quantity'
 import {
   createProductExpress,
   createStockMovement,
@@ -120,7 +120,9 @@ export function ScanToStockSheet() {
               productId: p.productId,
               variantId: p.variantId,
               warehouseId: p.warehouseId,
-              quantity: qty,
+              // Con presentación se cuenta en cajas/bultos; el servidor recalcula la base y la valida contra lo ingresado.
+              quantity: p.presentation ? redondear(qty * Number(p.presentation.factor)) : qty,
+              ...(p.presentation ? { presentationId: p.presentation.id, enteredQuantity: String(qty) } : {}),
               reason: reason.trim() || undefined,
               idempotencyKey: idemRef.current ?? undefined,
               source: 'ESCANER',
@@ -272,12 +274,16 @@ function ProductSheet({
 
   // Previsualización del resultado: el operario ve a qué número va a quedar
   // ANTES de confirmar. Es lo que evita el ajuste equivocado.
+  // Con una presentación escaneada, `qty` cuenta cajas/bultos (salvo en AJUSTE, que es un conteo absoluto en base).
+  const pres = type !== 'AJUSTE' ? product.presentation ?? null : null
+  const base = pres ? redondear(qty * Number(pres.factor)) : qty
+  const unidadContada = pres ? pres.unitType : product.unitType
   const resultado =
     type === 'AJUSTE'
       ? qty
       : type === 'SALIDA'
-        ? product.quantity - qty
-        : product.quantity + qty
+        ? product.quantity - base
+        : product.quantity + base
 
   const previsto = getStockStatusView(resultado, product.minStock)
   const ajusteSinMotivo = type === 'AJUSTE' && reason.trim().length < 3
@@ -306,7 +312,7 @@ function ProductSheet({
             key={t.value}
             type="button"
             aria-pressed={type === t.value}
-            onClick={() => setType(t.value)}
+            onClick={() => { setType(t.value); if (product.presentation) setQty(1) }}
             className={`h-touch-lg flex-1 rounded-xl text-base font-bold transition active:scale-95 ${
               type === t.value
                 ? 'bg-graphite-900 text-white'
@@ -324,14 +330,14 @@ function ProductSheet({
       <QuantityInput
         value={qty}
         onChange={setQty}
-        unitType={product.unitType}
+        unitType={unidadContada}
         min={type === 'AJUSTE' ? 0 : 0}
         ariaLabel="Cantidad"
         className="mt-4"
       />
 
       <div className="mt-2 flex gap-2">
-        {stepsFor(product.unitType).map((n) => (
+        {stepsFor(unidadContada).map((n) => (
           <button
             key={n}
             type="button"
@@ -339,8 +345,8 @@ function ProductSheet({
             className="h-touch flex-1 rounded-xl border border-hairline bg-surface text-base font-bold text-ink active:scale-95"
           >
             {type === 'AJUSTE'
-              ? formatQuantity(n, product.unitType)
-              : `+${formatQuantity(n, product.unitType)}`}
+              ? formatQuantity(n, unidadContada)
+              : `+${formatQuantity(n, unidadContada)}`}
           </button>
         ))}
       </div>
@@ -361,7 +367,9 @@ function ProductSheet({
       )}
 
       <p className="mt-4 text-center text-sm text-ink-muted">
-        {verb} {type === 'AJUSTE' ? '' : formatQuantity(qty, product.unitType)} → quedará en{' '}
+        {verb} {type === 'AJUSTE' ? '' : pres
+          ? `${formatQuantity(qty, pres.unitType)} ${pres.name} (${formatQuantity(base, product.unitType)} ${unitLabel(product.unitType)})`
+          : formatQuantity(qty, product.unitType)} → quedará en{' '}
         <span className={`font-bold ${resultado < 0 ? 'text-stock-out' : ''}`}>
           {formatQuantity(resultado, product.unitType)} {unitLabel(product.unitType)}
         </span>{' '}

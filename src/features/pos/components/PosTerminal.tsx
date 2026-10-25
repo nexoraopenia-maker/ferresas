@@ -19,21 +19,9 @@ import {
   cobrarPedido, lookupForPos, registerPedido, registerQuote, registerSale, searchForPos, soltarPedido, tomarPedido,
   type PosCustomer, type PosProduct,
 } from '../actions'
+import { brutoDe, contadaDe, conContada, descuentoDe, itemDe, mismaLinea, unidadDe, type LineaCarrito } from '../carrito'
 import { CustomerPicker } from './CustomerPicker'
 import { ATAJOS_VISIBLES, usePosShortcuts } from './use-pos-shortcuts'
-
-interface LineaCarrito {
-  key: string
-  producto: PosProduct
-  quantity: number
-  discount: number
-  /** Descuento en % de la línea. El importe (`discount`) se recalcula si cambia la cantidad. */
-  pct?: number
-}
-
-/** Importe del descuento de una línea con esa cantidad: mismo redondeo que el servidor. */
-const descuentoDe = (l: LineaCarrito, cantidad: number) =>
-  cent(cent(l.producto.salePrice * cantidad) * ((l.pct ?? 0) / 100))
 
 const METODOS = [
   { value: 'EFECTIVO', label: 'Efectivo' },
@@ -167,13 +155,13 @@ export function PosTerminal({
     let bruto = 0
     let descuentos = 0
     for (const l of carrito) {
-      bruto = cent(bruto + l.producto.salePrice * l.quantity)
+      bruto = cent(bruto + brutoDe(l))
       descuentos = cent(descuentos + l.discount)
     }
     const total = cent(bruto - descuentos)
     // El precio ya incluye IGV: se extrae, no se suma.
     const igv = cent(carrito.reduce((s, l) => {
-      const neto = cent(l.producto.salePrice * l.quantity - l.discount)
+      const neto = cent(brutoDe(l) - l.discount)
       return s + (neto - neto / (1 + l.producto.taxRate))
     }, 0))
     return { bruto, descuentos, total, igv, base: cent(total - igv) }
@@ -183,18 +171,26 @@ export function PosTerminal({
     if (pedidoRef.current) return   // un pedido tomado no se edita
     setError(null)
     setCarrito((prev) => {
-      const i = prev.findIndex((l) => l.producto.productId === p.productId)
+      const i = prev.findIndex((l) => mismaLinea(l, p))
       if (i >= 0) {
         const copia = [...prev]
-        copia[i] = { ...copia[i]!, quantity: redondear(copia[i]!.quantity + 1) }
+        copia[i] = conContada(copia[i]!, contadaDe(copia[i]!) + 1)
         return copia
       }
       // Arranca en 1 incluso a granel: el cajero pesa y teclea la cifra
       // exacta, y 1 kg es un punto de partida más útil que 0.
+      const pr = p.presentation
+      if (pr) {
+        const factor = Number(pr.factor)
+        const presentacion = { id: pr.id, name: pr.name, unitType: pr.unitType, factor, precio: Number(pr.precio), precioPropio: pr.precioPropio }
+        return [...prev, { key: `${p.productId}-${pr.id}-${Date.now()}`, producto: p, presentacion, ingresada: 1, quantity: redondear(factor), discount: 0 }]
+      }
       return [...prev, { key: `${p.productId}-${Date.now()}`, producto: p, quantity: 1, discount: 0 }]
     })
     if (p.trackStock && p.stock <= 0) {
       setAviso(`"${p.name}" está sin stock. Podrás cobrar solo si tu política lo permite.`)
+    } else if (p.presentation) {
+      setAviso(`"${p.name}": ${p.presentation.name} (${Number(p.presentation.factor)} ${unitLabel(p.unitType)} cada una).`)
     } else if (isBulkUnit(p.unitType)) {
       setAviso(`"${p.name}" se vende por ${unitLabel(p.unitType)}: escribe la cantidad pesada o medida.`)
     }
@@ -281,8 +277,7 @@ export function PosTerminal({
         // Llegar a cero saca la línea: es lo que el cajero espera, en vez de
         // dejar una línea de cero que no se puede cobrar.
         if (q <= 0) return []
-        const quantity = redondear(q)
-        return [{ ...l, quantity, discount: descuentoDe(l, quantity) }]
+        return [conContada(l, q)]
       }),
     )
 
@@ -293,7 +288,8 @@ export function PosTerminal({
         if (l.key !== key) return l
         const n = Number(texto.replace(',', '.'))
         const pct = !Number.isFinite(n) || n <= 0 ? 0 : Math.min(n, topeDescuentoPct)
-        return { ...l, pct, discount: descuentoDe({ ...l, pct }, l.quantity) }
+        const nueva = { ...l, pct }
+        return { ...nueva, discount: descuentoDe(nueva) }
       }),
     )
 
@@ -301,8 +297,8 @@ export function PosTerminal({
     pedido ? undefined : setCarrito((prev) =>
       prev.flatMap((l) => {
         if (l.key !== key) return [l]
-        const q = redondear(l.quantity + delta)
-        return q <= 0 ? [] : [{ ...l, quantity: q, discount: descuentoDe(l, q) }]
+        const q = redondear(contadaDe(l) + delta)
+        return q <= 0 ? [] : [conContada(l, q)]
       }),
     )
 
@@ -326,12 +322,7 @@ export function PosTerminal({
         : await registerSale({
         warehouseId: carrito[0]!.producto.warehouseId,
         customerId: cliente?.id ?? null,
-        items: carrito.map((l) => ({
-          productId: l.producto.productId,
-          variantId: l.producto.variantId,
-          quantity: l.quantity,
-          discount: l.discount,
-        })),
+        items: carrito.map(itemDe),
         payments: [{ method: metodo, amount: Math.max(entregado, totales.total) }],
         documentType: 'NOTA_VENTA',
         allowNegativeStock: forzarStock,
@@ -365,6 +356,7 @@ export function PosTerminal({
 
   const cotizar = () => {
     if (carrito.length === 0) return
+    if (carrito.some((l) => l.presentacion)) { setError('Las cotizaciones y los pedidos a caja se arman en unidad base: cobra la presentación directo o quítala del carrito.'); return }
     setError(null)
     setAviso(null)
 
@@ -399,6 +391,7 @@ export function PosTerminal({
   /** El vendedor manda el carrito a la cola de caja; no cobra ni toca dinero. */
   const enviarACaja = () => {
     if (carrito.length === 0) return
+    if (carrito.some((l) => l.presentacion)) { setError('Las cotizaciones y los pedidos a caja se arman en unidad base: cobra la presentación directo o quítala del carrito.'); return }
     setError(null)
     setAviso(null)
     startTransition(async () => {
@@ -646,7 +639,7 @@ export function PosTerminal({
         ) : (
           <ul className="mt-3 flex flex-col gap-3">
             {carrito.map((l) => {
-              const neto = cent(l.producto.salePrice * l.quantity - l.discount)
+              const neto = cent(brutoDe(l) - l.discount)
               const sinStock = l.producto.trackStock && l.quantity > l.producto.stock
               return (
                 <li
@@ -657,8 +650,17 @@ export function PosTerminal({
                     <div className="min-w-0">
                       <p className="truncate font-semibold text-ink">{l.producto.name}</p>
                       <p className="text-xs text-ink-muted">
-                        {formatQuantity(l.quantity, l.producto.unitType)}{' '}
-                        {unitLabel(l.producto.unitType)} × {money(l.producto.salePrice)}
+                        {l.presentacion ? (
+                          <>
+                            {formatQuantity(contadaDe(l), l.presentacion.unitType)} {l.presentacion.name} × {money(l.presentacion.precioPropio ? l.presentacion.precio : cent(l.producto.salePrice * l.presentacion.factor))}
+                            {' '}({formatQuantity(l.quantity, l.producto.unitType)} {unitLabel(l.producto.unitType)})
+                          </>
+                        ) : (
+                          <>
+                            {formatQuantity(l.quantity, l.producto.unitType)}{' '}
+                            {unitLabel(l.producto.unitType)} × {money(l.producto.salePrice)}
+                          </>
+                        )}
                         {sinStock && (
                           <> · solo {formatQuantity(l.producto.stock, l.producto.unitType)} en stock</>
                         )}
@@ -673,9 +675,9 @@ export function PosTerminal({
                     </p>
                   ) : (
                   <QuantityInput
-                    value={l.quantity}
+                    value={contadaDe(l)}
                     onChange={(q) => fijarCantidad(l.key, q)}
-                    unitType={l.producto.unitType}
+                    unitType={unidadDe(l)}
                     min={0}
                     ariaLabel={`Cantidad de ${l.producto.name}`}
                     className="mt-3"
@@ -701,14 +703,14 @@ export function PosTerminal({
                   {/* Atajos adaptados a la unidad: para clavos al peso,
                       +25 no sirve de nada; +0.25 kg sí. */}
                   <div className={pedido ? 'hidden' : 'mt-2 flex items-center gap-1.5'}>
-                    {stepsFor(l.producto.unitType).map((n) => (
+                    {stepsFor(unidadDe(l)).map((n) => (
                       <button
                         key={n}
                         type="button"
                         onClick={() => sumarCantidad(l.key, n)}
                         className="h-12 flex-1 rounded-xl border border-hairline bg-surface text-sm font-bold text-ink active:scale-95"
                       >
-                        +{formatQuantity(n, l.producto.unitType)}
+                        +{formatQuantity(n, unidadDe(l))}
                       </button>
                     ))}
                     <button
