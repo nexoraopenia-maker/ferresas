@@ -93,6 +93,11 @@ export interface PosProduct {
   warehouseName: string
   /** Solo en la búsqueda: 0 = coincide exactamente con un código. Menor = mejor. */
   relevancia?: number
+  /**
+   * Si el código escaneado era el de una PRESENTACIÓN (caja, saco…): la línea se vende en sus unidades. `precio` es el de UNA
+   * presentación (el suyo propio o, si no tiene, el base × factor). El servidor lo recalcula al cobrar: esto es solo lo que se muestra.
+   */
+  presentation?: { id: string; name: string; unitType: string; factor: string; precio: string; precioPropio: boolean } | null
 }
 
 /**
@@ -157,6 +162,13 @@ export async function lookupForPos(
         stockStatus: getStockStatus(stock, minStock),
         warehouseId: warehouse.id,
         warehouseName: warehouse.name,
+        presentation: r.presentacion
+          ? {
+              id: r.presentacion.id, name: r.presentacion.name, unitType: r.presentacion.unitType, factor: r.presentacion.factor.toString(),
+              precio: r.presentacion.salePrice?.toString() ?? (Number(product.salePrice) * Number(r.presentacion.factor)).toFixed(2),
+              precioPropio: r.presentacion.salePrice != null,
+            }
+          : null,
       },
     }
   })

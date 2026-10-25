@@ -693,3 +693,11 @@ El stock vive **siempre en la unidad base** del producto (`Product.unitType`). U
   - idempotente: recalcular con las propias salidas normalizadas da lo mismo. Se contrasta con `decimal.js` en 4000 casos aleatorios.
 - **Todavía NO integrado:** ventas, compras y movimientos aún no escriben estas columnas (paso 3). El escaneo de un código de presentación ya resuelve `{producto, presentación}` pero el POS aún no la usa.
 
+
+## Presentaciones en ventas y movimientos de stock (Paso 3)
+
+- **El servidor no cree al cliente.** El cliente envía `presentationId`, `enteredQuantity` y la cantidad base `quantity`; el servidor carga la presentación guardada (`presentacion-linea.ts`), recalcula con `conversion.ts` y rechaza si no coincide. La base lo vuelve a exigir con el CHECK `quantity = enteredQuantity × presentationFactor` (en salidas, `enteredQuantity` lleva signo negativo).
+- **Precio.** Con precio propio: total de línea = precio de la presentación × cantidad ingresada, redondeado una sola vez; el precio por unidad base es el derivado (precio ÷ factor). Sin precio propio: precio base × cantidad base. El precio se lee de la base al cobrar, nunca del cliente.
+- **Stock.** Se mueve únicamente en unidad base; las columnas de presentación son trazabilidad. Entradas y salidas manuales aceptan presentación; AJUSTE (conteo absoluto) no.
+- **Límites conocidos.** No existe servicio de compras (`PurchaseItem` tiene las columnas, nada las escribe); cotizaciones y pedidos siguen en unidad base; el XML fiscal sigue en unidad base (catálogo de unidades SUNAT ⚠️); variantes y presentaciones no se combinan; `registerSale` sigue cobrando el precio del producto en variantes.
+- Pruebas: `tests/presentaciones-integracion.ts`.

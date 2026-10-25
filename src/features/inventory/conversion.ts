@@ -159,16 +159,31 @@ export interface LineaCalculada {
   totalLinea: string
 }
 
-export function calcularLinea(e: EntradaLinea): LineaCalculada {
+export interface EntradaConversion {
+  /** Lo que se tecleó, en unidades de la presentación (3 cajas, 1.5 kg). */
+  cantidadIngresada: string | number
+  /** Unidades base por presentación. */
+  factor: string | number
+  unidadPresentacion: UnitType
+  unidadBase: UnitType
+}
+
+export interface CantidadConvertida {
+  cantidadIngresada: string
+  factor: string
+  /** Lo que mueve el stock: exacta, a lo sumo 4 decimales. */
+  cantidadBase: string
+}
+
+/**
+ * Solo la cantidad (sin precios): lo que necesitan el stock y los movimientos. Es la parte de `calcularLinea` que no depende
+ * del dinero, y lo que valida la base con `quantity = enteredQuantity × presentationFactor`.
+ */
+export function convertirCantidad(e: EntradaConversion): CantidadConvertida {
   const factor = dec(e.factor, 'FACTOR')
   if (signo(factor) <= 0) throw new ConversionInvalida('FACTOR', 'El factor debe ser mayor que cero.')
   if (decimales(factor) > ESCALA_FACTOR) throw new ConversionInvalida('FACTOR', `El factor admite hasta ${ESCALA_FACTOR} decimales.`)
   if (!menorQue(factor, 100_000_000n)) throw new ConversionInvalida('FUERA_DE_RANGO', 'El factor es demasiado grande.')
-
-  const precio = dec(e.precioPresentacion, 'PRECIO')
-  if (signo(precio) < 0) throw new ConversionInvalida('PRECIO', 'El precio no puede ser negativo.')
-  if (decimales(precio) > ESCALA_PRECIO) throw new ConversionInvalida('PRECIO', `El precio admite hasta ${ESCALA_PRECIO} decimales.`)
-  if (!menorQue(precio, 100_000_000n)) throw new ConversionInvalida('FUERA_DE_RANGO', 'El precio es demasiado grande.')
 
   const ingresada = dec(validarCantidad(e.unidadPresentacion, e.cantidadIngresada), 'CANTIDAD')
 
@@ -180,15 +195,30 @@ export function calcularLinea(e: EntradaLinea): LineaCalculada {
     throw new ConversionInvalida('FRACCION_BASE', `Eso son ${aTexto(base)} en ${e.unidadBase}, que no admite esa fracción.`)
   }
   if (!menorQue(base, 10_000_000_000n)) throw new ConversionInvalida('FUERA_DE_RANGO', 'La cantidad es demasiado grande.')
+  return { cantidadIngresada: aTexto(ingresada), factor: aTexto(factor), cantidadBase: aTexto(base) }
+}
+
+export function calcularLinea(e: EntradaLinea): LineaCalculada {
+  // El precio se valida antes que la cantidad, como siempre; el factor lo valida `convertirCantidad`.
+  const factor0 = dec(e.factor, 'FACTOR')
+  if (signo(factor0) <= 0) throw new ConversionInvalida('FACTOR', 'El factor debe ser mayor que cero.')
+  const precio = dec(e.precioPresentacion, 'PRECIO')
+  if (signo(precio) < 0) throw new ConversionInvalida('PRECIO', 'El precio no puede ser negativo.')
+  if (decimales(precio) > ESCALA_PRECIO) throw new ConversionInvalida('PRECIO', `El precio admite hasta ${ESCALA_PRECIO} decimales.`)
+  if (!menorQue(precio, 100_000_000n)) throw new ConversionInvalida('FUERA_DE_RANGO', 'El precio es demasiado grande.')
+
+  const c = convertirCantidad(e)
+  const ingresada = dec(c.cantidadIngresada, 'CANTIDAD')
+  const factor = dec(c.factor, 'FACTOR')
 
   const total = redondear(mul(precio, ingresada), ESCALA_TOTAL)
   if (!menorQue(total, 1_000_000_000_000n)) throw new ConversionInvalida('FUERA_DE_RANGO', 'El total es demasiado grande.')
 
   return {
-    cantidadIngresada: aTexto(ingresada),
-    factor: aTexto(factor),
+    cantidadIngresada: c.cantidadIngresada,
+    factor: c.factor,
     precioPresentacion: aTexto(precio),
-    cantidadBase: aTexto(base),
+    cantidadBase: c.cantidadBase,
     precioBase: aTexto(dividir(precio, factor, ESCALA_PRECIO)),
     totalLinea: aTexto(total, ESCALA_TOTAL),
   }

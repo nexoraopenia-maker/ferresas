@@ -1,3 +1,4 @@
+import { cargarPresentaciones, resolverMovimiento, trazaDe } from './presentacion-linea'
 import { Prisma } from '@/generated/prisma/client'
 import type { MovementSource, MovementType } from '@/generated/prisma/enums'
 import { BusinessError } from '@/lib/errors'
@@ -87,7 +88,11 @@ async function ensureStockRow(
 export async function applyStockMovement(
   t: TenantPrismaClient,
   ctx: TenantContext,
-  input: CreateStockMovementInput,
+  /**
+   * `traza`: la presentación con la que se hizo (3 cajas × 12). Solo TRAZABILIDAD: `quantity` sigue siendo la unidad base y es
+   * lo único que mueve el stock. La base comprueba que `quantity = enteredQuantity × presentationFactor`.
+   */
+  input: CreateStockMovementInput & { traza?: { presentationId: string; enteredQuantity: string; factor: string } | null },
   sourceOverride?: MovementSource,
   /**
    * Relaja el guard de stock para ESTA operación.
@@ -235,6 +240,14 @@ export async function applyStockMovement(
       type: typeOverride ?? input.type,
       source: sourceOverride ?? input.source,
       quantity: delta,
+      // El signo de la cantidad ingresada es el del movimiento: salida = negativa (CHECK: quantity = entered × factor).
+      ...(input.traza
+        ? {
+            presentationId: input.traza.presentationId,
+            enteredQuantity: (delta < 0 ? '-' : '') + input.traza.enteredQuantity,
+            presentationFactor: input.traza.factor,
+          }
+        : {}),
       balanceAfter,
       unitCost:
         input.type === 'ENTRADA' && input.unitCost !== undefined
@@ -357,7 +370,22 @@ export async function createStockMovement(
   const variantId = input.variantId ?? null
 
   try {
-    return await db.$transaction(async (tx) => applyStockMovement(tx as unknown as TenantPrismaClient, ctx, input))
+    return await db.$transaction(async (tx) => {
+      const t = tx as unknown as TenantPrismaClient
+      // Ingreso o salida por presentación (cajas, bultos): el servidor recalcula la cantidad base y la compara con la enviada.
+      if ('presentationId' in input && input.presentationId) {
+        const producto = await t.product.findFirst({ where: { id: input.productId, deletedAt: null }, select: { unitType: true } })
+        if (!producto) throw new BusinessError('TENANT_MISMATCH', 'El producto no existe.')
+        const mapa = await cargarPresentaciones(t, [input.presentationId])
+        const r = resolverMovimiento(
+          { productId: input.productId, variantId: input.variantId, presentationId: input.presentationId, enteredQuantity: input.enteredQuantity!, quantity: input.quantity },
+          mapa.get(input.presentationId), producto.unitType,
+        )
+        const traza = trazaDe(r.presentacion, r.conversion)
+        return applyStockMovement(t, ctx, { ...input, traza: { presentationId: traza.presentationId, enteredQuantity: traza.enteredQuantity, factor: traza.factor } })
+      }
+      return applyStockMovement(t, ctx, input)
+    })
   } catch (e) {
     // Reintento del cliente: la transacción se deshizo entera, así que el
     // stock nunca se aplicó dos veces. Devolvemos el resultado original.

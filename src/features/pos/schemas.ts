@@ -29,13 +29,24 @@ const id = z.string().min(1).max(64)
 export const saleLineSchema = z.object({
   productId: id,
   variantId: id.nullish(),
+  /** SIEMPRE en la unidad BASE del producto (lo que mueve el stock). */
   quantity: cantidad,
+  /**
+   * Presentación con la que se vende (caja, saco…) y lo que se tecleó en sus unidades. Van juntas o ninguna. El servidor
+   * RECALCULA la cantidad base desde la presentación guardada y rechaza si `quantity` no coincide: el cliente no decide ni
+   * el stock ni el precio de una presentación.
+   */
+  presentationId: id.nullish(),
+  enteredQuantity: z.union([z.string().trim().min(1).max(30), z.number().finite()]).nullish(),
   /**
    * Descuento por línea, en importe. Lo decide el vendedor en el mostrador,
    * así que sí viene del cliente — pero el servidor comprueba que no exceda
    * el subtotal de la línea.
    */
   discount: importe.default(0),
+}).refine((l) => (l.presentationId == null) === (l.enteredQuantity == null), {
+  message: 'La presentación y la cantidad ingresada van juntas.',
+  path: ['presentationId'],
 })
 
 export const paymentLineSchema = z.object({

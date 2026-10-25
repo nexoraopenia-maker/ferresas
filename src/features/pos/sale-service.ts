@@ -8,6 +8,7 @@ import {
 } from '@/features/branches/queries'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { applyStockMovement } from '@/features/inventory/stock-service'
+import { cargarPresentaciones, resolverLineaDeVenta, trazaDe, type Traza } from '@/features/inventory/presentacion-linea'
 import { puede } from '@/lib/puede'
 import type { RegisterSaleInput } from './schemas'
 
@@ -246,6 +247,9 @@ export async function registerSale(
         throw new BusinessError('TENANT_MISMATCH', 'Un producto del carrito ya no está disponible.')
       }
 
+      // Presentaciones de las líneas (caja, saco…): se cargan de la base, igual que los precios.
+      const presentaciones = await cargarPresentaciones(t, input.items.flatMap((i) => (i.presentationId ? [i.presentationId] : [])))
+
       // --- 2. Importes ---------------------------------------------------
       let subtotal = 0
       let taxTotal = 0
@@ -256,9 +260,24 @@ export async function registerSale(
         // El precio congelado manda sobre la lista: es lo que hace que una
         // cotización signifique algo. Sin esto, el cliente que pidió
         // presupuesto pagaría el precio del día de la conversión.
+        // Línea con presentación: el servidor la convierte y la compara con lo que mandó el cliente. Con precio PROPIO de la
+        // presentación manda ese precio × lo ingresado (redondeado una vez a céntimos); sin él, el precio base × cantidad base.
+        let traza: Traza | null = null
+        let propio: { precio: number; bruto: number } | null = null
+        if (item.presentationId) {
+          const r = resolverLineaDeVenta(
+            { productId: item.productId, variantId: item.variantId, presentationId: item.presentationId, enteredQuantity: item.enteredQuantity!, quantity: item.quantity },
+            presentaciones.get(item.presentationId), p.unitType,
+          )
+          traza = trazaDe(r.presentacion, r.conversion)
+          if (r.precioPropio) {
+            const l = r.conversion as { precioBase: string; totalLinea: string }
+            propio = { precio: Number(l.precioBase), bruto: Number(l.totalLinea) }
+          }
+        }
         const congelado = priceOverrides?.get(overrideKey(item.productId, item.variantId))
-        const precio = congelado ?? num(p.salePrice)
-        const bruto = cent(precio * item.quantity)
+        const precio = propio ? propio.precio : (congelado ?? num(p.salePrice))
+        const bruto = propio ? propio.bruto : cent(precio * item.quantity)
 
         if (item.discount > bruto) {
           throw new BusinessError(
@@ -317,6 +336,7 @@ export async function registerSale(
         return {
           item,
           producto: p,
+          traza,
           unitPrice: precio,
           lineTotal: neto,
           taxRate: tasa,
@@ -371,6 +391,7 @@ export async function registerSale(
           skuSnapshot: l.producto.sku,
           unitType: l.producto.unitType,
           quantity: l.item.quantity,
+          ...(l.traza ? { presentationId: l.traza.presentationId, enteredQuantity: l.traza.enteredQuantity, presentationFactor: l.traza.factor, presentationName: l.traza.name } : {}),
           unitPrice: l.unitPrice,
           discount: l.item.discount,
           taxRate: l.taxRate,
@@ -407,6 +428,7 @@ export async function registerSale(
           warehouseId: input.warehouseId,
           quantity: l.item.quantity,
           source: 'MANUAL',
+          traza: l.traza,
           reason: input.allowNegativeStock
             ? `Venta ${number} (forzada: stock insuficiente)`
             : `Venta ${number}`,

@@ -29,6 +29,19 @@ const cantidadPositiva = cantidad.refine((n) => n > 0, {
 
 const id = z.string().min(1).max(64)
 
+/**
+ * Presentación (caja, saco…) con la que se ingresa o saca mercadería, y lo que se tecleó en sus unidades. Van juntas o ninguna.
+ * `quantity` sigue siendo la cantidad en unidad BASE: el servidor la recalcula desde la presentación guardada y la rechaza
+ * si no coincide. Solo ENTRADA y SALIDA: un AJUSTE es un conteo absoluto, no un delta que se pueda expresar en cajas.
+ */
+const presentacion = {
+  presentationId: id.nullish(),
+  enteredQuantity: z.union([z.string().trim().min(1).max(30), z.number().finite()]).nullish(),
+}
+const juntas = (m: { presentationId?: string | null; enteredQuantity?: string | number | null }) =>
+  (m.presentationId == null) === (m.enteredQuantity == null)
+const MENSAJE_JUNTAS = { message: 'La presentación y la cantidad ingresada van juntas.', path: ['presentationId'] }
+
 /** El motivo es texto libre que va al AuditLog: se acota y se limpia. */
 const motivo = z
   .string()
@@ -67,13 +80,15 @@ export const createStockMovementSchema = z.discriminatedUnion('type', [
     quantity: cantidadPositiva,
     reason: motivo.optional(),
     unitCost: cantidad.nonnegative().optional(),
-  }),
+    ...presentacion,
+  }).refine(juntas, MENSAJE_JUNTAS),
   z.object({
     ...base,
     type: z.literal('SALIDA'),
     quantity: cantidadPositiva,
     reason: motivo.optional(),
-  }),
+    ...presentacion,
+  }).refine(juntas, MENSAJE_JUNTAS),
   z.object({
     ...base,
     type: z.literal('AJUSTE'),

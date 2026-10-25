@@ -114,6 +114,8 @@ export interface ScannedProduct {
   status: StockStatus
   /** Necesaria para el bloqueo optimista de un AJUSTE. */
   version: number
+  /** Si el código era el de una presentación (caja, saco…): el ingreso se teclea en sus unidades. */
+  presentation?: { id: string; name: string; unitType: string; factor: string } | null
 }
 
 /**
@@ -175,6 +177,9 @@ export async function findProductByCode(
         minStock,
         status: getStockStatus(quantity, minStock),
         version: r.stock?.version ?? 0,
+        presentation: r.presentacion
+          ? { id: r.presentacion.id, name: r.presentacion.name, unitType: r.presentacion.unitType, factor: r.presentacion.factor.toString() }
+          : null,
       },
     }
   })
