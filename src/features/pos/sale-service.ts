@@ -8,7 +8,8 @@ import {
 } from '@/features/branches/queries'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { applyStockMovement } from '@/features/inventory/stock-service'
-import { MENSAJE_SIN_FIADO, resolverPagos } from './pagos'
+import { resolverPagos } from './pagos'
+import { otorgarCredito } from '@/features/credito/credito-service'
 import { cargarPresentaciones, resolverLineaDeVenta, trazaDe, type Traza } from '@/features/inventory/presentacion-linea'
 import { puede } from '@/lib/puede'
 import type { RegisterSaleInput } from './schemas'
@@ -26,6 +27,8 @@ export interface RegisterSaleResult {
   replayed: boolean
   /** Alguna línea se vendió bajo el stock disponible (§5.4). */
   soldBelowStock: boolean
+  /** Si parte (o toda) la venta se fió: cuánto, cuándo vence y cuánto debe ya el cliente. `null` si no hubo fiado. */
+  credito: { monto: number; vence: string; deudaCliente: number } | null
 }
 
 function num(d: Prisma.Decimal | number | null | undefined): number {
@@ -361,9 +364,10 @@ export async function registerSale(
 
       // Pagos mixtos: ver `pagos.ts`. Rechaza lo que no cubre el total, el vuelto que no sale del efectivo y el fiado.
       const { pagos, credito } = resolverPagos(total, input.payments, { conCliente: !!input.customerId, documentType: input.documentType })
-      // TEMPORAL (subpaso 3.2): las reglas del fiado ya se validan, pero aún no hay quien registre la deuda. Mientras tanto no se
-      // acepta: dar la venta por cobrada sin cuenta por cobrar sería fiar sin que nadie lo sepa.
-      if (credito > 0) throw new BusinessError('INVALID_DOCUMENT', MENSAJE_SIN_FIADO)
+      // Fiar es una decisión de confianza sobre dinero que no está en el cajón: permiso aparte (opcional, lo activa el dueño).
+      if (credito > 0 && !puede(ctx, 'credito.otorgar')) {
+        throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para vender a crédito.')
+      }
 
       // --- 3. Numeración sin huecos --------------------------------------
       const { correlativo, prefix, series } = await claimNextNumber(
@@ -425,6 +429,13 @@ export async function registerSale(
           change: p.change,
         })),
       })
+
+      // --- 6b. Fiado: la deuda nace en la MISMA transacción que la venta ---
+      // Bloquea al cliente, comprueba que se le pueda fiar y que quepa en su línea, crea la cuenta por cobrar y sube su deuda.
+      // Si lo que viene después falla (stock, numeración…) la deuda se deshace junto con la venta.
+      const fiado = credito > 0
+        ? await otorgarCredito(t, ctx, { customerId: input.customerId!, saleId: sale.id, saleNumber: number, monto: credito })
+        : null
 
       // --- 7. Stock, con el MISMO código que el escáner ------------------
       let soldBelowStock = false
@@ -516,6 +527,7 @@ export async function registerSale(
         subtotal, taxTotal, discountTotal, total,
         replayed: false,
         soldBelowStock,
+        credito: fiado ? { monto: fiado.monto, vence: fiado.vence, deudaCliente: fiado.deudaDespues } : null,
       }
     },
     {
@@ -553,12 +565,19 @@ export async function registerSale(
 async function ventaPorClave(db: TenantPrismaClient, idempotencyKey: string): Promise<RegisterSaleResult | null> {
   const v = await db.sale.findFirst({
     where: { idempotencyKey },
-    select: { id: true, number: true, subtotal: true, taxTotal: true, discountTotal: true, total: true, soldBelowStock: true },
+    select: {
+      id: true, number: true, subtotal: true, taxTotal: true, discountTotal: true, total: true, soldBelowStock: true,
+      receivable: { select: { amount: true, dueDate: true } },
+      customer: { select: { creditBalance: true } },
+    },
   })
   if (!v) return null
   return {
     saleId: v.id, number: v.number,
     subtotal: num(v.subtotal), taxTotal: num(v.taxTotal), discountTotal: num(v.discountTotal), total: num(v.total),
     replayed: true, soldBelowStock: v.soldBelowStock,
+    credito: v.receivable
+      ? { monto: num(v.receivable.amount), vence: v.receivable.dueDate.toISOString().slice(0, 10), deudaCliente: num(v.customer?.creditBalance) }
+      : null,
   }
 }

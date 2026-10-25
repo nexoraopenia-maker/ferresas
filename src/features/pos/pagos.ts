@@ -48,7 +48,6 @@ export interface OpcionesPagos {
   documentType?: string
 }
 
-export const MENSAJE_SIN_FIADO = 'La venta a crédito (fiado) todavía no está disponible.'
 export const MENSAJE_FIADO_CLIENTE = 'El fiado necesita un cliente identificado con DNI o RUC: no se fía a «público general».'
 export const MENSAJE_FIADO_UNA_LINEA = 'Una venta admite una sola línea de fiado.'
 export const MENSAJE_FIADO_FACTURA = 'La factura a crédito todavía no está disponible: emite nota de venta o boleta.'

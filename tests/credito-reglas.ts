@@ -113,10 +113,13 @@ check('>>> el esquema ya acepta CREDITO, pero pide cliente: sin cliente el cajer
 check('con cliente el esquema lo deja pasar (las reglas de fondo las aplican el servicio y la base)', esq('cliente-1').success)
 check('un pago sin fiado no pide cliente (nada cambió para las ventas de siempre)', registerSaleSchema.safeParse({ ...base, payments: [{ method: 'EFECTIVO', amount: 100 }] }).success)
 
-console.log('\n7) Mientras no exista el servicio de crédito (3.2), registerSale NO acepta fiar')
+console.log('\n7) registerSale aplica las reglas y registra la deuda en la misma transacción')
 const venta = readFileSync('src/features/pos/sale-service.ts', 'utf8')
-check('>>> registerSale valida las reglas del fiado y, TEMPORALMENTE, rechaza cualquier venta con crédito para no fiar sin dejar deuda',
-  /resolverPagos\(total, input\.payments, \{ conCliente: !!input\.customerId, documentType: input\.documentType \}\)/.test(venta) && /if \(credito > 0\) throw new BusinessError\('INVALID_DOCUMENT', MENSAJE_SIN_FIADO\)/.test(venta))
+check('>>> registerSale valida las reglas del fiado con cliente y comprobante, exige el permiso credito.otorgar y registra la deuda con otorgarCredito',
+  /resolverPagos\(total, input\.payments, \{ conCliente: !!input\.customerId, documentType: input\.documentType \}\)/.test(venta)
+  && /credito > 0 && !puede\(ctx, 'credito\.otorgar'\)/.test(venta) && /otorgarCredito\(t, ctx,/.test(venta))
+check('>>> la deuda nace DESPUÉS de crear la venta y los pagos y ANTES del stock: si el stock falla, se deshace todo junto',
+  venta.indexOf('t.payment.createMany') < venta.indexOf('otorgarCredito(t, ctx,') && venta.indexOf('otorgarCredito(t, ctx,') < venta.indexOf('applyStockMovement(t, ctx,'))
 
 console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
 process.exit(fail === 0 ? 0 : 1)

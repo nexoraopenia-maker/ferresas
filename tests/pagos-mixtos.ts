@@ -90,10 +90,10 @@ async function main() {
     && JSON.stringify(registerSaleSchema.safeParse(sinCliente).error?.issues).includes('DNI o RUC'))
   check('>>> y si alguien llama al servicio saltándose el esquema, sin cliente lo rechaza con CREDIT_CUSTOMER (CREDITO solo, o mezclado)',
     await code(venderSinParsear([{ method: 'CREDITO', amount: 100 }])) === 'CREDIT_CUSTOMER' && await code(venderSinParsear([{ method: 'CREDITO', amount: 60 }, { method: 'EFECTIVO', amount: 40 }])) === 'CREDIT_CUSTOMER')
-  const cliente = await prisma.customer.create({ data: { tenantId: t.id, name: 'Cliente', docType: 'DNI', docNumber: '41235678', creditLimit: 1000 } })
+  const cliente = await prisma.customer.create({ data: { tenantId: t.id, name: 'Cliente', docType: 'DNI', docNumber: '41235678', creditLimit: 0 } })
   const conCliente = (payments: unknown[]) => registerSale(db, ctx, { warehouseId: w.id, customerId: cliente.id, items: [{ productId: prod.id, quantity: 1, discount: 0 }], payments, documentType: 'NOTA_VENTA', allowNegativeStock: false, idempotencyKey: randomUUID() } as never)
-  check('>>> con cliente, las reglas del fiado se validan pero TODAVÍA no se acepta fiar (el servicio de crédito llega en el subpaso 3.2): nada se registra como cobrado sin deuda',
-    await code(conCliente([{ method: 'CREDITO', amount: 100 }])) === 'INVALID_DOCUMENT' && await code(conCliente([{ method: 'EFECTIVO', amount: 40 }, { method: 'CREDITO', amount: 60 }])) === 'INVALID_DOCUMENT')
+  check('>>> con cliente pero SIN línea de crédito, el fiado se rechaza (CREDIT_BLOCKED) y no queda nada escrito (el fiado que sí cabe se prueba en credito-servicio)',
+    await code(conCliente([{ method: 'CREDITO', amount: 100 }])) === 'CREDIT_BLOCKED' && await code(conCliente([{ method: 'EFECTIVO', amount: 40 }, { method: 'CREDITO', amount: 60 }])) === 'CREDIT_BLOCKED')
   check('con cliente y sobrepago en efectivo, el fiado se rechaza por la regla del cuadre exacto', await code(conCliente([{ method: 'EFECTIVO', amount: 80 }, { method: 'CREDITO', amount: 60 }])) === 'INVALID_DOCUMENT')
   check('un pago de 0, o con 3 decimales, se rechaza en el servicio', await code(venderSinParsear([{ method: 'EFECTIVO', amount: 0 }, { method: 'EFECTIVO', amount: 100 }])) === 'INVALID_DOCUMENT' && await code(venderSinParsear([{ method: 'EFECTIVO', amount: 100.005 }])) === 'INVALID_DOCUMENT')
   const despues = await foto()
