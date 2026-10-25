@@ -1,9 +1,13 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
+import { BannerSinRed } from '@/components/pwa/BannerSinRed'
+import { RegistrarServiceWorker } from '@/components/pwa/RegistrarServiceWorker'
 
 export const metadata: Metadata = {
   title: 'FerreSaaS',
   description: 'Control de inventario y punto de venta para ferreterías.',
+  icons: { icon: '/icons/icon-192.png', apple: '/icons/apple-touch-icon.png' },
+  appleWebApp: { capable: true, title: 'FerreSaaS', statusBarStyle: 'black-translucent' },
 }
 
 export const viewport: Viewport = {
@@ -26,7 +30,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="es">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        <BannerSinRed />
+        <RegistrarServiceWorker />
+        {children}
+      </body>
     </html>
   )
 }

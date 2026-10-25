@@ -4,6 +4,7 @@ import { useCallback, useRef, useState, useTransition } from 'react'
 import { InventoryScannerModal, type ResultadoLectura } from '@/components/inventory/InventoryScannerModal'
 import { QuantityInput } from '@/components/ui/quantity-input'
 import { getStockStatusView } from '@/lib/stock-status'
+import { MENSAJE_SIN_RED, useEnLinea } from '@/lib/en-linea'
 import { formatQuantity, redondear, stepsFor, unitLabel } from '@/lib/quantity'
 import {
   createProductExpress,
@@ -45,6 +46,7 @@ export function ScanToStockSheet() {
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
+  const enLinea = useEnLinea()
 
   /**
    * Se genera UNA vez por intento de confirmación y se reutiliza si el
@@ -97,6 +99,7 @@ export function ScanToStockSheet() {
   const confirmar = useCallback(() => {
     if (phase.kind !== 'product') return
     const p = phase.product
+    if (!enLinea) { setError(MENSAJE_SIN_RED); return }
     setError(null)
 
     idemRef.current ??= crypto.randomUUID()
@@ -149,7 +152,7 @@ export function ScanToStockSheet() {
       idemRef.current = null
       reset()
     })
-  }, [phase, type, qty, reason, reset])
+  }, [phase, type, qty, reason, reset, enLinea])
 
   const activo = TIPOS.find((t) => t.value === type)!
 
@@ -270,6 +273,7 @@ function ProductSheet({
   onConfirm: () => void
   onCancel: () => void
 }) {
+  const enLinea = useEnLinea()
   const actual = getStockStatusView(product.quantity, product.minStock)
 
   // Previsualización del resultado: el operario ve a qué número va a quedar
@@ -393,7 +397,7 @@ function ProductSheet({
         <button
           type="button"
           onClick={onConfirm}
-          disabled={pending || qty <= 0 || ajusteSinMotivo}
+          disabled={pending || !enLinea || qty <= 0 || ajusteSinMotivo}
           className="h-touch-xl flex-1 rounded-2xl bg-industrial-600 text-lg font-bold text-white transition active:scale-95 disabled:opacity-40"
         >
           {pending ? 'Registrando…' : 'Confirmar'}
@@ -438,8 +442,10 @@ function ExpressProductForm({
   const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
   const idemRef = useRef<string | null>(null)
+  const enLinea = useEnLinea()
 
   const submit = () => {
+    if (!enLinea) { setError(MENSAJE_SIN_RED); return }
     setError(null)
     setFieldErrors({})
     idemRef.current ??= crypto.randomUUID()
@@ -566,7 +572,7 @@ function ExpressProductForm({
         <button
           type="button"
           onClick={submit}
-          disabled={pending || name.trim().length < 2}
+          disabled={pending || !enLinea || name.trim().length < 2}
           className="h-touch-xl flex-1 rounded-2xl bg-industrial-600 text-lg font-bold text-white transition active:scale-95 disabled:opacity-40"
         >
           {pending ? 'Creando…' : 'Crear y continuar'}

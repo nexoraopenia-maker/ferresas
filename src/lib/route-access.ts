@@ -86,6 +86,9 @@ const PUBLIC_PREFIXES = [
   // secreto compartido (comparado en tiempo constante) dentro del propio handler.
   '/api/fiscal',
   '/legal',
+  // PWA: el navegador pide el manifest y el service worker SIN cookie; si el proxy los redirigiera al login la app no se instalaría.
+  '/manifest.webmanifest',
+  '/sw.js',
 ]
 
 /**
@@ -151,6 +154,8 @@ const SKIP_SESSION_PREFIXES = [
   '/registro',
   '/invitacion',
   '/legal',
+  '/manifest.webmanifest',
+  '/sw.js',
 ]
 
 export function requiresSessionLookup(pathname: string): boolean {

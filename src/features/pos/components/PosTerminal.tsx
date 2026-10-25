@@ -20,6 +20,7 @@ import {
   type PosCustomer, type PosProduct,
 } from '../actions'
 import { brutoDe, contadaDe, conContada, descuentoDe, itemDe, mismaLinea, unidadDe, type LineaCarrito } from '../carrito'
+import { MENSAJE_SIN_RED, useEnLinea } from '@/lib/en-linea'
 import { CustomerPicker } from './CustomerPicker'
 import { ATAJOS_VISIBLES, usePosShortcuts } from './use-pos-shortcuts'
 
@@ -79,6 +80,7 @@ export function PosTerminal({
   topeDescuentoPct?: number
 }) {
   const [carrito, setCarrito] = useState<LineaCarrito[]>([])
+  const enLinea = useEnLinea()
   const [escaneando, setEscaneando] = useState(false)
   const [busqueda, setBusqueda] = useState('')
   const [resultados, setResultados] = useState<PosProduct[]>([])
@@ -304,6 +306,7 @@ export function PosTerminal({
 
   const cobrar = () => {
     if (carrito.length === 0) return
+    if (!enLinea) { setError(MENSAJE_SIN_RED); return }
     setError(null)
     idemRef.current ??= crypto.randomUUID()
 
@@ -356,6 +359,7 @@ export function PosTerminal({
 
   const cotizar = () => {
     if (carrito.length === 0) return
+    if (!enLinea) { setError(MENSAJE_SIN_RED); return }
     if (carrito.some((l) => l.presentacion)) { setError('Las cotizaciones y los pedidos a caja se arman en unidad base: cobra la presentación directo o quítala del carrito.'); return }
     setError(null)
     setAviso(null)
@@ -391,6 +395,7 @@ export function PosTerminal({
   /** El vendedor manda el carrito a la cola de caja; no cobra ni toca dinero. */
   const enviarACaja = () => {
     if (carrito.length === 0) return
+    if (!enLinea) { setError(MENSAJE_SIN_RED); return }
     if (carrito.some((l) => l.presentacion)) { setError('Las cotizaciones y los pedidos a caja se arman en unidad base: cobra la presentación directo o quítala del carrito.'); return }
     setError(null)
     setAviso(null)
@@ -815,7 +820,7 @@ export function PosTerminal({
                 <button
                   type="button"
                   onClick={enviarACaja}
-                  disabled={pendiente || carrito.some((l) => l.quantity <= 0)}
+                  disabled={pendiente || !enLinea || carrito.some((l) => l.quantity <= 0)}
                   className={`h-16 rounded-2xl text-base font-bold transition active:scale-95 disabled:opacity-40 ${
                     puedeCobrar ? 'shrink-0 border-2 border-graphite-900 px-4 text-ink lg:flex-1 lg:shrink dark:border-graphite-50' : 'min-w-0 flex-1 bg-industrial-600 text-lg text-white'
                   }`}
@@ -826,7 +831,7 @@ export function PosTerminal({
               {!pedido && <button
                 type="button"
                 onClick={cotizar}
-                disabled={pendiente || carrito.some((l) => l.quantity <= 0)}
+                disabled={pendiente || !enLinea || carrito.some((l) => l.quantity <= 0)}
                 className="h-16 shrink-0 rounded-2xl border-2 border-graphite-900 px-5 text-base font-bold text-ink transition active:scale-95 disabled:opacity-40 lg:flex-1 lg:shrink dark:border-graphite-50"
               >
                 Cotizar
@@ -835,7 +840,7 @@ export function PosTerminal({
               {puedeCobrar && <button
                 type="button"
                 onClick={cobrar}
-                disabled={pendiente || carrito.some((l) => l.quantity <= 0)}
+                disabled={pendiente || !enLinea || carrito.some((l) => l.quantity <= 0)}
                 className="h-16 min-w-0 flex-1 rounded-2xl bg-industrial-600 text-xl font-bold text-white shadow-md transition active:scale-95 disabled:opacity-40 lg:order-first lg:basis-full"
               >
                 {pendiente ? 'Registrando…' : `Cobrar ${money(totales.total)}`}
@@ -889,8 +894,10 @@ function ReciboEmitido({
   const [doc, setDoc] = useState<{ id: string; fullNumber: string; status: string; isTrial: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pendiente, startTransition] = useTransition()
+  const enLinea = useEnLinea()
 
   const emitir = (documentType: 'BOLETA' | 'FACTURA') => {
+    if (!enLinea) { setError(MENSAJE_SIN_RED); return }
     setError(null)
     startTransition(async () => {
       const res = await fetch('/api/invoices', {
@@ -956,11 +963,11 @@ function ReciboEmitido({
         <>
           <p className="mt-3 text-sm text-ink-muted">¿Emitir comprobante?</p>
           <div className="mt-2 flex flex-wrap gap-2">
-            <button type="button" onClick={() => emitir('BOLETA')} disabled={pendiente}
+            <button type="button" onClick={() => emitir('BOLETA')} disabled={pendiente || !enLinea}
               className="h-touch-lg flex-1 rounded-xl bg-graphite-900 px-4 font-bold text-white disabled:opacity-40 dark:bg-graphite-50 dark:text-graphite-900">
               {pendiente ? '…' : 'Boleta'}
             </button>
-            <button type="button" onClick={() => emitir('FACTURA')} disabled={pendiente}
+            <button type="button" onClick={() => emitir('FACTURA')} disabled={pendiente || !enLinea}
               className="h-touch-lg flex-1 rounded-xl border border-graphite-900 px-4 font-bold text-ink disabled:opacity-40 dark:border-graphite-50">
               Factura
             </button>

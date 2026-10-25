@@ -15,6 +15,15 @@ const nextConfig: NextConfig = {
         { key: 'Permissions-Policy', value: 'camera=(self), microphone=(), geolocation=()' },
       ],
     },
+    {
+      // El worker se revalida SIEMPRE: si el navegador lo cacheara, una versión vieja con una política vieja seguiría activa.
+      source: '/sw.js',
+      headers: [
+        { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
+        { key: 'Content-Type', value: 'application/javascript; charset=utf-8' },
+        { key: 'Service-Worker-Allowed', value: '/' },
+      ],
+    },
   ],
 }
 
