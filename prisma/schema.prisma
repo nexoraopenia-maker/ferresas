@@ -1094,6 +1094,10 @@ model Sale {
   voidedAt    DateTime?
   voidReason  String?
 
+  /// Clave que genera el cliente por cada intento de cobro. El mismo envío repetido (doble toque, red lenta) devuelve la venta ya
+  /// registrada en vez de crear otra. Opcional: las ventas anteriores no la tienen.
+  idempotencyKey String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1107,6 +1111,8 @@ model Sale {
 
   @@unique([tenantId, id])
   @@unique([tenantId, number])
+  // Reintento seguro: una clave, una venta (varias ventas sin clave son válidas: NULL no choca).
+  @@unique([tenantId, idempotencyKey])
   // Relación 1-1 con Quote: una cotización se convierte en una sola venta.
   @@unique([tenantId, quoteId])
   @@index([tenantId, status, createdAt])

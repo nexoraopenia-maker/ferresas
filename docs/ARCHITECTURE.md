@@ -732,3 +732,13 @@ Antes de introducir la deuda (fiado), el dinero de una venta tiene que cuadrar a
 ### Auditoría histórica del vuelto (solo lectura)
 
 `npx tsx scripts/listar-vueltos-historicos.ts [--negocio <slug>] [--desde AAAA-MM-DD] [--detalle]` (lógica en `src/features/pos/vueltos-historicos.ts`). Revisa las ventas COMPLETADAS y clasifica el vuelto mal guardado: **PERDIDO** (salió del cajón y no se registró; es el bug), **EXCESO** (se registró de más) y **SIN_EFECTIVO** (sobrepago con Yape/tarjeta: revisar a mano; no entra en la corrección). Por turno de caja muestra la diferencia registrada y la corregida (registrada + vuelto no registrado). No escribe ni recalcula nada; sale con código 3 si hay ventas afectadas. Un turno EN CURSO con ventas afectadas seguirá esperando de más hasta cerrarse.
+
+## Fase 3, Paso 3.0: la venta es idempotente (`Sale.idempotencyKey`)
+
+**El hueco:** el POS enviaba un `idempotencyKey` que `registerSale` ignoraba (`Sale` no tenía columna de clave y `replayed` era siempre `false`). Un doble toque o un reintento por red lenta creaba **dos ventas**: otro número, otro descuento de stock, otro pago. Se había dado por supuesto lo contrario; las notas anteriores del PWA («el cobro es idempotente») eran incorrectas para ventas.
+
+- **Migración expand** `20261110110000_venta_idempotencia`: `sales.idempotencyKey` (nulo) + único `(tenantId, idempotencyKey)` + CHECK de que no sea una clave en blanco. NULL no choca: las ventas sin clave siguen siendo válidas.
+- **`registerSale`:** (1) busca la clave **antes de hacer nada** y, si existe, devuelve la venta registrada con `replayed: true` (así el reintento funciona aunque el mundo haya cambiado: producto desactivado, turno cerrado); (2) la guarda al crear; (3) dos envíos simultáneos los resuelve el índice único: el perdedor se deshace entero (venta, pagos, stock, número) y recibe la venta ganadora. Un P2002 solo se trata como reintento si de verdad existe una venta con esa clave.
+- **La clave identifica el INTENTO.** El POS la crea al cobrar, la **reutiliza mientras el cobro falla** y la **renueva tras cada cobro exitoso** (`idemRef.current = null`). Reutilizarla con otro carrito devuelve la venta original.
+- Un intento que falla (p. ej. sin stock) no quema la clave. Alcance: ventas, y por ende el cobro de cotizaciones y de pedidos, que pasan por `registerSale`. Los abonos de crédito tendrán su propia clave (Paso 3.3).
+- Pruebas: `tests/venta-idempotente.ts` (reproduce el doble cobro, 8 envíos simultáneos, caja, aislamiento por negocio, la base). Tres mutaciones comprobadas.

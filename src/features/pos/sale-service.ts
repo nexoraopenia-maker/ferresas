@@ -160,6 +160,18 @@ export async function registerSale(
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para cobrar ventas.')
   }
 
+  /*
+   * Reintento del mismo cobro (doble toque, red lenta, el cliente no recibió la respuesta): devuelve la venta YA registrada con
+   * esa clave. Sin esto cada reintento creaba otra venta —otro número, otro descuento de stock, otro pago—. Se busca antes de
+   * hacer cualquier otra cosa; la carrera entre dos envíos simultáneos la resuelve el índice único (ver el catch de abajo).
+   * La clave identifica el INTENTO: si el cliente la reutiliza con otro carrito recibe la venta original (el POS la renueva tras
+   * cada cobro exitoso).
+   */
+  if (input.idempotencyKey) {
+    const previa = await ventaPorClave(db, input.idempotencyKey)
+    if (previa) return previa
+  }
+
   const branchId = requireBranch(ctx)
   const sucursal = await cargarSucursalOperativa(db, branchId)
   const serie = serieDe(sucursal, 'SALE')
@@ -202,7 +214,8 @@ export async function registerSale(
     }
   }
 
-  return db.$transaction(async (tx) => {
+  try {
+  return await db.$transaction(async (tx) => {
       const t = tx as unknown as TenantPrismaClient
 
       /*
@@ -370,6 +383,7 @@ export async function registerSale(
           status: 'COMPLETADA',
           subtotal, taxTotal, discountTotal, total,
           notes: input.notes ?? null,
+          idempotencyKey: input.idempotencyKey ?? null,
           completedAt: new Date(),
         },
         select: { id: true, number: true },
@@ -521,4 +535,27 @@ export async function registerSale(
       timeout: 30_000,
     },
   )
+  } catch (e) {
+    // Dos envíos simultáneos con la misma clave: uno ganó el índice único y el otro se deshizo entero (venta, pagos, stock).
+    // Se entrega la venta ganadora. Solo si de verdad existe una con esa clave: cualquier otro P2002 sigue siendo un error.
+    if (input.idempotencyKey && e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      const ganadora = await ventaPorClave(db, input.idempotencyKey)
+      if (ganadora) return ganadora
+    }
+    throw e
+  }
+}
+
+/** La venta ya registrada con esa clave de idempotencia (del negocio de `db`), lista para devolverse como reintento. */
+async function ventaPorClave(db: TenantPrismaClient, idempotencyKey: string): Promise<RegisterSaleResult | null> {
+  const v = await db.sale.findFirst({
+    where: { idempotencyKey },
+    select: { id: true, number: true, subtotal: true, taxTotal: true, discountTotal: true, total: true, soldBelowStock: true },
+  })
+  if (!v) return null
+  return {
+    saleId: v.id, number: v.number,
+    subtotal: num(v.subtotal), taxTotal: num(v.taxTotal), discountTotal: num(v.discountTotal), total: num(v.total),
+    replayed: true, soldBelowStock: v.soldBelowStock,
+  }
 }
