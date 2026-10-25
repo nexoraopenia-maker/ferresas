@@ -26,6 +26,12 @@ export type BusinessErrorCode =
   | 'INSUFFICIENT_STOCK'
   | 'FORBIDDEN_ROLE'
   | 'STOCK_CONFLICT'
+  /** La venta a crédito superaría la línea del cliente. `details`: límite, deuda, monto y disponible. */
+  | 'CREDIT_LIMIT'
+  /** El cliente tiene el crédito bloqueado, no tiene línea, o está dado de baja. */
+  | 'CREDIT_BLOCKED'
+  /** El fiado exige un cliente identificado (DNI/RUC válido): no hay fiado a «público general». */
+  | 'CREDIT_CUSTOMER'
 
 export class BusinessError extends Error {
   readonly code: BusinessErrorCode

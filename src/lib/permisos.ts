@@ -30,6 +30,10 @@ export const PERMISOS = [
   'ventas.cobrar',
   'ventas.anular',
   'ventas.descuento',
+  'credito.otorgar',
+  'credito.cobrar',
+  'credito.limite',
+  'credito.castigar',
   'cotizaciones.crear',
   'caja.abrir_cerrar',
   'caja.arqueo',
@@ -69,7 +73,9 @@ export type Permiso = (typeof PERMISOS)[number]
  */
 export const OPCIONALES: Partial<Record<Role, readonly Permiso[]>> = {
   VENDEDOR: ['ventas.descuento'],
-  CAJERO: ['ventas.descuento'],
+  // Fiar es una decisión de confianza sobre dinero que no está en el cajón: apagado de fábrica, lo activa el dueño. Solo el CAJERO
+  // (quien cobra); el VENDEDOR arma pedidos y no cobra, así que no tendría dónde usarlo.
+  CAJERO: ['ventas.descuento', 'credito.otorgar'],
   ALMACENERO: ['productos.editar_precio', 'stock.ajustar'],
 }
 
@@ -119,6 +125,9 @@ export const MATRIZ: Record<Role, readonly Permiso[]> = {
   CAJERO: [
     'ventas.crear',
     'ventas.cobrar',
+    // Registra los abonos de los clientes con deuda (entra dinero al cajón). Fiar (`credito.otorgar`), cambiar la línea
+    // (`credito.limite`) y dar de baja una deuda (`credito.castigar`) NO vienen de fábrica.
+    'credito.cobrar',
     'cotizaciones.crear',
     'caja.abrir_cerrar',
     'comprobantes.emitir',
@@ -206,6 +215,10 @@ export const ETIQUETAS: Record<Permiso, string> = {
   'ventas.cobrar': 'Cobrar',
   'ventas.anular': 'Anular ventas cobradas',
   'ventas.descuento': 'Aplicar descuentos',
+  'credito.otorgar': 'Vender a crédito (fiar)',
+  'credito.cobrar': 'Registrar abonos de clientes con deuda',
+  'credito.limite': 'Cambiar la línea de crédito, el plazo o bloquear a un cliente',
+  'credito.castigar': 'Dar de baja o castigar una deuda y anular abonos',
   'cotizaciones.crear': 'Cotizar',
   'caja.abrir_cerrar': 'Abrir y cerrar caja',
   'caja.arqueo': 'Ver arqueos y descuadres',

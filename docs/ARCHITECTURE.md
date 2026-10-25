@@ -742,3 +742,13 @@ Antes de introducir la deuda (fiado), el dinero de una venta tiene que cuadrar a
 - **La clave identifica el INTENTO.** El POS la crea al cobrar, la **reutiliza mientras el cobro falla** y la **renueva tras cada cobro exitoso** (`idemRef.current = null`). Reutilizarla con otro carrito devuelve la venta original.
 - Un intento que falla (p. ej. sin stock) no quema la clave. Alcance: ventas, y por ende el cobro de cotizaciones y de pedidos, que pasan por `registerSale`. Los abonos de crédito tendrán su propia clave (Paso 3.3).
 - Pruebas: `tests/venta-idempotente.ts` (reproduce el doble cobro, 8 envíos simultáneos, caja, aislamiento por negocio, la base). Tres mutaciones comprobadas.
+
+## Fase 3, Paso 3.1: permisos, códigos de error y reglas de pago del crédito
+
+Lógica pura; **no cambia el comportamiento de la venta**: `registerSale` valida el fiado pero todavía lo rechaza (`MENSAJE_SIN_FIADO`) hasta el subpaso 3.2, que es el que registra la deuda. Así este commit no reabre el hueco de dar una venta por cobrada sin cuenta por cobrar.
+
+- **Permisos** (`src/lib/permisos.ts`): `credito.otorgar` (fiar; **opcional**, el dueño lo activa solo al CAJERO: el VENDEDOR no cobra y no tendría dónde usarlo), `credito.cobrar` (abonos; de fábrica al CAJERO), `credito.limite` (línea, plazo y bloqueo) y `credito.castigar` (dar de baja deuda, anular abonos), estos dos solo dueño y administrador. Almacenero y contador no tienen ninguno. Los dos de administración están **vedados al PIN de cajero** (`PERMISOS_FUERA_DEL_PIN`): un PIN de 4 cifras no sube líneas ni castiga deudas.
+- **Códigos de error:** `CREDIT_LIMIT` (supera la línea; con límite, deuda, monto y disponible), `CREDIT_BLOCKED` (bloqueado, sin línea o de baja) y `CREDIT_CUSTOMER` (sin cliente identificado). Los dos primeros los lanzará el servicio de crédito (3.2).
+- **`resolverPagos` con `CREDITO`** (`src/features/pos/pagos.ts`), todo estricto: una sola línea de crédito; **cliente obligatorio** (no hay fiado a «público general»); **nunca con FACTURA**; y el total **cuadra exacto, sin vuelto** (pagos + fiado = total). Devuelve `credito` (lo financiado). Orden de precedencia de los errores: varias líneas → sin cliente → factura → pagos insuficientes → fiado con sobrepago → vuelto que el efectivo no cubre.
+- **Esquema:** `CREDITO` ya se acepta en la línea de pago, pero la venta con fiado exige `customerId` (aviso temprano al cajero). Que el cliente exista, tenga documento válido, no esté bloqueado y tenga línea lo decide el servicio, dentro de la transacción (3.2).
+- **Pruebas:** `tests/credito-reglas.ts` (28; sin base de datos): matriz de permisos, PIN, errores, reglas y una propiedad de 8000 combinaciones contra un oráculo independiente. Seis mutaciones comprobadas.

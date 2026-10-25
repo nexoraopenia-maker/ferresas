@@ -85,10 +85,16 @@ async function main() {
   check('>>> pagar 120 con Yape una venta de 100 → rechazado: nadie devuelve vuelto de un Yape', await code(vender(1, [{ method: 'YAPE', amount: 120 }])) === 'INVALID_DOCUMENT')
   check('>>> Yape 100 + tarjeta 10 sobre 100 → rechazado (lo no efectivo ya supera el total)', await code(vender(1, [{ method: 'YAPE', amount: 100 }, { method: 'TARJETA_DEBITO', amount: 10 }])) === 'INVALID_DOCUMENT')
   check('tarjeta 80 + efectivo 10 sobre 100 → los pagos no cubren el total', await code(vender(1, [{ method: 'TARJETA_DEBITO', amount: 80 }, { method: 'EFECTIVO', amount: 10 }])) === 'INSUFFICIENT_STOCK')
-  check('>>> CREDITO (fiado) → el esquema lo rechaza con un mensaje claro', !registerSaleSchema.safeParse({ warehouseId: 'w', items: [{ productId: 'p', quantity: 1 }], payments: [{ method: 'CREDITO', amount: 100 }] }).success
-    && JSON.stringify(registerSaleSchema.safeParse({ warehouseId: 'w', items: [{ productId: 'p', quantity: 1 }], payments: [{ method: 'CREDITO', amount: 100 }] }).error?.issues).includes('todavía no está disponible'))
-  check('>>> y si alguien llama al servicio saltándose el esquema, el servicio también lo rechaza (CREDITO solo, o mezclado)',
-    await code(venderSinParsear([{ method: 'CREDITO', amount: 100 }])) === 'INVALID_DOCUMENT' && await code(venderSinParsear([{ method: 'CREDITO', amount: 60 }, { method: 'EFECTIVO', amount: 40 }])) === 'INVALID_DOCUMENT')
+  const sinCliente = { warehouseId: 'w', items: [{ productId: 'p', quantity: 1 }], payments: [{ method: 'CREDITO', amount: 100 }] }
+  check('>>> CREDITO (fiado) sin cliente → el esquema lo rechaza con un mensaje claro (no se fía a «público general»)', !registerSaleSchema.safeParse(sinCliente).success
+    && JSON.stringify(registerSaleSchema.safeParse(sinCliente).error?.issues).includes('DNI o RUC'))
+  check('>>> y si alguien llama al servicio saltándose el esquema, sin cliente lo rechaza con CREDIT_CUSTOMER (CREDITO solo, o mezclado)',
+    await code(venderSinParsear([{ method: 'CREDITO', amount: 100 }])) === 'CREDIT_CUSTOMER' && await code(venderSinParsear([{ method: 'CREDITO', amount: 60 }, { method: 'EFECTIVO', amount: 40 }])) === 'CREDIT_CUSTOMER')
+  const cliente = await prisma.customer.create({ data: { tenantId: t.id, name: 'Cliente', docType: 'DNI', docNumber: '41235678', creditLimit: 1000 } })
+  const conCliente = (payments: unknown[]) => registerSale(db, ctx, { warehouseId: w.id, customerId: cliente.id, items: [{ productId: prod.id, quantity: 1, discount: 0 }], payments, documentType: 'NOTA_VENTA', allowNegativeStock: false, idempotencyKey: randomUUID() } as never)
+  check('>>> con cliente, las reglas del fiado se validan pero TODAVÍA no se acepta fiar (el servicio de crédito llega en el subpaso 3.2): nada se registra como cobrado sin deuda',
+    await code(conCliente([{ method: 'CREDITO', amount: 100 }])) === 'INVALID_DOCUMENT' && await code(conCliente([{ method: 'EFECTIVO', amount: 40 }, { method: 'CREDITO', amount: 60 }])) === 'INVALID_DOCUMENT')
+  check('con cliente y sobrepago en efectivo, el fiado se rechaza por la regla del cuadre exacto', await code(conCliente([{ method: 'EFECTIVO', amount: 80 }, { method: 'CREDITO', amount: 60 }])) === 'INVALID_DOCUMENT')
   check('un pago de 0, o con 3 decimales, se rechaza en el servicio', await code(venderSinParsear([{ method: 'EFECTIVO', amount: 0 }, { method: 'EFECTIVO', amount: 100 }])) === 'INVALID_DOCUMENT' && await code(venderSinParsear([{ method: 'EFECTIVO', amount: 100.005 }])) === 'INVALID_DOCUMENT')
   const despues = await foto()
   check('>>> nada se escribió: ni venta, ni pagos, ni movimientos, ni stock', JSON.stringify(antes) === JSON.stringify(despues))
@@ -132,7 +138,7 @@ async function main() {
 
   console.log('\n4) Estructura')
   const venta = readFileSync('src/features/pos/sale-service.ts', 'utf8')
-  check('>>> registerSale delega en resolverPagos y ya no calcula el vuelto a mano («primer pago»)', venta.includes('resolverPagos(total, input.payments)') && !/i === 0 && p\.method === 'EFECTIVO'/.test(venta))
+  check('>>> registerSale delega en resolverPagos y ya no calcula el vuelto a mano («primer pago»)', venta.includes('resolverPagos(total, input.payments,') && !/i === 0 && p\.method === 'EFECTIVO'/.test(venta))
   check('los cobros por cotización y por pedido pasan por registerSale (mismas reglas)', readFileSync('src/features/pos/quote-service.ts', 'utf8').includes('payments: input.payments'))
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { tieneMaxDecimales } from '@/lib/dinero'
-import { MENSAJE_SIN_FIADO } from './pagos'
+import { MENSAJE_FIADO_CLIENTE } from './pagos'
 
 /**
  * Validación del Punto de Venta (§5.4).
@@ -57,7 +57,7 @@ export const paymentLineSchema = z.object({
   ]),
   amount: importe.refine((n) => n > 0, 'El monto debe ser mayor que cero.'),
   reference: z.string().trim().max(60).optional(),
-}).refine((p) => p.method !== 'CREDITO', { message: MENSAJE_SIN_FIADO, path: ['method'] })
+})
 
 export const registerSaleSchema = z.object({
   warehouseId: id,
@@ -86,6 +86,9 @@ export const registerSaleSchema = z.object({
    * descuente el stock dos veces.
    */
   idempotencyKey: z.uuid().optional(),
+}).refine((v) => !v.payments.some((p) => p.method === 'CREDITO') || !!v.customerId, {
+  // El fiado necesita a quién cobrarle. (El servicio lo vuelve a exigir: este es el aviso temprano al cajero.)
+  message: MENSAJE_FIADO_CLIENTE, path: ['customerId'],
 })
 
 export type SaleLineInput = z.infer<typeof saleLineSchema>

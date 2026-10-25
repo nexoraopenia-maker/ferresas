@@ -47,7 +47,7 @@ const ctxDe = (
 async function main() {
   // ═══════════════════════════════════════════════════════════════════════
   console.log('\n1) El catálogo está completo y sin huecos')
-  check(`${PERMISOS.length} permisos declarados (26 + guias.emitir y guias.anular)`, PERMISOS.length === 28, String(PERMISOS.length))
+  check(`${PERMISOS.length} permisos declarados (28 + los 4 del crédito)`, PERMISOS.length === 32, String(PERMISOS.length))
   check('ningún permiso repetido', new Set(PERMISOS).size === PERMISOS.length)
   check('>>> TODOS tienen etiqueta para la UI',
     PERMISOS.every((p) => ETIQUETAS[p] && ETIQUETAS[p].length > 3),

@@ -8,7 +8,7 @@ import {
 } from '@/features/branches/queries'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { applyStockMovement } from '@/features/inventory/stock-service'
-import { resolverPagos } from './pagos'
+import { MENSAJE_SIN_FIADO, resolverPagos } from './pagos'
 import { cargarPresentaciones, resolverLineaDeVenta, trazaDe, type Traza } from '@/features/inventory/presentacion-linea'
 import { puede } from '@/lib/puede'
 import type { RegisterSaleInput } from './schemas'
@@ -360,7 +360,10 @@ export async function registerSale(
       const total = cent(subtotal + taxTotal)
 
       // Pagos mixtos: ver `pagos.ts`. Rechaza lo que no cubre el total, el vuelto que no sale del efectivo y el fiado.
-      const { pagos } = resolverPagos(total, input.payments)
+      const { pagos, credito } = resolverPagos(total, input.payments, { conCliente: !!input.customerId, documentType: input.documentType })
+      // TEMPORAL (subpaso 3.2): las reglas del fiado ya se validan, pero aún no hay quien registre la deuda. Mientras tanto no se
+      // acepta: dar la venta por cobrada sin cuenta por cobrar sería fiar sin que nadie lo sepa.
+      if (credito > 0) throw new BusinessError('INVALID_DOCUMENT', MENSAJE_SIN_FIADO)
 
       // --- 3. Numeración sin huecos --------------------------------------
       const { correlativo, prefix, series } = await claimNextNumber(
