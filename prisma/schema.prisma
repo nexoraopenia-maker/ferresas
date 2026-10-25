@@ -247,6 +247,16 @@ enum CashSessionStatus {
   CERRADA
 }
 
+/// Estado de una cuenta por cobrar (venta a crédito). «Vencida» NO es un estado: se deriva de `dueDate` y se desactualizaría.
+enum ReceivableStatus {
+  /// Con saldo pendiente.
+  ABIERTA
+  /// Cobrada por completo.
+  PAGADA
+  /// Dada de baja por una persona con motivo (nota de crédito, error, deuda castigada). El saldo que quedaba sale de la deuda del cliente.
+  ANULADA
+}
+
 /**
  * Ciclo de vida de una transferencia entre sucursales.
  * Los estados intermedios no son burocracia: el stock sale del origen cuando
@@ -455,6 +465,9 @@ model Tenant {
   sales              Sale[]
   saleItems          SaleItem[]
   payments           Payment[]
+  receivables        Receivable[]
+  customerPayments   CustomerPayment[]
+  paymentAllocations PaymentAllocation[]
   quotes             Quote[]
   quoteItems         QuoteItem[]
   purchases          Purchase[]
@@ -623,6 +636,8 @@ model User {
   movements       StockMovement[]
   sales           Sale[]
   payments        Payment[]
+  customerPaymentsTaken  CustomerPayment[] @relation("CustomerPaymentTakenBy")
+  customerPaymentsVoided CustomerPayment[] @relation("CustomerPaymentVoidedBy")
   quotes          Quote[]
   purchases       Purchase[]
   auditLogs       AuditLog[]             @relation("AuditActor")
@@ -787,14 +802,23 @@ model Customer {
   notes     String?
 
   creditLimit Decimal @default(0) @db.Decimal(12, 2)
+  /// Plazo por defecto, en días, de una venta a crédito a este cliente.
+  creditTermDays Int @default(30)
+  /// Bloqueo manual: mientras esté puesto no se vende a crédito aunque haya línea disponible.
+  creditBlockedAt DateTime?
+  /// Deuda viva = Σ (amount − paidAmount) de sus cuentas ABIERTAS. Es una CACHÉ que se actualiza en la misma transacción que la
+  /// cuenta, bajo bloqueo de la fila; una auditoría la compara con la suma real. Nunca se escribe suelta.
+  creditBalance Decimal @default(0) @db.Decimal(14, 2)
 
   isActive  Boolean   @default(true)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  sales  Sale[]
-  quotes Quote[]
+  sales            Sale[]
+  quotes           Quote[]
+  receivables      Receivable[]
+  customerPayments CustomerPayment[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, docType, docNumber])
@@ -1108,6 +1132,8 @@ model Sale {
   /// `init_notas_credito_debito` (Prisma no sabe expresar índices parciales).
   taxDocuments   TaxDocument[]
   dispatchGuides DispatchGuide[]
+  /// Si la venta (o parte) se fió, su cuenta por cobrar. Una por venta.
+  receivable     Receivable?
 
   @@unique([tenantId, id])
   @@unique([tenantId, number])
@@ -1195,6 +1221,123 @@ model Payment {
   @@index([tenantId, saleId])
   @@index([tenantId, method, receivedAt])
   @@map("payments")
+}
+
+// ============================================================================
+//  CRÉDITO (FIADO): cuentas por cobrar y abonos
+// ============================================================================
+
+/**
+ * Cuenta por cobrar: lo que un cliente debe de UNA venta a crédito. Una por venta (`@@unique([tenantId, saleId])`).
+ *
+ * Los CHECKs de la migración garantizan la coherencia que Prisma no sabe expresar: 0 ≤ paidAmount ≤ amount, y que el estado diga
+ * la verdad (PAGADA ⇒ pagada por completo; ABIERTA ⇒ con saldo; ANULADA ⇒ con fecha y motivo).
+ */
+model Receivable {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  customerId String
+  customer   Customer @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  saleId String
+  sale   Sale   @relation(fields: [tenantId, saleId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  /// Monto financiado (la línea CREDITO de la venta).
+  amount     Decimal          @db.Decimal(14, 2)
+  /// Lo ya abonado. El saldo es `amount − paidAmount`.
+  paidAmount Decimal          @default(0) @db.Decimal(14, 2)
+  /// Día de vencimiento (fecha del negocio, sin hora).
+  dueDate    DateTime         @db.Date
+  status     ReceivableStatus @default(ABIERTA)
+
+  closedAt   DateTime?
+  voidedAt   DateTime?
+  voidReason String?
+  /// Una nota de crédito sobre la venta marca la cuenta para que el dueño decida (anular o mantener). Mientras tanto sigue viva.
+  reviewRequestedAt DateTime?
+  reviewReason      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  allocations PaymentAllocation[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, saleId])
+  @@index([tenantId, customerId, status])
+  @@index([tenantId, status, dueDate])
+  @@map("receivables")
+}
+
+/**
+ * Abono de un cliente: dinero que entra después de la venta. Se reparte entre cuentas con `PaymentAllocation`.
+ * Un abono en EFECTIVO entra al arqueo de su turno (`cashSessionId` obligatorio por CHECK). Anular = marcar `voidedAt` con motivo
+ * (nunca borrar), y el servicio devuelve lo repartido a las cuentas en la misma transacción.
+ */
+model CustomerPayment {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  customerId String
+  customer   Customer @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  branchId String
+  branch   Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  cashSessionId String?
+  cashSession   CashSession? @relation(fields: [tenantId, cashSessionId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  userId String
+  user   User   @relation("CustomerPaymentTakenBy", fields: [userId], references: [id], onDelete: Restrict)
+
+  method    PaymentMethod
+  amount    Decimal       @db.Decimal(14, 2)
+  /// Nº de operación / voucher.
+  reference String?
+  notes     String?
+  /// Reintento seguro: el mismo abono enviado dos veces (red lenta) no se duplica.
+  idempotencyKey String?
+
+  receivedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  voidedAt   DateTime?
+  voidedById String?
+  voidedBy   User?     @relation("CustomerPaymentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  voidReason String?
+
+  allocations PaymentAllocation[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, customerId, receivedAt])
+  @@index([tenantId, cashSessionId])
+  @@index([tenantId, branchId, receivedAt])
+  @@map("customer_payments")
+}
+
+/// Cuánto de un abono se aplicó a cada cuenta (más antigua primero, o las que elija la persona). Σ de un abono = su monto.
+model PaymentAllocation {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  customerPaymentId String
+  customerPayment   CustomerPayment @relation(fields: [tenantId, customerPaymentId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  receivableId String
+  receivable   Receivable @relation(fields: [tenantId, receivableId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  amount    Decimal  @db.Decimal(14, 2)
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, customerPaymentId, receivableId])
+  @@index([tenantId, receivableId])
+  @@map("payment_allocations")
 }
 
 // ============================================================================
@@ -1779,6 +1922,7 @@ model Branch {
   sales          Sale[]
   quotes         Quote[]
   cashSessions   CashSession[]
+  customerPayments CustomerPayment[]
   transfersOut   BranchTransfer[]  @relation("TransferFrom")
   transfersIn    BranchTransfer[]  @relation("TransferTo")
   mermas         Merma[]
@@ -1867,6 +2011,8 @@ model CashSession {
   updatedAt DateTime @updatedAt
 
   sales Sale[]
+  /// Abonos de clientes cobrados en efectivo durante el turno (entran al arqueo).
+  customerPayments CustomerPayment[]
 
   @@unique([tenantId, id])
   @@index([tenantId, branchId, status])

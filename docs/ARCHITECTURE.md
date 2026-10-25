@@ -733,6 +733,19 @@ Antes de introducir la deuda (fiado), el dinero de una venta tiene que cuadrar a
 
 `npx tsx scripts/listar-vueltos-historicos.ts [--negocio <slug>] [--desde AAAA-MM-DD] [--detalle]` (lógica en `src/features/pos/vueltos-historicos.ts`). Revisa las ventas COMPLETADAS y clasifica el vuelto mal guardado: **PERDIDO** (salió del cajón y no se registró; es el bug), **EXCESO** (se registró de más) y **SIN_EFECTIVO** (sobrepago con Yape/tarjeta: revisar a mano; no entra en la corrección). Por turno de caja muestra la diferencia registrada y la corregida (registrada + vuelto no registrado). No escribe ni recalcula nada; sale con código 3 si hay ventas afectadas. Un turno EN CURSO con ventas afectadas seguirá esperando de más hasta cerrarse.
 
+## Fase 3, Paso 2: modelo de datos del crédito (fiado)
+
+Migración **expand** `20261110120000_credito_cuentas_por_cobrar` (generada con `prisma migrate diff`, más los CHECKs a mano). Solo añade; no toca datos existentes.
+
+- **`Customer`** (columnas nuevas): `creditTermDays` (plazo, 0–365, por defecto 30), `creditBlockedAt` (bloqueo manual), `creditBalance` (deuda viva: **caché** que se actualiza en la misma transacción que la cuenta, bajo bloqueo de la fila, y que una auditoría compara con Σ de las cuentas abiertas). `creditLimit` ya existía.
+- **`Receivable`** (cuenta por cobrar, una por venta): `amount`, `paidAmount`, `dueDate`, estado `ABIERTA | PAGADA | ANULADA`, `voidedAt/voidReason`, y `reviewRequestedAt/reviewReason` para marcarla «pendiente de revisión» cuando se emite una nota de crédito sobre la venta. **«Vencida» no se guarda**: se deriva de `dueDate` en la zona del negocio.
+- **`CustomerPayment`** (abono): método (nunca `CREDITO`), monto, turno de caja (obligatorio si es efectivo), clave de idempotencia única por negocio, anulación con quién/cuándo/por qué (nunca se borra).
+- **`PaymentAllocation`**: cuánto de cada abono se aplicó a cada cuenta (única por abono+cuenta).
+- **Aislamiento (mismo mecanismo de siempre, sin RLS de Postgres):** las tres tablas están en `TENANT_SCOPED` (deny-by-default) y toda referencia dentro del negocio —cliente, venta, sucursal, turno, abono, cuenta— es una **FK compuesta `(tenantId, id)`**: un negocio no puede enlazar nada de otro aunque el servicio fallara. Las únicas FKs simples son a `tenants` y a `users`. Nada se borra en cascada salvo borrar el negocio entero.
+- **CHECKs** (la última defensa): línea/saldo ≥ 0 y plazo 0–365; un cliente con deuda viva no se da de baja; `0 ≤ paidAmount ≤ amount`; el estado dice la verdad (ABIERTA con saldo; PAGADA abonada por completo y cerrada; ANULADA con fecha y motivo); abonos positivos, nunca `CREDITO`, y en efectivo siempre con turno de caja. **Trampa evitada:** un CHECK que da `NULL` se da por cumplido (`length(NULL) > 0` es NULL), así que lo que no puede faltar se pide con `IS NOT NULL`; lo atrapó la prueba (una cuenta ANULADA sin motivo pasaba).
+- **Pruebas:** `tests/credito-esquema.ts` (Parte A sin base: FKs compuestas, registro de aislamiento, CHECKs, trampa del NULL; Parte B contra la base: aislamiento entre negocios, CHECKs, únicos, borrados y borrado del negocio entero).
+- **No incluido a propósito:** que el deudor de la cuenta sea el cliente de la venta no lo exige la base (necesitaría un trigger o una FK triple sobre `sales`); lo valida el servicio (Paso 3) y la auditoría de coherencia.
+
 ## Fase 3, Paso 3.0: la venta es idempotente (`Sale.idempotencyKey`)
 
 **El hueco:** el POS enviaba un `idempotencyKey` que `registerSale` ignoraba (`Sale` no tenía columna de clave y `replayed` era siempre `false`). Un doble toque o un reintento por red lenta creaba **dos ventas**: otro número, otro descuento de stock, otro pago. Se había dado por supuesto lo contrario; las notas anteriores del PWA («el cobro es idempotente») eran incorrectas para ventas.
