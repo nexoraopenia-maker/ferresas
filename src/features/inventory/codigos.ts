@@ -108,9 +108,12 @@ const PRODUCTO = {
 } as const
 const VARIANTE = { id: true, name: true, sku: true, barcode: true, qrCode: true, salePrice: true, minStock: true } as const
 const STOCK = { quantity: true, minStock: true, version: true } as const
+// Sin el costo: lo que sale de un escaneo llega a quien cobra, y el costo es solo de quien tiene `productos.ver_costo`.
+const PRESENTACION = { id: true, name: true, unitType: true, factor: true, salePrice: true, isActive: true, deletedAt: true } as const
 
 type ProductoSel = { id: string; name: string; sku: string; barcode: string | null; qrCode: string | null; unitType: string; salePrice: { toString(): string }; taxRate: { toString(): string }; minStock: { toString(): string }; trackStock: boolean }
 type VarianteSel = { id: string; name: string; sku: string; barcode: string | null; qrCode: string | null; salePrice: { toString(): string } | null; minStock: { toString(): string } }
+export type PresentacionSel = { id: string; name: string; unitType: string; factor: { toString(): string }; salePrice: { toString(): string } | null }
 type StockSel = { quantity: { toString(): string }; minStock: { toString(): string } | null; version: number }
 
 export interface CodigoResuelto {
@@ -121,8 +124,8 @@ export interface CodigoResuelto {
   tipo: ProductCodeType | null
   producto: ProductoSel
   variante: VarianteSel | null
-  /** Llega en el paso 2 (presentaciones). */
-  presentacion: null
+  /** La presentación (caja, saco…) a la que identifica el código, si es el de una; `null` si identifica al producto o la variante. */
+  presentacion: PresentacionSel | null
   /** Existencias del dueño del código en el almacén pedido (`null` si no se pidió almacén o no hay fila). */
   stock: StockSel | null
 }
@@ -150,6 +153,7 @@ export async function resolverCodigo(
     where: { code: codigo },
     select: {
       code: true, type: true, variantId: true,
+      presentation: { select: PRESENTACION },
       product: { select: { ...PRODUCTO, deletedAt: true, isActive: true, stocks: al ? { where: { warehouseId: al, variantId: null }, select: STOCK, take: 1 } : false } },
       variant: { select: { ...VARIANTE, deletedAt: true, isActive: true, stocks: al ? { where: { warehouseId: al }, select: STOCK, take: 1 } : false } },
     },
@@ -160,8 +164,11 @@ export async function resolverCodigo(
     const v = fila.variant
     if (p.deletedAt || !p.isActive) return null
     if (fila.variantId && (!v || v.deletedAt || !v.isActive)) return null
+    const pr = fila.presentation
+    // Una presentación dada de baja o desactivada no se vende: su código no resuelve.
+    if (pr && (pr.deletedAt || !pr.isActive)) return null
     const stocks = (fila.variantId ? (v as { stocks?: StockSel[] } | null)?.stocks : (p as { stocks?: StockSel[] }).stocks) ?? []
-    return { estado: 'ok', via: 'tabla', codigo, tipo: fila.type, producto: p, variante: fila.variantId ? v : null, presentacion: null, stock: stocks[0] ?? null }
+    return { estado: 'ok', via: 'tabla', codigo, tipo: fila.type, producto: p, variante: fila.variantId ? v : null, presentacion: pr ? { id: pr.id, name: pr.name, unitType: pr.unitType, factor: pr.factor, salePrice: pr.salePrice } : null, stock: stocks[0] ?? null }
   }
 
   // 2) Respaldo: columnas antiguas. Cada coincidencia es un dueño distinto; si hay más de uno, NO se adivina.

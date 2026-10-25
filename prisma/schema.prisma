@@ -442,6 +442,7 @@ model Tenant {
   dispatchGuideItems DispatchGuideItem[]
   fiscalDispatches   FiscalDispatch[]
   productCodes       ProductCode[]
+  productPresentations ProductPresentation[]
   discountCaps       DiscountCap[]
   warehouses         Warehouse[]
   categories         Category[]
@@ -859,6 +860,7 @@ model Product {
 
   variants      ProductVariant[]
   codes         ProductCode[]
+  presentations ProductPresentation[]
   stocks        Stock[]
   guideItems    DispatchGuideItem[]
   movements     StockMovement[]
@@ -997,7 +999,15 @@ model StockMovement {
   type   MovementType
   source MovementSource @default(MANUAL)
 
+  /// SIEMPRE en la unidad BASE del producto.
   quantity     Decimal  @db.Decimal(14, 4)
+
+  // --- Presentación con la que se hizo el movimiento (ver SaleItem): trazabilidad, no cambia el cálculo del stock.
+  presentationId     String?
+  presentation       ProductPresentation? @relation(fields: [tenantId, presentationId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+  enteredQuantity    Decimal?             @db.Decimal(14, 4)
+  presentationFactor Decimal?             @db.Decimal(14, 6)
+
   /// Snapshot del stock resultante: permite auditar sin recalcular el ledger.
   balanceAfter Decimal  @db.Decimal(14, 4)
   unitCost     Decimal? @db.Decimal(12, 4)
@@ -1127,8 +1137,20 @@ model SaleItem {
   skuSnapshot  String
   unitType     UnitType @default(UNIDAD)
 
+  /// SIEMPRE en la unidad BASE del producto: es lo que mueve el stock.
   quantity  Decimal @db.Decimal(14, 4)
   unitPrice Decimal @db.Decimal(12, 4)
+
+  // --- Presentación (caja, saco…) con la que se vendió. Las tres columnas van juntas o ninguna (CHECK en la migración).
+  presentationId     String?
+  presentation       ProductPresentation? @relation(fields: [tenantId, presentationId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+  /// Lo que se tecleó, en unidades de la presentación (3 cajas).
+  enteredQuantity    Decimal?             @db.Decimal(14, 4)
+  /// Unidades base por presentación, COPIADO al vender: si la presentación cambia después, esta línea no.
+  presentationFactor Decimal?             @db.Decimal(14, 6)
+  /// Nombre de la presentación al vender («Caja x 12»), para reimprimir igual.
+  presentationName   String?
+
   discount  Decimal @default(0) @db.Decimal(12, 4)
   taxRate   Decimal @default(0.1800) @db.Decimal(5, 4)
   /// Costo al momento de vender: sin esto el margen histórico es irrecuperable.
@@ -1312,8 +1334,17 @@ model PurchaseItem {
   variantId String?
   variant   ProductVariant? @relation(fields: [tenantId, variantId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
 
+  /// SIEMPRE en la unidad BASE del producto: es lo que mueve el stock.
   quantity  Decimal @db.Decimal(14, 4)
   unitCost  Decimal @db.Decimal(12, 4)
+
+  // --- Presentación con la que se compró (ver SaleItem).
+  presentationId     String?
+  presentation       ProductPresentation? @relation(fields: [tenantId, presentationId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+  enteredQuantity    Decimal?             @db.Decimal(14, 4)
+  presentationFactor Decimal?             @db.Decimal(14, 6)
+  presentationName   String?
+
   taxRate   Decimal @default(0.1800) @db.Decimal(5, 4)
   lineTotal Decimal @db.Decimal(14, 2)
 
@@ -2188,9 +2219,10 @@ model ProductCode {
   variantId String?
   variant   ProductVariant? @relation(fields: [tenantId, variantId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
 
-  /// Presentación (caja, saco…) a la que identifica. Llega en el paso 2 (tabla ProductPresentation): hoy es solo una
-  /// columna sin clave foránea, siempre nula.
+  /// Presentación (caja, saco…) a la que identifica: el EAN de la caja no es el de la unidad. Debe ser del mismo producto
+  /// (lo comprueba el servicio).
   presentationId String?
+  presentation   ProductPresentation? @relation(fields: [tenantId, presentationId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
 
   code      String
   type      ProductCodeType
@@ -2204,4 +2236,45 @@ model ProductCode {
   @@index([tenantId, productId])
   @@index([tenantId, variantId])
   @@map("product_codes")
+}
+
+/// Una forma de vender, comprar o contar un producto: «Caja x 12», «Saco 42,5 kg», «Medio kilo».
+/// El stock vive SIEMPRE en la unidad base del producto (`Product.unitType`); la presentación solo convierte:
+/// `cantidad base = cantidad ingresada × factor`. El factor es cuántas unidades base contiene UNA presentación.
+/// Precios: si `salePrice`/`costPrice` es nulo, la presentación no tiene precio propio y manda base × factor; si no,
+/// el suyo (una caja puede costar menos que 12 unidades sueltas). Baja solo lógica (`deletedAt`).
+model ProductPresentation {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  name     String
+  /// Unidad en la que se expresa la cantidad que teclea la persona (caja, saco, kilo…).
+  unitType UnitType
+  /// Unidades BASE por presentación. Mayor que cero (CHECK en la migración).
+  factor   Decimal  @db.Decimal(14, 6)
+
+  salePrice Decimal? @db.Decimal(12, 4)
+  costPrice Decimal? @db.Decimal(12, 4)
+
+  /// La presentación con la que se vende por defecto (como mucho una por producto activo: índice parcial).
+  isDefaultSale Boolean @default(false)
+  isActive      Boolean @default(true)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  codes         ProductCode[]
+  saleItems     SaleItem[]
+  purchaseItems PurchaseItem[]
+  movements     StockMovement[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, productId, name])
+  @@index([tenantId, productId])
+  @@map("product_presentations")
 }

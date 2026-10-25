@@ -84,6 +84,7 @@ async function main() {
    *   stock-service    escribe unitCost y exige productos.ver_costo
    *   product-service  alta exprés: exige productos.ver_costo
    *   import-service   exige ver_costo y revalida en commit
+   *   presentaciones-service   el costo de una presentación exige ver_costo
    *   schemas, csv     forma del dato y alias de columna
    *   CatalogImport    vista previa; el servidor ya rechazó el costo
    *   actions + CostosPendientes   completar costos: exige productos.ver_costo en página y servicio
@@ -93,6 +94,8 @@ async function main() {
     'src/features/inventory/stock-service.ts',
     'src/features/inventory/product-service.ts',
     'src/features/inventory/import-service.ts',
+    // Alta de presentaciones: el costo propio de una presentación exige productos.ver_costo (lo comprueba el servicio).
+    'src/features/inventory/presentaciones-service.ts',
     'src/features/inventory/schemas.ts',
     'src/features/inventory/csv.ts',
     'src/features/inventory/components/CatalogImport.tsx',

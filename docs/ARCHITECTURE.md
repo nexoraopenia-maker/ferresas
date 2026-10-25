@@ -680,3 +680,16 @@ Un código (EAN-13/EAN-8/UPC, CODE128, QR propio o interno) tiene **un solo due�
 - **Auditoría** (`auditarCoherenciaCodigos`): cuenta productos sin su fila y filas cuyo código ya no está en las columnas de su dueño.
 - **Limitación conocida:** `registerSale` cobra el precio del PRODUCTO aunque el código sea de una variante; la pantalla muestra ese mismo precio.
 
+## Presentaciones y conversión de unidades
+
+El stock vive **siempre en la unidad base** del producto (`Product.unitType`). Una *presentación* («Caja x 12», «Saco 42,5 kg») solo convierte: `cantidad base = cantidad ingresada × factor`, donde el factor es cuántas unidades base contiene UNA presentación.
+
+- **`product_presentations`**: `name`, `unitType`, `factor Decimal(14,6)` (CHECK > 0), `salePrice`/`costPrice` opcionales (si faltan, manda base × factor), `isDefaultSale` (como mucho una activa por producto, índice parcial) e `isActive`/`deletedAt` (baja solo lógica). Un código de barras puede pertenecer a una presentación (`ProductCode.presentationId`).
+- **Trazabilidad en `SaleItem`, `PurchaseItem` y `StockMovement`:** `presentationId`, `enteredQuantity` (lo tecleado) y `presentationFactor` (COPIADO al operar: si la presentación cambia, la línea no); en ventas y compras también `presentationName`. Las columnas van todas o ninguna, y **la base comprueba que `quantity = enteredQuantity × presentationFactor`** (CHECK). `quantity` sigue siendo solo la unidad base: no cambia el cálculo del stock.
+- **Matemática (`inventory/conversion.ts`)**, pura, con enteros grandes (`bigint`) y escala, sin coma flotante:
+  - cantidad base exacta; si no cabe en 4 decimales se **rechaza** (no se pierde mercadería en silencio);
+  - fracciones por unidad: enteros para piezas, cajas, bolsas, rollos…; hasta 3 decimales para kilos, metros, litros y galones; se validan en la presentación Y en la unidad base;
+  - `totalLinea = precio de presentación × cantidad ingresada`, redondeado UNA vez a céntimos, mitad hacia arriba. El precio por unidad base es derivado e informativo;
+  - idempotente: recalcular con las propias salidas normalizadas da lo mismo. Se contrasta con `decimal.js` en 4000 casos aleatorios.
+- **Todavía NO integrado:** ventas, compras y movimientos aún no escriben estas columnas (paso 3). El escaneo de un código de presentación ya resuelve `{producto, presentación}` pero el POS aún no la usa.
+

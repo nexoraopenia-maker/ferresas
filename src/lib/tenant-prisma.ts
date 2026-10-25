@@ -77,6 +77,7 @@ const TENANT_SCOPED = new Set([
   'DispatchGuideItem',
   'FiscalDispatch',
   'ProductCode',
+  'ProductPresentation',
   'UsagePeriod',
   'AuditLog',
   'ImpersonationSession',
