@@ -728,3 +728,7 @@ Antes de introducir la deuda (fiado), el dinero de una venta tiene que cuadrar a
 - Las reglas son lógica pura en céntimos enteros (`resolverPagos`) y se aplican en `registerSale`, por donde pasan también el cobro de cotizaciones y de pedidos. Un rechazo no escribe nada ni gasta número de comprobante.
 - La pantalla del POS cobra el total exacto con métodos que no son efectivo (el «recibido» solo cuenta en efectivo).
 - **Datos históricos:** las ventas ya registradas con el bug conservan su vuelto mal guardado; los cierres de caja pasados no se recalculan.
+
+### Auditoría histórica del vuelto (solo lectura)
+
+`npx tsx scripts/listar-vueltos-historicos.ts [--negocio <slug>] [--desde AAAA-MM-DD] [--detalle]` (lógica en `src/features/pos/vueltos-historicos.ts`). Revisa las ventas COMPLETADAS y clasifica el vuelto mal guardado: **PERDIDO** (salió del cajón y no se registró; es el bug), **EXCESO** (se registró de más) y **SIN_EFECTIVO** (sobrepago con Yape/tarjeta: revisar a mano; no entra en la corrección). Por turno de caja muestra la diferencia registrada y la corregida (registrada + vuelto no registrado). No escribe ni recalcula nada; sale con código 3 si hay ventas afectadas. Un turno EN CURSO con ventas afectadas seguirá esperando de más hasta cerrarse.
