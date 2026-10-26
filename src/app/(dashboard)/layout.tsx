@@ -150,8 +150,11 @@ export default async function DashboardLayout({
           aria-label="Navegación principal"
           className="safe-bottom sticky bottom-0 z-30 flex items-stretch gap-1 border-t border-hairline bg-surface px-2 pt-1.5 lg:hidden"
         >
-          <NavLinks variant="bottom" permisos={[...permisosDe(ctx)]} />
-          <form action={logoutAction} className="flex min-w-0 flex-1">
+          {/* Los enlaces se deslizan en horizontal (hay más de los que caben en un móvil); «Salir» queda fijo a la derecha. */}
+          <div data-nav="desliza" className="flex min-w-0 flex-1 items-stretch gap-1 overflow-x-auto overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <NavLinks variant="bottom" permisos={[...permisosDe(ctx)]} />
+          </div>
+          <form action={logoutAction} className="flex w-[4.25rem] shrink-0">
             <button
               type="submit"
               className="flex w-full flex-col items-center justify-center gap-0.5 rounded-xl py-1.5 text-ink-muted"

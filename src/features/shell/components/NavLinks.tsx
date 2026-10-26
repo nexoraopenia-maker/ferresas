@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useOptimistic, useTransition } from 'react'
+import { useEffect, useOptimistic, useRef, useTransition } from 'react'
 import { isActive, visibleItems } from '../nav-items'
 
 /**
@@ -67,6 +67,16 @@ export function NavLinks({
 
   const esActivo = (href: string) => isActive(href, destino)
 
+  /*
+   * Barra inferior desplazable: con 15 o más enlaces (el dueño) no caben todos a la vez en un móvil, así que cada uno tiene un ancho
+   * mínimo y la barra se desliza en horizontal. Al cambiar de sección se trae el enlace ACTIVO a la vista: sin esto, entrar a un
+   * enlace del final dejaría el resaltado fuera de pantalla y parecería que no hay ninguno marcado.
+   */
+  const activoRef = useRef<HTMLAnchorElement | null>(null)
+  useEffect(() => {
+    if (variant === 'bottom') activoRef.current?.scrollIntoView({ inline: 'center', block: 'nearest' })
+  }, [destino, variant])
+
   if (variant === 'bottom') {
     return (
       <>
@@ -77,10 +87,12 @@ export function NavLinks({
             <Link
               key={i.href}
               href={i.href}
+              ref={activo ? activoRef : undefined}
               onClick={navegar(i.href)}
               aria-current={activo ? 'page' : undefined}
               aria-busy={cargando || undefined}
-              className={`flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1.5 transition-colors ${
+              data-nav-activo={activo ? 'true' : undefined}
+              className={`flex min-w-[4.25rem] flex-1 shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1.5 transition-colors ${
                 activo
                   ? 'bg-industrial-50 text-industrial-700 dark:bg-graphite-800 dark:text-industrial-300'
                   : 'text-ink-muted'
