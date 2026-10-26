@@ -103,6 +103,9 @@ async function main() {
     // el servicio también lo exige; la acción solo lleva el valor al servicio.
     'src/features/inventory/actions.ts',
     'src/features/inventory/components/CostosPendientes.tsx',
+    // Compras: el costo es el dato de la compra (lo teclea quien tiene `compras.registrar`, que lo da el dueño) y de ahí sale el promedio.
+    'src/features/compras/schemas.ts',
+    'src/features/compras/service.ts',
   ])
   const proj = proyecto()
   const fuentes = ficheros(join(RAIZ, 'src'), (f) => f.endsWith('.ts') || f.endsWith('.tsx'))
