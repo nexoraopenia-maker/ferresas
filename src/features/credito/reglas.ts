@@ -64,6 +64,11 @@ export function validarFiado(c: ClienteCredito, monto: number): void {
   }
 }
 
+/** El texto exacto con que el servidor rechaza un abono mayor que lo adeudado; el modal de abonos usa el mismo. */
+export function mensajeAbonoExcede(monto: number, deuda: number, enCuentasElegidas: boolean): string {
+  return `El abono (S/ ${monto.toFixed(2)}) supera lo que el cliente debe${enCuentasElegidas ? ' en las cuentas elegidas' : ''} (S/ ${deuda.toFixed(2)}).`
+}
+
 /** El texto exacto con que el servidor rechaza un fiado que pasa la línea; la pantalla usa el mismo. */
 export function mensajeSuperaLinea(limite: number, disponible: number): string {
   return `Supera la línea de crédito: disponible S/ ${disponible.toFixed(2)} de S/ ${limite.toFixed(2)}.`

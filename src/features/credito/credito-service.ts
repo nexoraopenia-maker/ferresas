@@ -34,7 +34,7 @@ export {
   construirInfoCredito, hoyEnZona, resumenVencido, sumarDias, tieneDocumentoValido, validarFiado,
   type ClienteCredito, type InfoCreditoCliente,
 } from './reglas'
-import { hoyEnZona, repartirAbono, sumarDias, tieneDocumentoValido, validarFiado, construirInfoCredito, type ClienteCredito, type InfoCreditoCliente } from './reglas'
+import { hoyEnZona, mensajeAbonoExcede, repartirAbono, sumarDias, tieneDocumentoValido, validarFiado, construirInfoCredito, type ClienteCredito, type InfoCreditoCliente } from './reglas'
 
 const SELECCION_CLIENTE = {
   name: true, docType: true, docNumber: true, isActive: true, deletedAt: true,
@@ -265,7 +265,7 @@ export async function registrarAbono(db: TenantPrismaClient, ctx: TenantContext,
       const M = aCentimos(input.amount)
       if (M > deudaElegida) {
         throw invalido(
-          `El abono (${soles(M)}) supera lo que el cliente debe${input.receivableIds ? ' en las cuentas elegidas' : ''} (${soles(deudaElegida)}).`,
+          mensajeAbonoExcede(deCentimos(M), deCentimos(deudaElegida), !!input.receivableIds),
           { abono: deCentimos(M), deuda: deCentimos(deudaElegida) },
         )
       }

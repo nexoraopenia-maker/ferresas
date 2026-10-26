@@ -7,6 +7,7 @@ import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { bloquearCliente, hoyEnZona } from '@/features/credito/credito-service'
 import { construirInfoCredito, resumenVencido, type InfoCreditoCliente } from '@/features/credito/reglas'
+import { PERMISOS_VER_CLIENTES } from './permisos'
 import type { BajaClienteInput, CrearClienteInput, EditarClienteInput, ListarClientesInput, ReactivarClienteInput } from './schemas'
 
 /**
@@ -34,8 +35,7 @@ async function bloquear(t: TenantPrismaClient, customerId: string) {
   }
 }
 
-/** Quién puede VER clientes. */
-export const PERMISOS_VER_CLIENTES = ['clientes.gestionar', 'credito.cobrar', 'credito.limite', 'credito.castigar'] as const
+export { PERMISOS_VER_CLIENTES }
 export function puedeVerClientes(ctx: TenantContext): boolean {
   return PERMISOS_VER_CLIENTES.some((p) => puede(ctx, p))
 }
