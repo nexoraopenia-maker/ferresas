@@ -8,6 +8,7 @@ import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { bloquearCliente, hoyEnZona } from '@/features/credito/credito-service'
 import { construirInfoCredito, resumenVencido, type InfoCreditoCliente } from '@/features/credito/reglas'
 import { PERMISOS_VER_CLIENTES } from './permisos'
+import { puedeVerClientes } from './permisos-ver'
 import type { BajaClienteInput, CrearClienteInput, EditarClienteInput, ListarClientesInput, ReactivarClienteInput } from './schemas'
 
 /**
@@ -36,9 +37,7 @@ async function bloquear(t: TenantPrismaClient, customerId: string) {
 }
 
 export { PERMISOS_VER_CLIENTES }
-export function puedeVerClientes(ctx: TenantContext): boolean {
-  return PERMISOS_VER_CLIENTES.some((p) => puede(ctx, p))
-}
+export { puedeVerClientes }
 function exigirVer(ctx: TenantContext): void {
   if (!puedeVerClientes(ctx)) throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para ver los clientes.')
 }

@@ -235,6 +235,6 @@ const METODOS: Record<string, string> = {
   CREDITO: 'Crédito',
 }
 
-function nombreMetodo(m: string): string {
+export function nombreMetodo(m: string): string {
   return METODOS[m] ?? m.replace(/_/g, ' ').toLowerCase()
 }

@@ -11,6 +11,7 @@ const money = (n: number) => `S/ ${n.toFixed(2)}`
 const campo = 'h-touch w-full rounded-xl border border-hairline bg-surface px-3 text-base text-ink'
 
 export interface ResultadoAbono {
+  paymentId: string
   monto: number
   deudaDespues: number
   reparto: { venta: string; monto: number; saldoDespues: number; pagada: boolean }[]
@@ -64,6 +65,8 @@ export function VistaAbono({
               ))}
             </ul>
             <p className="font-bold text-ink">Deuda del cliente ahora: {money(resultado.deudaDespues)}</p>
+            <a href={`/imprimir/abono/${resultado.paymentId}?auto=1`} target="_blank" rel="noopener" data-enlace="recibo-abono"
+              className="flex h-touch items-center justify-center rounded-xl border-2 border-graphite-900 font-bold text-ink dark:border-graphite-50">Imprimir recibo (80 mm)</a>
             <button type="button" onClick={onCerrar} className="h-touch rounded-xl bg-industrial-600 font-bold text-white">Listo</button>
           </div>
         ) : (
@@ -191,7 +194,7 @@ export function ModalAbono({ abierto, onCerrar, customerId, nombre, cuentas, deu
       })
       if (!r.ok) { setErrorServidor(r.message); return }
       clave.current = crypto.randomUUID()
-      setResultado({ monto: r.data.monto, deudaDespues: r.data.deudaDespues, reparto: r.data.reparto.map((x) => ({ venta: x.venta, monto: x.monto, saldoDespues: x.saldoDespues, pagada: x.pagada })) })
+      setResultado({ paymentId: r.data.paymentId, monto: r.data.monto, deudaDespues: r.data.deudaDespues, reparto: r.data.reparto.map((x) => ({ venta: x.venta, monto: x.monto, saldoDespues: x.saldoDespues, pagada: x.pagada })) })
     })
   }
 

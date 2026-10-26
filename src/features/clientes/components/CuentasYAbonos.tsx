@@ -108,6 +108,7 @@ export function CuentasYAbonos({ abiertas, cerradas, abonos, puedeCastigar, pued
                     <p className={`font-semibold text-ink ${a.anulado ? 'line-through' : ''}`}>{METODO[a.metodo] ?? a.metodo} · {money(a.monto)}</p>
                     <p className="text-xs text-ink-muted">{fechaDiaCorta(a.fecha.slice(0, 10))} · cobró {a.cobradoPor}{a.referencia ? ` · ref. ${a.referencia}` : ''}</p>
                   </div>
+                  <a href={`/imprimir/abono/${a.id}`} target="_blank" rel="noopener" data-enlace="recibo" className="text-xs font-semibold text-industrial-700 underline dark:text-industrial-300">Recibo</a>
                   {a.anulado
                     ? <span data-insignia="anulado" className="rounded-full bg-surface-sunken px-2 py-0.5 text-xs font-semibold text-ink-muted">Anulado</span>
                     : puede && <button type="button" data-boton="anular" className={boton} onClick={() => abrir({ tipo: 'anular', id: a.id })}>Anular</button>}
