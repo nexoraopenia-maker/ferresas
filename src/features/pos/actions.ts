@@ -198,6 +198,8 @@ export interface SaleReceipt {
   discountTotal: number
   total: number
   soldBelowStock: boolean
+  /** Lo fiado en esta venta (nulo si no se fió): monto, vencimiento AAAA-MM-DD y deuda total del cliente. */
+  credito: { monto: number; vence: string; deudaCliente: number } | null
 }
 
 export async function registerSale(
@@ -220,6 +222,7 @@ export async function registerSale(
         discountTotal: r.discountTotal,
         total: r.total,
         soldBelowStock: r.soldBelowStock,
+        credito: r.credito,
       },
     }
   })

@@ -153,7 +153,8 @@ async function main() {
   console.log('\n7) Sin red se bloquea el cobro y el inventario')
   const aviso = renderToStaticMarkup(createElement(AvisoSinRed))
   check('>>> el aviso es una alerta visible: «Sin red / Offline» y explica qué se bloquea', aviso.includes('role="alert"') && aviso.includes('Sin red / Offline') && aviso.includes('cobro') && aviso.includes('stock'))
-  const pos = readFileSync('src/features/pos/components/PosTerminal.tsx', 'utf8')
+  // El recibo (boleta y factura) vive en su propio archivo desde el Paso 4; sigue siendo parte del POS.
+  const pos = readFileSync('src/features/pos/components/PosTerminal.tsx', 'utf8') + readFileSync('src/features/pos/components/ReciboEmitido.tsx', 'utf8')
   const hoja = readFileSync('src/features/inventory/components/ScanToStockSheet.tsx', 'utf8')
   const abre = (src: string, firma: string) => { const i = src.indexOf(firma); return i < 0 ? '' : src.slice(i, i + 260) }
   const guardada = (src: string, firma: string) => /if \(!enLinea\) \{ setError\(MENSAJE_SIN_RED\); return \}/.test(abre(src, firma))

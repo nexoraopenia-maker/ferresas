@@ -49,3 +49,9 @@ export function formatearFechaLocal(
     return fecha.toISOString().slice(0, conHora ? 16 : 10).replace('T', ' ')
   }
 }
+
+/** Un día del calendario AAAA-MM-DD → DD/MM/AAAA, sin pasar por `Date`: es una fecha del negocio y un huso la correría un día. */
+export function fechaDiaCorta(iso: string): string {
+  const [a, m, d] = iso.split('-')
+  return d && m && a ? `${d}/${m}/${a}` : iso
+}

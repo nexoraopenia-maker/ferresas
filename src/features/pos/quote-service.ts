@@ -225,6 +225,10 @@ export async function convertQuoteToSale(
   if (!puede(ctx, 'ventas.cobrar')) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para vender.')
   }
+  // El fiado se cobra desde el POS, no desde un pedido de la cola ni una cotización: allí aún no se reserva ni se avisa la línea.
+  if (input.payments.some((p) => p.method === 'CREDITO')) {
+    throw new BusinessError('INVALID_DOCUMENT', 'El fiado se cobra desde el POS, no desde un pedido: cobra este pedido con otro medio de pago.')
+  }
 
   const quote = await db.quote.findFirst({
     where: { id: input.quoteId },

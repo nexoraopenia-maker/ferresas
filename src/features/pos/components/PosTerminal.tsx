@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { formatearFechaLocal } from '@/lib/fecha-local'
 import { redondearCentimos } from '@/lib/dinero'
 import { trocearResaltado } from '../resaltado'
+import { METODOS_POS as METODOS, type MetodoPos as Metodo } from '../metodos'
 import { InventoryScannerModal, type ResultadoLectura } from '@/components/inventory/InventoryScannerModal'
 import { QuantityInput } from '@/components/ui/quantity-input'
 import { getStockStatusView } from '@/lib/stock-status'
@@ -21,19 +22,14 @@ import {
 } from '../actions'
 import { brutoDe, contadaDe, conContada, descuentoDe, itemDe, mismaLinea, unidadDe, type LineaCarrito } from '../carrito'
 import { MENSAJE_SIN_RED, useEnLinea } from '@/lib/en-linea'
+import { infoCreditoCliente } from '@/features/credito/actions'
+import type { InfoCreditoCliente } from '@/features/credito/reglas'
+import { conFiadoPorElSaldo, disponibilidadFiado, evaluarPagos, lineaUnica, lineasConImporte, type LineaPago } from '../pagos-ui'
+import { FichaCredito } from './FichaCredito'
+import { lineasDeFilas, PanelPagos, type FilaPago } from './PanelPagos'
+import { ReciboEmitido, type ReciboVenta } from './ReciboEmitido'
 import { CustomerPicker } from './CustomerPicker'
 import { ATAJOS_VISIBLES, usePosShortcuts } from './use-pos-shortcuts'
-
-const METODOS = [
-  { value: 'EFECTIVO', label: 'Efectivo' },
-  { value: 'YAPE', label: 'Yape' },
-  { value: 'PLIN', label: 'Plin' },
-  { value: 'TARJETA_DEBITO', label: 'Débito' },
-  { value: 'TARJETA_CREDITO', label: 'Crédito' },
-  { value: 'TRANSFERENCIA', label: 'Transfer.' },
-] as const
-
-type Metodo = (typeof METODOS)[number]['value']
 
 /** Dinero: siempre 2 decimales. Las CANTIDADES usan `redondear` (4). */
 /**
@@ -66,6 +62,7 @@ export function PosTerminal({
   puedeArmarPedido = false,
   pedidoId,
   topeDescuentoPct = 0,
+  puedeFiar = false,
 }: {
   warehouseName: string
   /** Zona del negocio: ver la nota en CashPanel. */
@@ -78,6 +75,8 @@ export function PosTerminal({
   pedidoId?: string
   /** Descuento máximo (% de la línea) que el rol puede dar. 0 = sin descuentos. */
   topeDescuentoPct?: number
+  /** Tiene `credito.otorgar`: puede vender a crédito (fiar). */
+  puedeFiar?: boolean
 }) {
   const [carrito, setCarrito] = useState<LineaCarrito[]>([])
   const enLinea = useEnLinea()
@@ -92,9 +91,16 @@ export function PosTerminal({
   const [recibido, setRecibido] = useState('')
   const [aviso, setAviso] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [recibo, setRecibo] = useState<{ saleId: string; number: string; total: number } | null>(null)
+  const [recibo, setRecibo] = useState<ReciboVenta | null>(null)
   const [cliente, setCliente] = useState<PosCustomer | null>(null)
   const [forzarStock, setForzarStock] = useState(false)
+  // Pago dividido: filas con método e importe. Vacío = cobro simple de un toque (método + recibido).
+  const [dividir, setDividir] = useState(false)
+  const [filas, setFilas] = useState<FilaPago[]>([])
+  // Ficha de crédito del cliente asignado (solo para quien puede fiar).
+  const [ficha, setFicha] = useState<InfoCreditoCliente | null>(null)
+  const [fichaCargando, setFichaCargando] = useState(false)
+  const [fichaFalla, setFichaFalla] = useState<string | null>(null)
   const [cotizacion, setCotizacion] = useState<
     { quoteId: string; number: string; validUntil: string } | null
   >(null)
@@ -168,6 +174,49 @@ export function PosTerminal({
     }, 0))
     return { bruto, descuentos, total, igv, base: cent(total - igv) }
   }, [carrito])
+
+  const clienteId = cliente?.id ?? null
+  const cargarFicha = useCallback(async (id: string, esVigente: () => boolean) => {
+    setFichaCargando(true); setFichaFalla(null)
+    const r = await infoCreditoCliente(id)
+    if (!esVigente()) return   // el cajero ya cambió de cliente: esta respuesta es vieja
+    setFichaCargando(false)
+    if (r.ok) setFicha(r.data)
+    else { setFicha(null); setFichaFalla(r.code === 'FORBIDDEN_ROLE' ? null : 'No pudimos consultar el crédito del cliente.') }
+  }, [])
+  useEffect(() => {
+    setFicha(null); setFichaFalla(null); setFichaCargando(false)
+    if (!clienteId || !puedeFiar) return
+    let vigente = true
+    void cargarFicha(clienteId, () => vigente)
+    return () => { vigente = false }
+  }, [clienteId, puedeFiar, cargarFicha])
+  // Sin cliente no hay fiado: si se quitó, la fila de fiado desaparece en vez de quedar rota.
+  useEffect(() => { if (!clienteId) setFilas((fs) => fs.filter((f) => f.method !== 'CREDITO')) }, [clienteId])
+
+  const fiado = disponibilidadFiado({ puedeFiar, conCliente: !!cliente, documentType: 'NOTA_VENTA', enPedido: !!pedido })
+  const lineasPago: LineaPago[] = dividir
+    ? lineasDeFilas(filas, totales.total)
+    : lineaUnica(metodo, totales.total, Number(recibido) || undefined)
+  const estadoPagos = evaluarPagos(totales.total, lineasPago, { conCliente: !!cliente, documentType: 'NOTA_VENTA' })
+
+  const abrirDividir = () => {
+    // Arranca con lo que ya había elegido en el cobro simple.
+    const n = Number(recibido)
+    setFilas([{ key: `p-${Date.now()}`, method: metodo, texto: metodo === 'EFECTIVO' && n > 0 ? String(n) : '' }])
+    setDividir(true)
+  }
+  const cerrarDividir = () => { setDividir(false); setFilas([]) }
+  const fiarPorElSaldo = () => {
+    // Base: las líneas de dinero que ya hay (o, en el cobro simple, el efectivo ya tecleado si no alcanza).
+    const n = Number(recibido)
+    const dinero: FilaPago[] = dividir
+      ? filas.filter((f) => f.method !== 'CREDITO')
+      : metodo === 'EFECTIVO' && n > 0 && n < totales.total ? [{ key: `p-${Date.now()}`, method: 'EFECTIVO', texto: String(n) }] : []
+    const conFiado = conFiadoPorElSaldo(totales.total, lineasDeFilas(dinero, totales.total)).some((l) => l.method === 'CREDITO')
+    setDividir(true)
+    setFilas(conFiado ? [...dinero, { key: `fiado-${Date.now()}`, method: 'CREDITO', texto: '' }] : dinero.length ? dinero : [{ key: `p-${Date.now()}`, method: 'EFECTIVO', texto: '' }])
+  }
 
   const agregar = useCallback((p: PosProduct) => {
     if (pedidoRef.current) return   // un pedido tomado no se edita
@@ -310,15 +359,20 @@ export function PosTerminal({
     setError(null)
     idemRef.current ??= crypto.randomUUID()
 
+    // Pago dividido: solo se cobra si la pantalla (con las reglas del servidor) dice que está listo.
+    if (dividir && estadoPagos.estado !== 'LISTO') {
+      setError(estadoPagos.estado === 'ERROR' ? estadoPagos.mensaje : 'Los pagos aún no cubren el total.')
+      return
+    }
     // Solo el efectivo da vuelto: con Yape o tarjeta se cobra el total exacto (aunque se hubiera tecleado un «recibido» antes).
-    const entregado = metodo === 'EFECTIVO' ? Number(recibido) || totales.total : totales.total
+    const pagos = lineasConImporte(lineasPago).map((l) => ({ method: l.method, amount: l.amount }))
 
     startTransition(async () => {
       // Pedido de la cola: se cobra EL PEDIDO (sus líneas y precios congelados), no el carrito.
       const res = pedido
         ? await cobrarPedido({
             quoteId: pedido.id,
-            payments: [{ method: metodo, amount: Math.max(entregado, totales.total) }],
+            payments: pagos.filter((l) => l.method !== 'CREDITO'),   // el fiado no se cobra desde un pedido
             documentType: 'NOTA_VENTA',
             allowNegativeStock: forzarStock,
             idempotencyKey: idemRef.current ?? undefined,
@@ -327,7 +381,7 @@ export function PosTerminal({
         warehouseId: carrito[0]!.producto.warehouseId,
         customerId: cliente?.id ?? null,
         items: carrito.map(itemDe),
-        payments: [{ method: metodo, amount: Math.max(entregado, totales.total) }],
+        payments: pagos,
         documentType: 'NOTA_VENTA',
         allowNegativeStock: forzarStock,
         idempotencyKey: idemRef.current ?? undefined,
@@ -340,15 +394,18 @@ export function PosTerminal({
         if (res.code === 'INSUFFICIENT_STOCK' && !forzarStock) {
           setAviso('Marca «Vender sin stock» si el producto está físicamente disponible.')
         }
+        // Otra caja pudo fiar al mismo cliente mientras tanto: se refresca la ficha para que el cajero vea la deuda real.
+        if (res.code.startsWith('CREDIT_') && clienteId) void cargarFicha(clienteId, () => true)
         return
       }
 
-      setRecibo({ saleId: res.data.saleId, number: res.data.number, total: res.data.total })
+      setRecibo({ saleId: res.data.saleId, number: res.data.number, total: res.data.total, credito: 'credito' in res.data ? res.data.credito : null })
       setPedido(null)
       setCarrito([])
       setCliente(null)
       setForzarStock(false)
       setRecibido('')
+      setDividir(false); setFilas([])
       setBusqueda('')
       setResultados([])
       idemRef.current = null
@@ -631,6 +688,7 @@ export function PosTerminal({
       {/* --- Cliente: encima del carrito, que es donde se decide el
               comprobante ------------------------------------------------- */}
       <CustomerPicker cliente={cliente} onChange={setCliente} />
+      {cliente && puedeFiar && <FichaCredito ficha={ficha} cargando={fichaCargando} falla={fichaFalla} />}
 
       {/* --- Carrito ----------------------------------------------------- */}
       <section>
@@ -764,6 +822,7 @@ export function PosTerminal({
             </dl>
 
             {puedeCobrar && (<>
+            {!dividir && (<>
             <div role="group" aria-label="Método de pago" className="mt-3 grid grid-cols-3 gap-2.5">
               {METODOS.map((m) => (
                 <button key={m.value} type="button" onClick={() => setMetodo(m.value)}
@@ -791,6 +850,22 @@ export function PosTerminal({
                   Vuelto <span className="text-base font-bold text-ink">{money(Math.max(vuelto, 0))}</span>
                 </p>
               </div>
+            )}
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button type="button" data-boton="dividir" onClick={abrirDividir}
+                className="h-10 rounded-xl border-2 border-hairline px-3 text-sm font-semibold text-ink">Dividir pago</button>
+              {fiado.ofrece && (
+                <button type="button" data-boton="fiado-saldo" onClick={fiarPorElSaldo}
+                  className="h-10 rounded-xl border-2 border-stock-low px-3 text-sm font-bold text-stock-low">Fiado por el saldo</button>
+              )}
+            </div>
+            {!fiado.ofrece && fiado.motivo && !pedido && <p data-fiado="no-ofrece" className="mt-1 text-xs text-ink-muted">{fiado.motivo}</p>}
+            {pedido && puedeFiar && <p data-fiado="pedido" className="mt-1 text-xs text-ink-muted">{fiado.motivo}</p>}
+            </>)}
+
+            {dividir && (
+              <PanelPagos total={totales.total} filas={filas} onFilas={setFilas} estado={estadoPagos} fiado={fiado} ficha={ficha}
+                onFiadoPorSaldo={fiarPorElSaldo} onCerrar={cerrarDividir} />
             )}
 
             {/* Venta forzada. Solo aparece cuando hace falta: una casilla
@@ -841,7 +916,7 @@ export function PosTerminal({
               {puedeCobrar && <button
                 type="button"
                 onClick={cobrar}
-                disabled={pendiente || !enLinea || carrito.some((l) => l.quantity <= 0)}
+                disabled={pendiente || !enLinea || carrito.some((l) => l.quantity <= 0) || (dividir && estadoPagos.estado !== 'LISTO')}
                 className="h-16 min-w-0 flex-1 rounded-2xl bg-industrial-600 text-xl font-bold text-white shadow-md transition active:scale-95 disabled:opacity-40 lg:order-first lg:basis-full"
               >
                 {pendiente ? 'Registrando…' : `Cobrar ${money(totales.total)}`}
@@ -880,112 +955,6 @@ function Linea({ label, value }: { label: string; value: string }) {
     <div className="flex justify-between">
       <dt className="text-ink-muted">{label}</dt>
       <dd className="font-semibold text-ink">{value}</dd>
-    </div>
-  )
-}
-
-/** Tras cobrar: emitir comprobante o seguir vendiendo. */
-function ReciboEmitido({
-  recibo,
-  onCerrar,
-}: {
-  recibo: { saleId: string; number: string; total: number }
-  onCerrar: () => void
-}) {
-  const [doc, setDoc] = useState<{ id: string; fullNumber: string; status: string; isTrial: boolean } | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [pendiente, startTransition] = useTransition()
-  const enLinea = useEnLinea()
-
-  const emitir = (documentType: 'BOLETA' | 'FACTURA') => {
-    if (!enLinea) { setError(MENSAJE_SIN_RED); return }
-    setError(null)
-    startTransition(async () => {
-      const res = await fetch('/api/invoices', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ saleId: recibo.saleId, documentType }),
-      })
-      const d = await res.json().catch(() => null)
-      if (!res.ok) {
-        setError(d?.message ?? 'No se pudo emitir el comprobante.')
-        return
-      }
-      setDoc({ id: d.id, fullNumber: d.fullNumber, status: d.status, isTrial: d.isTrial === true })
-    })
-  }
-
-  return (
-    <div className="rounded-2xl border-2 border-stock-ok bg-stock-ok-soft p-4">
-      <p className="font-bold text-stock-ok">Venta registrada</p>
-      <p className="mt-1 text-sm text-ink">
-        <span className="font-mono font-semibold">{recibo.number}</span> ·{' '}
-        {money(recibo.total)}
-      </p>
-
-      {/*
-        * El ticket se puede imprimir siempre, incluso antes de decidir si la
-        * venta lleva comprobante: en el mostrador el cliente se va con un
-        * papel en la mano, y esperar a emitir la boleta lo retiene.
-        */}
-      <a
-        href={`/imprimir/venta/${recibo.saleId}?auto=1`}
-        target="_blank"
-        rel="noopener"
-        className="mt-3 flex h-touch-lg items-center justify-center rounded-xl bg-graphite-900 px-4 font-bold text-white dark:bg-graphite-50 dark:text-graphite-900"
-      >
-        Imprimir ticket 80 mm
-      </a>
-
-      {doc ? (
-        <div className="mt-3 rounded-xl bg-surface px-3 py-2">
-          {doc.isTrial ? (
-            <p className="text-sm text-ink">
-              Documento de <b>prueba</b> <span className="font-mono font-bold">{doc.fullNumber}</span>.{' '}
-              <span className="font-semibold">Sin valor tributario:</span> no es una boleta ni una factura y no se envía a SUNAT.
-            </p>
-          ) : (
-            <p className="text-sm text-ink">
-              Comprobante <span className="font-mono font-bold">{doc.fullNumber}</span>{' '}
-              — estado <span className="font-semibold">{doc.status}</span>
-            </p>
-          )}
-          <a
-            href={`/imprimir/comprobante/${doc.id}?auto=1`}
-            target="_blank"
-            rel="noopener"
-            className="mt-2 flex h-touch items-center justify-center rounded-lg border border-hairline text-sm font-semibold text-ink"
-          >
-            Imprimir {doc.fullNumber}
-          </a>
-        </div>
-      ) : (
-        <>
-          <p className="mt-3 text-sm text-ink-muted">¿Emitir comprobante?</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <button type="button" onClick={() => emitir('BOLETA')} disabled={pendiente || !enLinea}
-              className="h-touch-lg flex-1 rounded-xl bg-graphite-900 px-4 font-bold text-white disabled:opacity-40 dark:bg-graphite-50 dark:text-graphite-900">
-              {pendiente ? '…' : 'Boleta'}
-            </button>
-            <button type="button" onClick={() => emitir('FACTURA')} disabled={pendiente || !enLinea}
-              className="h-touch-lg flex-1 rounded-xl border border-graphite-900 px-4 font-bold text-ink disabled:opacity-40 dark:border-graphite-50">
-              Factura
-            </button>
-          </div>
-        </>
-      )}
-
-      {error && (
-        <p role="alert" className="mt-2 rounded-xl bg-stock-out-soft px-3 py-2 text-sm font-semibold text-stock-out">
-          {error}
-        </p>
-      )}
-
-      <button type="button" onClick={onCerrar}
-        className="mt-3 h-touch w-full rounded-xl text-sm font-semibold text-ink-muted">
-        Nueva venta
-      </button>
     </div>
   )
 }

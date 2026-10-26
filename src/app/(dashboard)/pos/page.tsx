@@ -56,6 +56,7 @@ export default async function PosPage({
           zonaHoraria={tenant?.timezone ?? 'America/Lima'}
           puedeCobrar={puede(ctx, 'ventas.cobrar')}
           puedeArmarPedido={puede(ctx, 'ventas.crear')}
+          puedeFiar={puede(ctx, 'credito.otorgar')}
           topeDescuentoPct={topeDescuento(ctx)}
           // Solo un id sencillo: el servidor valida de nuevo al tomarlo.
           pedidoId={pedido && /^[\w-]{1,64}$/.test(pedido) ? pedido : undefined}
