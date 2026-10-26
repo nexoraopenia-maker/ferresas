@@ -18,7 +18,7 @@ import type { MetodoPago } from '../src/features/pos/pagos'
 import { conFiadoPorElSaldo, disponibilidadFiado, evaluarPagos, lineasConImporte, type LineaPago } from '../src/features/pos/pagos-ui'
 import { METODOS_POS } from '../src/features/pos/metodos'
 import { FichaCredito } from '../src/features/pos/components/FichaCredito'
-import { lineasDeFilas, MAX_FILAS_PAGO, PanelPagos, type FilaPago } from '../src/features/pos/components/PanelPagos'
+import { lineasDeFilas, MAX_FILAS_PAGO, PanelPagos, quitarFiado, type FilaPago } from '../src/features/pos/components/PanelPagos'
 import { ReciboEmitido } from '../src/features/pos/components/ReciboEmitido'
 import { registerQuote, convertQuoteToSale } from '../src/features/pos/quote-service'
 import { registerQuoteSchema, convertQuoteSchema } from '../src/features/pos/schemas'
@@ -118,6 +118,11 @@ async function main() {
   check('«Quitar línea» solo cuando hay más de una', !panel({ filas: [F('a', 'EFECTIVO', '1')] }).includes('Quitar línea') && panel({ filas: [F('a', 'EFECTIVO', '1'), F('b', 'YAPE', '1')] }).includes('Quitar línea'))
   check('la botonera del panel usa los mismos rótulos (T. crédito) y no ofrece «Crédito» como método', panel({ filas: [F('a', 'EFECTIVO', '1')] }).includes('T. crédito') && !/<option[^>]*>Crédito</.test(panel({ filas: [F('a', 'EFECTIVO', '1')] })))
 
+  const unaSola = [F('f', 'CREDITO')], mixta = [F('a', 'EFECTIVO', '30'), F('b', 'CREDITO')], sinFiado = [F('a', 'EFECTIVO', '30')]
+  check('>>> quitar al cliente: la fila de fiado desaparece y NUNCA deja el panel vacío (si era la única, queda una fila de efectivo en blanco)',
+    JSON.stringify(quitarFiado(mixta).map((x) => x.method)) === '["EFECTIVO"]' && quitarFiado(unaSola).length === 1 && quitarFiado(unaSola)[0]!.method === 'EFECTIVO' && quitarFiado(unaSola)[0]!.texto === '')
+  check('sin fila de fiado devuelve la MISMA lista (no hay nada que cambiar)', quitarFiado(sinFiado) === sinFiado)
+
   console.log('\nD) El recibo')
   const base = { saleId: 's1', number: 'V001-00000007', total: 100 }
   const hSin = html(createElement(ReciboEmitido, { recibo: base, onCerrar: noop }))
@@ -158,6 +163,7 @@ async function main() {
   check('>>> la página decide con el permiso del servidor: puedeFiar = credito.otorgar', /puedeFiar=\{puede\(ctx, 'credito\.otorgar'\)\}/.test(pg))
   check('>>> la ficha solo se consulta y se muestra a quien puede fiar, y una respuesta vieja no pisa al cliente nuevo', pos.includes('cliente && puedeFiar') && /if \(!clienteId \|\| !puedeFiar\) return/.test(pos) && pos.includes('esVigente()'))
   check('>>> el fiado NO se ofrece desde un pedido (enPedido) y a la cola nunca se le manda una línea CREDITO', pos.includes('enPedido: !!pedido') && /pagos\.filter\(\(l\) => l\.method !== 'CREDITO'\)/.test(pos))
+  check('>>> al quitar al cliente se limpia el fiado con quitarFiado, y el refresco tras un rechazo solo vale si el cajero sigue con ese cliente', /setFilas\(quitarFiado\)/.test(pos) && /cargarFicha\(clienteId, \(\) => clienteRef\.current === clienteId\)/.test(pos))
   check('>>> con pago dividido el botón Cobrar espera a «LISTO» y el cobro lo vuelve a comprobar', /\(dividir && estadoPagos\.estado !== 'LISTO'\)/.test(pos) && /if \(dividir && estadoPagos\.estado !== 'LISTO'\)/.test(pos))
   check('la clave de idempotencia se reutiliza al dividir (un reintento no cobra dos veces)', pos.includes('idemRef.current ??= crypto.randomUUID()') && !/setDividir[^\n]*idemRef/.test(pos))
   check('si el servidor rechaza por crédito, se refresca la ficha', /res\.code\.startsWith\('CREDIT_'\)/.test(pos))

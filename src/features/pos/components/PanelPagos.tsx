@@ -13,6 +13,16 @@ export interface FilaPago { key: string; method: MetodoPago; texto: string }
 
 export const MAX_FILAS_PAGO = 5   // el mismo tope que el servidor (`payments.max(5)`)
 
+/**
+ * Quita la fila de fiado (p. ej. al quitar el cliente de la venta). Nunca deja el panel vacío: si la de fiado era la única, queda
+ * una fila de efectivo en blanco para seguir cobrando. Sin fila de fiado devuelve LA MISMA lista (nada que cambiar, ni re-render).
+ */
+export function quitarFiado(filas: readonly FilaPago[]): FilaPago[] {
+  if (!filas.some((f) => f.method === 'CREDITO')) return filas as FilaPago[]
+  const resto = filas.filter((f) => f.method !== 'CREDITO')
+  return resto.length > 0 ? resto : [{ key: `p-${filas[0]!.key}`, method: 'EFECTIVO', texto: '' }]
+}
+
 /** Las filas → líneas de pago. La fila de fiado vale SIEMPRE lo que falta, así que si cambia el carrito no se queda vieja. */
 export function lineasDeFilas(filas: readonly FilaPago[], total: number): LineaPago[] {
   const dinero = filas.filter((f) => f.method !== 'CREDITO').map((f): LineaPago => ({ method: f.method, amount: Number(f.texto.replace(',', '.')) || 0 }))

@@ -26,7 +26,7 @@ import { infoCreditoCliente } from '@/features/credito/actions'
 import type { InfoCreditoCliente } from '@/features/credito/reglas'
 import { conFiadoPorElSaldo, disponibilidadFiado, evaluarPagos, lineaUnica, lineasConImporte, type LineaPago } from '../pagos-ui'
 import { FichaCredito } from './FichaCredito'
-import { lineasDeFilas, PanelPagos, type FilaPago } from './PanelPagos'
+import { lineasDeFilas, PanelPagos, quitarFiado, type FilaPago } from './PanelPagos'
 import { ReciboEmitido, type ReciboVenta } from './ReciboEmitido'
 import { CustomerPicker } from './CustomerPicker'
 import { ATAJOS_VISIBLES, usePosShortcuts } from './use-pos-shortcuts'
@@ -192,7 +192,10 @@ export function PosTerminal({
     return () => { vigente = false }
   }, [clienteId, puedeFiar, cargarFicha])
   // Sin cliente no hay fiado: si se quitó, la fila de fiado desaparece en vez de quedar rota.
-  useEffect(() => { if (!clienteId) setFilas((fs) => fs.filter((f) => f.method !== 'CREDITO')) }, [clienteId])
+  useEffect(() => { if (!clienteId) setFilas(quitarFiado) }, [clienteId])
+  // El cliente de AHORA: una respuesta de la ficha solo vale si sigue siendo el mismo.
+  const clienteRef = useRef(clienteId)
+  useEffect(() => { clienteRef.current = clienteId }, [clienteId])
 
   const fiado = disponibilidadFiado({ puedeFiar, conCliente: !!cliente, documentType: 'NOTA_VENTA', enPedido: !!pedido })
   const lineasPago: LineaPago[] = dividir
@@ -395,7 +398,7 @@ export function PosTerminal({
           setAviso('Marca «Vender sin stock» si el producto está físicamente disponible.')
         }
         // Otra caja pudo fiar al mismo cliente mientras tanto: se refresca la ficha para que el cajero vea la deuda real.
-        if (res.code.startsWith('CREDIT_') && clienteId) void cargarFicha(clienteId, () => true)
+        if (res.code.startsWith('CREDIT_') && clienteId) void cargarFicha(clienteId, () => clienteRef.current === clienteId)
         return
       }
 
