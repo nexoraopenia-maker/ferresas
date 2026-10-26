@@ -1,5 +1,5 @@
 import type { Permiso } from '@/lib/permisos'
-import { PERMISOS_VER_CLIENTES } from '@/features/clientes/permisos'
+import { PERMISOS_VER_CLIENTES, PERMISOS_VER_COBRANZA } from '@/features/clientes/permisos'
 
 /**
  * Elementos de navegación, en UN solo sitio.
@@ -80,6 +80,15 @@ export const NAV_ITEMS: NavItem[] = [
     icon: 'M17 20h5v-2a3 3 0 0 0-5.4-1.8M17 20H7m10 0v-2c0-.7-.1-1.4-.4-2M7 20H2v-2a3 3 0 0 1 5.4-1.8M7 20v-2c0-.7.1-1.4.4-2m0 0a5 5 0 0 1 9.2 0M15 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
     // Los mismos permisos que la página y el servicio: quien gestiona clientes o maneja el crédito (el cajero que cobra abonos incluido).
     permisos: [...PERMISOS_VER_CLIENTES],
+  },
+  {
+    href: '/cobranza',
+    label: 'Por cobrar',
+    short: 'Cobrar',
+    // Monedas
+    icon: 'M12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2m0-8c1.1 0 2.1.4 2.6 1M12 8V7m0 9v1m0-1c-1.1 0-2.1-.4-2.6-1M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',
+    // Los mismos permisos que la página y el servicio: quien ve clientes y el contador (revisa la cartera sin editarla).
+    permisos: [...PERMISOS_VER_COBRANZA],
   },
   {
     href: '/comprobantes',

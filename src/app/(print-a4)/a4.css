@@ -1,0 +1,76 @@
+/*
+ * Hoja A4 para informes impresos (estado de cuenta).
+ *
+ * CSS plano y no Tailwind, por la misma razón que `ticket.css`: los tokens de color de la app se invierten en modo oscuro y un informe
+ * impreso es tinta negra sobre papel blanco. Esta hoja se importa SOLO desde el layout de (print-a4): en App Router el CSS de un
+ * layout se carga únicamente para sus rutas, así que su `@page` no contamina la impresión de los tickets de 80 mm ni la del panel.
+ */
+
+@page {
+  size: A4;
+  margin: 14mm;
+}
+
+.a4-pantalla {
+  min-height: 100vh;
+  margin: 0;
+  padding: 1.5rem 1rem 4rem;
+  background: #52525b;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.a4-hoja {
+  box-sizing: border-box;
+  width: 210mm;
+  max-width: 100%;
+  min-height: 297mm;
+  padding: 14mm;
+  background: #fff;
+  color: #000;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 11px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+}
+
+.a4-hoja h1 { font-size: 18px; margin: 0 0 2px; }
+.a4-hoja h2 { font-size: 12px; margin: 14px 0 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+.a4-hoja p { margin: 0; }
+.a4-hoja .gris { color: #444; }
+.a4-hoja .derecha { text-align: right; }
+.a4-hoja .fuerte { font-weight: 700; }
+.a4-hoja .cabecera { display: flex; justify-content: space-between; gap: 16px; border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 8px; }
+.a4-hoja .resumen { display: flex; gap: 12px; margin: 10px 0; }
+.a4-hoja .resumen > div { flex: 1; border: 1px solid #000; padding: 6px 8px; }
+.a4-hoja table { width: 100%; border-collapse: collapse; }
+.a4-hoja th { text-align: left; font-size: 10px; text-transform: uppercase; border-bottom: 1px solid #000; padding: 3px 4px; }
+.a4-hoja td { padding: 3px 4px; border-bottom: 1px solid #ccc; vertical-align: top; }
+.a4-hoja th.derecha, .a4-hoja td.derecha { text-align: right; }
+.a4-hoja tr { break-inside: avoid; }
+.a4-hoja .tachado { text-decoration: line-through; color: #555; }
+.a4-hoja .pie { margin-top: 18px; font-size: 10px; color: #444; border-top: 1px solid #000; padding-top: 6px; }
+
+.a4-acciones {
+  width: 210mm;
+  max-width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+  color: #fff;
+}
+.a4-acciones input, .a4-acciones button, .a4-acciones a {
+  font: inherit; font-size: 14px; padding: 8px 12px; border-radius: 8px; border: 1px solid #a1a1aa; background: #fff; color: #000; text-decoration: none;
+}
+.a4-acciones .primario { background: #111; color: #fff; border-color: #111; font-weight: 700; }
+.a4-acciones label { display: flex; flex-direction: column; font-size: 12px; gap: 2px; }
+
+@media print {
+  .a4-pantalla { background: #fff; padding: 0; display: block; min-height: 0; }
+  .a4-hoja { width: auto; min-height: 0; padding: 0; box-shadow: none; }
+  .no-imprimir { display: none !important; }
+}

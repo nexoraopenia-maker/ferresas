@@ -55,8 +55,10 @@ export function AccionesCliente({ customerId, nombre, activo, deudaTotal, cuenta
           <button type="button" data-boton="abonar" onClick={() => setAbono(true)} disabled={!puedeOperar}
             className="h-touch rounded-xl bg-industrial-600 px-4 font-bold text-white disabled:opacity-40">Registrar abono</button>
         )}
+        <a href={`/estado-de-cuenta/${customerId}`} data-enlace="estado-cuenta" target="_blank" rel="noopener"
+          className="inline-flex h-touch items-center rounded-xl border border-hairline px-4 font-semibold text-ink">Estado de cuenta</a>
         <a href={`/api/clientes/${customerId}/estado-cuenta`} data-enlace="estado-cuenta-csv" download
-          className="inline-flex h-touch items-center rounded-xl border border-hairline px-4 font-semibold text-ink">Estado de cuenta (CSV)</a>
+          className="inline-flex h-touch items-center rounded-xl border border-hairline px-4 font-semibold text-ink">CSV</a>
         {puedeGestionar && activo && (
           <button type="button" data-boton="baja" onClick={() => setBaja((v) => !v)} disabled={!puedeOperar}
             className="h-touch rounded-xl border border-hairline px-4 font-semibold text-ink disabled:opacity-40">Dar de baja</button>

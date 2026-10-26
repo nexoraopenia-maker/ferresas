@@ -5,6 +5,9 @@ import { puede } from '@/lib/puede'
 import { alertasDeStock, rendimientoDeCaja, resumenDeVentas } from '@/features/dashboard/service'
 import { contarMermasPendientes } from '@/features/inventory/merma-service'
 import { contarCostosPendientes } from '@/features/inventory/costos-service'
+import { puedeVerCobranza, resumenPorCobrar } from '@/features/clientes/cobranza'
+import { puedeVerClientes } from '@/features/clientes/service'
+import { PorCobrarWidget } from '@/features/clientes/components/PorCobrarWidget'
 import {
   AlertasStockWidget, CajaWidget, GraficoSemana, KpiVentas, PendientesWidget, TopProductos,
 } from '@/features/dashboard/components/Widgets'
@@ -27,7 +30,7 @@ export default async function PanelPage() {
   const verVentas = puede(ctx, 'reportes.ver')
   const verCaja = verVentas || puede(ctx, 'caja.arqueo')
 
-  const [ventas, caja, alertas, tenant, mermasPendientes, costosPendientes] = await Promise.all([
+  const [ventas, caja, alertas, tenant, mermasPendientes, costosPendientes, porCobrar] = await Promise.all([
     verVentas ? resumenDeVentas(db, ctx) : null,
     verCaja ? rendimientoDeCaja(db, ctx) : null,
     alertasDeStock(db, ctx),
@@ -35,6 +38,8 @@ export default async function PanelPage() {
     // Cada contador solo para quien puede actuar sobre él; para los demás no se calcula ni se muestra.
     puede(ctx, 'stock.ajustar') && ctx.branchId ? contarMermasPendientes(db, ctx.branchId) : Promise.resolve(null),
     puede(ctx, 'productos.ver_costo') ? contarCostosPendientes(db, ctx) : Promise.resolve(null),
+    // Lo que te deben: solo para quien ve la cobranza; el panel no lo calcula para los demás.
+    puedeVerCobranza(ctx) ? resumenPorCobrar(db, ctx) : Promise.resolve(null),
   ])
 
   return (
@@ -70,10 +75,11 @@ export default async function PanelPage() {
         {ventas && <GraficoSemana dias={ventas.ultimos7} />}
         {ventas && <TopProductos items={ventas.topProductos} />}
         {caja && <CajaWidget caja={caja} />}
+        {porCobrar && porCobrar.clientesConDeuda > 0 && <PorCobrarWidget resumen={porCobrar} enlazarFichas={puedeVerClientes(ctx)} />}
         <AlertasStockWidget {...alertas} />
       </div>
 
-      {!ventas && !caja && (
+      {!ventas && !caja && !porCobrar && (
         <p className="rounded-2xl border border-hairline bg-surface p-4 text-sm text-ink-muted">
           Tu rol no incluye informes de ventas. Usa el menú para ir a lo tuyo.
         </p>

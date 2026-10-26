@@ -8,7 +8,8 @@ import { hoyEnZona } from '@/features/credito/credito-service'
 import {
   clasificarAntiguedad, diasDeMora, ETIQUETAS_TRAMO, TRAMOS_ANTIGUEDAD, type MontosPorTramo,
 } from '@/features/credito/reglas'
-import { PERMISOS_VER_CLIENTES, puedeVerClientes } from './service'
+import { PERMISOS_VER_COBRANZA } from './permisos'
+import { puedeVerClientes } from './service'
 
 /**
  * Cobranza: la antigüedad de la deuda, el estado de cuenta de un cliente y sus descargas en CSV. TODO ES DE SOLO LECTURA (salvo el
@@ -19,9 +20,9 @@ import { PERMISOS_VER_CLIENTES, puedeVerClientes } from './service'
  * Los tramos miden DÍAS DE MORA desde el vencimiento: lo que aún no vence va en «Vigente» y no se mezcla con la deuda atrasada.
  */
 
-export const PERMISOS_VER_COBRANZA = ['reportes.ver', ...PERMISOS_VER_CLIENTES] as const
+export { PERMISOS_VER_COBRANZA }
 export function puedeVerCobranza(ctx: TenantContext): boolean {
-  return puede(ctx, 'reportes.ver') || puedeVerClientes(ctx)
+  return PERMISOS_VER_COBRANZA.some((p) => puede(ctx, p))
 }
 function exigirVerCobranza(ctx: TenantContext): void {
   if (!puedeVerCobranza(ctx)) throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para ver la cobranza.')
@@ -203,4 +204,29 @@ export async function exportarEstadoDeCuentaCsv(
   await auditarDescarga(db, ctx, 'estado_cuenta.exportado', e.cliente.id, { filas: e.cuentas.length + e.abonos.length, desde: e.desde, hasta: e.hasta })
   const slug = (e.cliente.docNumber ?? e.cliente.id).replace(/[^A-Za-z0-9]/g, '')
   return { nombre: `estado-de-cuenta-${slug}-${e.fecha}.csv`, contenido: generarCsv(cabecera, filas), filas: filas.length - 1 }
+}
+
+
+// ─── Resumen para el panel ──────────────────────────────────────────────────────────────────────────────────────────
+
+export interface ResumenPorCobrar {
+  total: number
+  vencido: number
+  vigente: number
+  clientesConDeuda: number
+  clientesMorosos: number
+  /** Hasta tres clientes con más deuda vencida. */
+  masUrgentes: { customerId: string; nombre: string; vencido: number; masAtrasada: number }[]
+  coherente: boolean
+}
+
+/** La tarjeta «Por cobrar» del panel. Solo lectura; sale del mismo informe que la pantalla de cobranza, así que no pueden discrepar. */
+export async function resumenPorCobrar(db: TenantPrismaClient, ctx: TenantContext): Promise<ResumenPorCobrar> {
+  const i = await informeDeCobranza(db, ctx)
+  return {
+    total: i.totales.total, vencido: i.totales.vencido, vigente: i.totales.vigente,
+    clientesConDeuda: i.clientesConDeuda, clientesMorosos: i.clientesMorosos,
+    masUrgentes: i.filas.filter((f) => f.vencido > 0).slice(0, 3).map((f) => ({ customerId: f.customerId, nombre: f.nombre, vencido: f.vencido, masAtrasada: f.masAtrasada })),
+    coherente: i.coherente,
+  }
 }
