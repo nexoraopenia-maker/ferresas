@@ -34,6 +34,7 @@ export const PERMISOS = [
   'credito.cobrar',
   'credito.limite',
   'credito.castigar',
+  'clientes.gestionar',
   'cotizaciones.crear',
   'caja.abrir_cerrar',
   'caja.arqueo',
@@ -126,7 +127,8 @@ export const MATRIZ: Record<Role, readonly Permiso[]> = {
     'ventas.crear',
     'ventas.cobrar',
     // Registra los abonos de los clientes con deuda (entra dinero al cajón). Fiar (`credito.otorgar`), cambiar la línea
-    // (`credito.limite`) y dar de baja una deuda (`credito.castigar`) NO vienen de fábrica.
+    // (`credito.limite`) y dar de baja una deuda (`credito.castigar`) NO vienen de fábrica. Con `credito.cobrar` también VE la lista y la
+    // ficha de los clientes (para encontrar a quien abona), pero no edita sus datos: eso es `clientes.gestionar`, solo de dueño y admin.
     'credito.cobrar',
     'cotizaciones.crear',
     'caja.abrir_cerrar',
@@ -219,6 +221,7 @@ export const ETIQUETAS: Record<Permiso, string> = {
   'credito.cobrar': 'Registrar abonos de clientes con deuda',
   'credito.limite': 'Cambiar la línea de crédito, el plazo o bloquear a un cliente',
   'credito.castigar': 'Dar de baja o castigar una deuda y anular abonos',
+  'clientes.gestionar': 'Crear, editar y dar de baja clientes',
   'cotizaciones.crear': 'Cotizar',
   'caja.abrir_cerrar': 'Abrir y cerrar caja',
   'caja.arqueo': 'Ver arqueos y descuadres',

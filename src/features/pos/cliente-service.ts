@@ -46,6 +46,12 @@ export async function resolverCliente(
   })
   if (existente) return { cliente: { ...existente, creado: false }, aviso: null }
 
+  // Un cliente dado de baja sigue teniendo ese documento (la base lo exige único): crear otro chocaría. Se dice qué hacer.
+  const dadoDeBaja = await db.customer.findFirst({ where: { docType, docNumber, deletedAt: { not: null } }, select: { id: true } })
+  if (dadoDeBaja) {
+    throw new BusinessError('DUPLICATE_CODE', 'Ese documento pertenece a un cliente dado de baja. Pídele a un administrador que lo reactive desde Clientes.')
+  }
+
   let nombre = entrada.name?.trim() || null
   let direccion: string | null = null
   let origen: ClientePos['origen'] = 'TECLEADO'

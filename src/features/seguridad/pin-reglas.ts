@@ -26,6 +26,8 @@ export const PERMISOS_FUERA_DEL_PIN: readonly Permiso[] = [
   // Subir la línea de un cliente o dar de baja una deuda son decisiones de administración: un PIN de 4 cifras no las abre.
   'credito.limite',
   'credito.castigar',
+  // Editar los datos de un cliente o darlo de baja también es administración, no mostrador.
+  'clientes.gestionar',
 ]
 
 export type ErrorPin = 'FORMATO' | 'FACIL'
