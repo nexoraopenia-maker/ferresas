@@ -5,7 +5,7 @@ import { P2002_UNIQUE } from '@/lib/prisma-errors'
 import { puede } from '@/lib/puede'
 import { requireBranch, type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
-import { turnoAbiertoId } from '@/features/branches/queries'
+import { bloquearTurno, turnoAbiertoId } from '@/features/branches/queries'
 import type { AnularAbonoInput, AnularCuentaInput, ConfigurarCreditoInput, DescartarRevisionInput, RegistrarAbonoInput } from './schemas'
 
 /**
@@ -276,10 +276,9 @@ export async function registrarAbono(db: TenantPrismaClient, ctx: TenantContext,
   const previo = await abonoPorClave(db, input.idempotencyKey)
   if (previo) return previo
 
-  const turno = await turnoAbiertoId(db, branchId)
-  if (input.method === 'EFECTIVO' && !turno) {
-    throw invalido('Abre la caja antes de cobrar un abono en efectivo: ese dinero tiene que entrar a un turno.')
-  }
+  const sinCaja = () => invalido('Abre la caja antes de cobrar un abono en efectivo: ese dinero tiene que entrar a un turno.')
+  // Aviso rápido, sin bloquear nada; la comprobación de verdad se repite dentro de la transacción, con el turno bloqueado.
+  if (input.method === 'EFECTIVO' && !(await turnoAbiertoId(db, branchId))) throw sinCaja()
 
   try {
     return await db.$transaction(async (tx) => {
@@ -288,6 +287,12 @@ export async function registrarAbono(db: TenantPrismaClient, ctx: TenantContext,
       const dup = await abonoPorClave(t, input.idempotencyKey)       // dos envíos a la vez: el segundo llega aquí tras esperar el bloqueo
       if (dup) return dup
       if (cliente.deletedAt) throw noExiste('El cliente')
+
+      // El turno se bloquea DESPUÉS del cliente. Si su cierre ya empezó, esperamos y lo vemos CERRADO: un abono en efectivo no
+      // puede colarse en un turno cuyos totales ya se congelaron; uno por otro medio queda sin turno.
+      const candidato = await turnoAbiertoId(t, branchId)
+      const turno = candidato && (await bloquearTurno(t, candidato)).status === 'ABIERTA' ? candidato : null
+      if (input.method === 'EFECTIVO' && !turno) throw sinCaja()
 
       const abiertas = await t.receivable.findMany({
         where: { customerId: input.customerId, status: 'ABIERTA' },
@@ -383,13 +388,15 @@ export async function anularAbono(db: TenantPrismaClient, ctx: TenantContext, in
     const pago = await t.customerPayment.findFirst({
       where: { id: input.paymentId },
       select: {
-        id: true, amount: true, voidedAt: true, cashSessionId: true, cashSession: { select: { status: true } },
+        id: true, amount: true, voidedAt: true, cashSessionId: true,
         allocations: { select: { receivableId: true, amount: true } },
       },
     })
     if (!pago) throw noExiste('El abono')
     if (pago.voidedAt) throw invalido('Este abono ya está anulado.')
-    if (pago.cashSessionId && pago.cashSession?.status !== 'ABIERTA') {
+    // Se bloquea el turno antes de decidir: si su cierre está en marcha, esperamos y lo vemos cerrado.
+    const turnoDelAbono = pago.cashSessionId ? await bloquearTurno(t, pago.cashSessionId) : null
+    if (turnoDelAbono && turnoDelAbono.status !== 'ABIERTA') {
       throw invalido('El turno de caja de este abono ya cerró y un turno cerrado no se modifica: haz el ajuste como ingreso o egreso manual justificado por la administración.')
     }
     if (cliente.deletedAt) throw new BusinessError('CREDIT_BLOCKED', 'El cliente está dado de baja: no se puede reabrir su deuda.')

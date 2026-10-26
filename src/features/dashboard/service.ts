@@ -107,6 +107,10 @@ export interface TurnoResumen {
   ventas: number
   /** Solo en turnos cerrados: contado − esperado. Negativo = faltante. */
   diferencia: number | null
+  /** Congelados al cerrar (0 mientras el turno está abierto): lo fiado no entró al cajón; los abonos de deuda sí o no, según el medio. */
+  fiado: number
+  abonosEfectivo: number
+  abonosOtros: number
 }
 
 export interface RendimientoCaja {
@@ -134,6 +138,7 @@ export async function rendimientoDeCaja(
     take: 60,
     select: {
       id: true, status: true, openedAt: true, openingAmount: true, salesTotal: true, difference: true,
+      creditSalesTotal: true, cashReceiptsTotal: true, otherReceiptsTotal: true,
       branch: { select: { name: true } },
       openedBy: { select: { name: true } },
     },
@@ -147,6 +152,9 @@ export async function rendimientoDeCaja(
     montoInicial: num(f.openingAmount),
     ventas: num(f.salesTotal),
     diferencia: f.difference === null ? null : num(f.difference),
+    fiado: num(f.creditSalesTotal),
+    abonosEfectivo: num(f.cashReceiptsTotal),
+    abonosOtros: num(f.otherReceiptsTotal),
   })
   const abiertos = filas.filter((f) => f.status === 'ABIERTA').map(aTurno)
   const cerradosHoy = filas

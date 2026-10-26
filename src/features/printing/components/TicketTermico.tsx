@@ -142,6 +142,7 @@ export function TicketTermico({ doc }: { doc: DocumentoImprimible }) {
           {doc.pagos.map((p, i) => (
             <div key={`${p.metodo}-${i}`}>
               <Total etiqueta={nombreMetodo(p.metodo)} valor={fmt(p.monto)} />
+              {p.vence && <p className="t-chico">Vence el {fechaCorta(p.vence)}</p>}
               {p.referencia && <p className="t-chico">Ref. {p.referencia}</p>}
             </div>
           ))}
@@ -232,6 +233,12 @@ const METODOS: Record<string, string> = {
   TARJETA_CREDITO: 'T. crédito',
   TRANSFERENCIA: 'Transferencia',
   CREDITO: 'Crédito',
+}
+
+/** AAAA-MM-DD → DD/MM/AAAA, sin pasar por `Date`: es un día del calendario, y un huso lo correría. */
+function fechaCorta(iso: string): string {
+  const [a, m, d] = iso.split('-')
+  return `${d}/${m}/${a}`
 }
 
 function nombreMetodo(m: string): string {

@@ -6,6 +6,7 @@ import { redondearCentimos } from '@/lib/dinero'
 import type { CloseCashInput, OpenCashInput } from './cash-schemas'
 import { exigir, puede } from '@/lib/puede'
 import { vencerPedidosDeSucursal } from '@/features/pos/pedido-expiracion'
+import { bloquearTurno } from './queries'
 
 const P2002_UNIQUE = 'P2002'
 const num = (v: unknown): number => Number(v ?? 0)
@@ -27,7 +28,64 @@ export interface CashCloseResult extends CashSessionResult {
   salesTotal: number
   cashTotal: number
   changeTotal: number
+  /** Vendido a crédito en el turno: NO entró al cajón. */
+  creditSalesTotal: number
+  /** Abonos de deuda cobrados en efectivo: SÍ entraron al cajón y suman al esperado. */
+  cashReceiptsTotal: number
+  /** Abonos de deuda por otros medios (Yape, transferencia…): no entraron al cajón. */
+  otherReceiptsTotal: number
   closedAt: string
+}
+
+export interface TotalesTurno {
+  salesCount: number
+  salesTotal: number
+  cashTotal: number
+  changeTotal: number
+  creditSalesTotal: number
+  cashReceiptsTotal: number
+  otherReceiptsTotal: number
+}
+
+/** Lo que debería haber en el cajón: fondo + cobros en efectivo + abonos de deuda en efectivo − vueltos. El fiado no entra. */
+export function efectivoEsperado(fondo: number, t: Pick<TotalesTurno, 'cashTotal' | 'cashReceiptsTotal' | 'changeTotal'>): number {
+  return redondearCentimos(fondo + t.cashTotal + t.cashReceiptsTotal - t.changeTotal)
+}
+
+/**
+ * Totales de un turno, calculados desde sus ventas COMPLETADAS y sus abonos NO anulados.
+ *
+ * Una sola función para el cierre (que los congela) y para la consulta en vivo (que los recalcula), de modo que lo que el cajero ve
+ * mientras trabaja y lo que queda firmado al cerrar salgan de las mismas reglas.
+ */
+export async function totalesDelTurno(t: TenantPrismaClient, sessionId: string): Promise<TotalesTurno> {
+  const ventas = await t.sale.findMany({
+    where: { cashSessionId: sessionId, status: 'COMPLETADA' },
+    select: { total: true, payments: { select: { method: true, amount: true, change: true } } },
+  })
+  const abonos = await t.customerPayment.findMany({
+    where: { cashSessionId: sessionId, voidedAt: null },
+    select: { method: true, amount: true },
+  })
+
+  const r: TotalesTurno = {
+    salesCount: ventas.length, salesTotal: 0, cashTotal: 0, changeTotal: 0,
+    creditSalesTotal: 0, cashReceiptsTotal: 0, otherReceiptsTotal: 0,
+  }
+  for (const v of ventas) {
+    r.salesTotal = redondearCentimos(r.salesTotal + num(v.total))
+    for (const p of v.payments) {
+      if (p.method === 'EFECTIVO') r.cashTotal = redondearCentimos(r.cashTotal + num(p.amount))
+      if (p.method === 'CREDITO') r.creditSalesTotal = redondearCentimos(r.creditSalesTotal + num(p.amount))
+      // El vuelto se guarda solo en líneas de EFECTIVO (`pagos.ts`): sale del cajón.
+      r.changeTotal = redondearCentimos(r.changeTotal + num(p.change))
+    }
+  }
+  for (const a of abonos) {
+    if (a.method === 'EFECTIVO') r.cashReceiptsTotal = redondearCentimos(r.cashReceiptsTotal + num(a.amount))
+    else r.otherReceiptsTotal = redondearCentimos(r.otherReceiptsTotal + num(a.amount))
+  }
+  return r
 }
 
 /**
@@ -142,32 +200,21 @@ export async function closeCashSession(
       )
     }
 
-    // Ventas del turno, con sus pagos. Las ANULADAS no cuentan: su dinero
-    // salió del cajón o nunca entró.
-    const ventas = await t.sale.findMany({
-      where: { cashSessionId: sesion.id, status: 'COMPLETADA' },
-      select: {
-        total: true,
-        payments: { select: { method: true, amount: true, change: true } },
-      },
-    })
-
-    let salesTotal = 0
-    let cashTotal = 0
-    let changeTotal = 0
-    for (const v of ventas) {
-      salesTotal = redondearCentimos(salesTotal + num(v.total))
-      for (const p of v.payments) {
-        if (p.method === 'EFECTIVO') {
-          cashTotal = redondearCentimos(cashTotal + num(p.amount))
-        }
-        // El vuelto se guarda solo en líneas de EFECTIVO (`pagos.ts`): sale del cajón.
-        changeTotal = redondearCentimos(changeTotal + num(p.change))
-      }
+    /*
+     * Se bloquea el turno ANTES de sumar. Un abono que se registra o se anula a la vez espera aquí (los abonos bloquean el turno
+     * antes de escribir) y, cuando llega, lo ve cerrado; así no hay abonos que entren después de congelar los totales. Dos cierres
+     * simultáneos también se serializan: el segundo ve el turno ya cerrado.
+     */
+    if ((await bloquearTurno(t, sesion.id)).status === 'CERRADA') {
+      throw new BusinessError('INVALID_DOCUMENT', 'Ese turno ya está cerrado.')
     }
 
+    // Ventas COMPLETADAS (las anuladas no cuentan: su dinero salió del cajón o nunca entró) y abonos NO anulados del turno.
+    const tot = await totalesDelTurno(t, sesion.id)
+    const { salesCount, salesTotal, cashTotal, changeTotal, creditSalesTotal, cashReceiptsTotal, otherReceiptsTotal } = tot
+
     const openingAmount = num(sesion.openingAmount)
-    const expectedAmount = redondearCentimos(openingAmount + cashTotal - changeTotal)
+    const expectedAmount = efectivoEsperado(openingAmount, tot)
     const difference = redondearCentimos(input.countedAmount - expectedAmount)
     const cerrado = new Date()
 
@@ -180,10 +227,13 @@ export async function closeCashSession(
         countedAmount: new Prisma.Decimal(input.countedAmount.toFixed(2)),
         expectedAmount: new Prisma.Decimal(expectedAmount.toFixed(2)),
         difference: new Prisma.Decimal(difference.toFixed(2)),
-        salesCount: ventas.length,
+        salesCount,
         salesTotal: new Prisma.Decimal(salesTotal.toFixed(2)),
         cashTotal: new Prisma.Decimal(cashTotal.toFixed(2)),
         changeTotal: new Prisma.Decimal(changeTotal.toFixed(2)),
+        creditSalesTotal: new Prisma.Decimal(creditSalesTotal.toFixed(2)),
+        cashReceiptsTotal: new Prisma.Decimal(cashReceiptsTotal.toFixed(2)),
+        otherReceiptsTotal: new Prisma.Decimal(otherReceiptsTotal.toFixed(2)),
         closingNotes: input.notes ?? null,
       },
       select: { id: true, branchId: true, status: true, openedAt: true },
@@ -206,7 +256,10 @@ export async function closeCashSession(
           esperado: expectedAmount,
           contado: input.countedAmount,
           diferencia: difference,
-          ventas: ventas.length,
+          ventas: salesCount,
+          fiado: creditSalesTotal,
+          abonosEfectivo: cashReceiptsTotal,
+          abonosOtros: otherReceiptsTotal,
           pedidosVencidos,
         },
         reason: input.notes ?? null,
@@ -223,10 +276,13 @@ export async function closeCashSession(
       countedAmount: input.countedAmount,
       expectedAmount,
       difference,
-      salesCount: ventas.length,
+      salesCount,
       salesTotal,
       cashTotal,
       changeTotal,
+      creditSalesTotal,
+      cashReceiptsTotal,
+      otherReceiptsTotal,
       closedAt: cerrado.toISOString(),
     }
   }, { maxWait: 15_000, timeout: 30_000 })
@@ -246,33 +302,19 @@ export async function currentCashSession(
 
   const s = await db.cashSession.findFirst({
     where: { branchId, status: 'ABIERTA' },
-    select: {
-      id: true, branchId: true, status: true, openingAmount: true, openedAt: true,
-      sales: {
-        where: { status: 'COMPLETADA' },
-        select: { payments: { select: { method: true, amount: true, change: true } } },
-      },
-    },
+    select: { id: true, branchId: true, status: true, openingAmount: true, openedAt: true },
   })
   if (!s) return null
 
-  let cash = 0
-  let vuelto = 0
-  for (const v of s.sales) {
-    for (const p of v.payments) {
-      if (p.method === 'EFECTIVO') cash = redondearCentimos(cash + num(p.amount))
-      vuelto = redondearCentimos(vuelto + num(p.change))
-    }
-  }
-
+  const tot = await totalesDelTurno(db, s.id)
   return {
     id: s.id,
     branchId: s.branchId,
     status: s.status,
     openingAmount: num(s.openingAmount),
     openedAt: s.openedAt.toISOString(),
-    expectedAmount: redondearCentimos(num(s.openingAmount) + cash - vuelto),
-    salesCount: s.sales.length,
+    expectedAmount: efectivoEsperado(num(s.openingAmount), tot),
+    salesCount: tot.salesCount,
   }
 }
 

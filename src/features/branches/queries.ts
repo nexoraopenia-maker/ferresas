@@ -96,6 +96,24 @@ export async function turnoAbiertoId(
 }
 
 /**
+ * Bloquea la fila del turno hasta el final de la transacción y devuelve su estado YA firme.
+ *
+ * El cierre de caja y todo lo que mete o saca dinero de un turno por un camino que lo exige (abonos y su anulación) empiezan por
+ * aquí: si el cierre ya empezó, quien llega después espera, ve `CERRADA` y no escribe en un turno cuyos totales ya se congelaron.
+ * Orden de bloqueos de todo el crédito: cliente primero, turno después (el cierre solo toma el turno: no hay ciclos).
+ */
+export async function bloquearTurno(
+  t: TenantPrismaClient,
+  sessionId: string,
+): Promise<{ id: string; status: 'ABIERTA' | 'CERRADA' }> {
+  return t.cashSession.update({
+    where: { id: sessionId },
+    data: { updatedAt: new Date() },
+    select: { id: true, status: true },
+  })
+}
+
+/**
  * Filtro `where` para elegir almacén dentro de la sucursal activa.
  *
  * ─── POR QUÉ EXISTE ──────────────────────────────────────────────────────

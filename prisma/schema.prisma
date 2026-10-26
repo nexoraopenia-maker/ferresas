@@ -2001,6 +2001,13 @@ model CashSession {
   cashTotal   Decimal @default(0) @db.Decimal(14, 2)
   changeTotal Decimal @default(0) @db.Decimal(14, 2)
 
+  /// Fiado del turno: Σ de lo vendido a crédito (líneas CREDITO de las ventas COMPLETADAS). Informativo: NO entra al cajón.
+  creditSalesTotal   Decimal @default(0) @db.Decimal(14, 2)
+  /// Abonos de deuda cobrados en EFECTIVO durante el turno (no anulados). SÍ entran al cajón y al esperado.
+  cashReceiptsTotal  Decimal @default(0) @db.Decimal(14, 2)
+  /// Abonos de deuda cobrados con otros medios (Yape, transferencia…) enlazados al turno. NO entran al cajón.
+  otherReceiptsTotal Decimal @default(0) @db.Decimal(14, 2)
+
   openingNotes String?
   closingNotes String?
 

@@ -27,6 +27,9 @@ export interface CierreReciente {
   salesTotal: number
   cashTotal: number
   changeTotal: number
+  creditSalesTotal: number
+  cashReceiptsTotal: number
+  otherReceiptsTotal: number
   closedAt: string
   /** Ausente justo tras cerrar: el servicio devuelve el arqueo, no el nombre. */
   cerradoPor?: string
@@ -126,9 +129,18 @@ export function CashPanel({
           <Dato k="Fondo inicial" v={money(resultado.openingAmount)} />
           <Dato k="Cobrado en efectivo" v={money(resultado.cashTotal)} />
           <Dato k="Vueltos entregados" v={`- ${money(resultado.changeTotal)}`} />
+          {resultado.cashReceiptsTotal > 0 && (
+            <Dato k="Abonos de deuda en efectivo" v={money(resultado.cashReceiptsTotal)} />
+          )}
           <Dato k="Debía haber" v={money(resultado.expectedAmount)} />
           <Dato k="Contaste" v={money(resultado.countedAmount)} />
           <Dato k="Ventas del turno" v={`${resultado.salesCount} · ${money(resultado.salesTotal)}`} />
+          {resultado.creditSalesTotal > 0 && (
+            <Dato k="Fiado (no entró al cajón)" v={money(resultado.creditSalesTotal)} />
+          )}
+          {resultado.otherReceiptsTotal > 0 && (
+            <Dato k="Abonos por otros medios" v={money(resultado.otherReceiptsTotal)} />
+          )}
         </dl>
 
         <p className="mt-4 text-xs text-ink-muted">
@@ -289,6 +301,10 @@ export function CashPanel({
               v={ultimoCierre.difference === 0 ? 'Cuadrada' : money(ultimoCierre.difference)}
             />
             <Dato k="Ventas" v={`${ultimoCierre.salesCount} · ${money(ultimoCierre.salesTotal)}`} />
+            {ultimoCierre.creditSalesTotal > 0 && <Dato k="Fiado" v={money(ultimoCierre.creditSalesTotal)} />}
+            {ultimoCierre.cashReceiptsTotal > 0 && (
+              <Dato k="Abonos en efectivo" v={money(ultimoCierre.cashReceiptsTotal)} />
+            )}
           </dl>
         </div>
       )}

@@ -73,7 +73,8 @@ export interface DocumentoImprimible {
   total: number
   totalEnLetras: string
 
-  pagos: { metodo: string; monto: number; referencia: string | null; vuelto: number }[]
+  /** `vence` (AAAA-MM-DD) solo en la línea de crédito: el cliente debe saber hasta cuándo puede pagar. */
+  pagos: { metodo: string; monto: number; referencia: string | null; vuelto: number; vence?: string | null }[]
   recibido: number
   vuelto: number
 
@@ -211,6 +212,12 @@ export async function getDocumentoImprimible(
   return venta(db, id, emisor, reloj)
 }
 
+/** Vencimiento de la línea CREDITO (AAAA-MM-DD; la fecha del negocio, sin husos). Una cuenta anulada ya no vence: no se imprime. */
+function vencimientoDe(metodo: string, cuenta: { dueDate: Date; status: string } | null): string | null {
+  if (metodo !== 'CREDITO' || !cuenta || cuenta.status === 'ANULADA') return null
+  return cuenta.dueDate.toISOString().slice(0, 10)
+}
+
 type Emisor = DocumentoImprimible['emisor']
 type Reloj = { zonaHoraria: string; locale: string }
 
@@ -224,6 +231,7 @@ async function venta(db: TenantPrismaClient, id: string, emisor: Emisor, reloj: 
       voidedAt: true, voidReason: true, soldBelowStock: true,
       items: { select: SELECT_ITEMS, orderBy: { createdAt: 'asc' } },
       payments: { select: { method: true, amount: true, reference: true, change: true } },
+      receivable: { select: { dueDate: true, status: true } },
       user: { select: { name: true, email: true } },
       warehouse: { select: { name: true } },
       customer: { select: { name: true, docType: true, docNumber: true, address: true } },
@@ -235,6 +243,7 @@ async function venta(db: TenantPrismaClient, id: string, emisor: Emisor, reloj: 
   const lineas = mapLineas(sale.items)
   const pagos = sale.payments.map((p) => ({
     metodo: p.method, monto: num(p.amount), referencia: p.reference, vuelto: num(p.change),
+    vence: vencimientoDe(p.method, sale.receivable),
   }))
   const vuelto = cent(pagos.reduce((a, p) => a + p.vuelto, 0))
   const total = num(sale.total)
@@ -303,6 +312,7 @@ async function comprobante(db: TenantPrismaClient, id: string, emisor: Emisor, r
           number: true, notes: true,
           items: { select: SELECT_ITEMS, orderBy: { createdAt: 'asc' } },
           payments: { select: { method: true, amount: true, reference: true, change: true } },
+          receivable: { select: { dueDate: true, status: true } },
           user: { select: { name: true, email: true } },
           warehouse: { select: { name: true } },
         },
@@ -319,6 +329,7 @@ async function comprobante(db: TenantPrismaClient, id: string, emisor: Emisor, r
   const lineas = mapLineas(doc.sale.items)
   const pagos = doc.sale.payments.map((p) => ({
     metodo: p.method, monto: num(p.amount), referencia: p.reference, vuelto: num(p.change),
+    vence: vencimientoDe(p.method, doc.sale.receivable),
   }))
   const total = num(doc.total)
   const { tasaIgv } = desglosar(lineas)
