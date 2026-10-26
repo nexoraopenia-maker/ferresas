@@ -28,6 +28,9 @@ export const PERMISOS_FUERA_DEL_PIN: readonly Permiso[] = [
   'credito.castigar',
   // Editar los datos de un cliente o darlo de baja también es administración, no mostrador.
   'clientes.gestionar',
+  // Pagar a un proveedor SACA dinero del negocio y administrar proveedores es administración: un PIN de 4 cifras no lo abre.
+  'proveedores.pagar',
+  'proveedores.gestionar',
 ]
 
 export type ErrorPin = 'FORMATO' | 'FACIL'
