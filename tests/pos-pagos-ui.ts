@@ -186,7 +186,7 @@ async function main() {
 
   console.log('\nI) Estructura')
   const act = readFileSync('src/features/credito/actions.ts', 'utf8')
-  check('>>> la server action es "use server", pasa por la sesión del servidor y solo exporta funciones async', act.startsWith("'use server'") && act.includes('requireTenantContext') && !/export (const|let|class|default)/.test(act) && (act.match(/export /g) ?? []).length === 1)
+  check('>>> las server actions de crédito son "use server", pasan por la sesión del servidor y SOLO exportan funciones async (infoCreditoCliente entre ellas)', act.startsWith("'use server'") && act.includes('requireTenantContext') && !/export (const|let|class|default|type|interface)/.test(act) && (act.match(/export /g) ?? []).length === (act.match(/export async function /g) ?? []).length && /export async function infoCreditoCliente/.test(act))
   const imp = (f: string) => (readFileSync(f, 'utf8').match(/^import .* from '(.*)'/gm) ?? []).join('\n')
   check('>>> reglas.ts y pagos-ui.ts son PUROS (sin Prisma, sin base de datos, sin servidor): los puede importar el navegador', !/prisma|tenant-prisma|session|server-only|next\//.test(imp('src/features/credito/reglas.ts') + imp('src/features/pos/pagos-ui.ts')))
   check('credito-service sigue exponiendo validarFiado y compañía (re-exportados desde reglas)', /export \{[\s\S]*validarFiado[\s\S]*\} from '\.\/reglas'/.test(readFileSync('src/features/credito/credito-service.ts', 'utf8')))

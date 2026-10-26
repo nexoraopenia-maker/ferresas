@@ -119,3 +119,74 @@ export function construirInfoCredito(
     vencido, cuentasVencidas: cuentas, puedeFiar: motivo === null, motivo,
   }
 }
+
+
+// ─── Reparto de un abono ────────────────────────────────────────────────────────────────────────────────────────────
+
+export interface ParteDeAbono {
+  /** Posición de la cuenta en la lista recibida. */
+  indice: number
+  /** Lo que se le aplica, en soles. */
+  monto: number
+  /** Lo que le queda por pagar tras este abono. */
+  saldoDespues: number
+  /** Queda saldada con este abono. */
+  pagada: boolean
+}
+
+/**
+ * Reparte un abono entre cuentas YA ORDENADAS (la más antigua primero, o en el orden que eligió el cajero): llena una cuenta antes de
+ * pasar a la siguiente. Lógica pura, en céntimos: la usa el servicio para escribir y la pantalla para mostrar la vista previa, de modo
+ * que lo que se ve antes de cobrar es exactamente lo que se registra. No decide si el abono cabe (eso lo rechaza el servicio): un
+ * sobrante se devuelve en `sobrante`.
+ */
+export function repartirAbono(saldos: readonly number[], monto: number): { partes: ParteDeAbono[]; sobrante: number } {
+  let resto = aCentimos(monto)
+  const partes: ParteDeAbono[] = []
+  saldos.forEach((saldo, indice) => {
+    const s = aCentimos(saldo)
+    if (resto <= 0 || s <= 0) return
+    const a = Math.min(resto, s)
+    resto -= a
+    partes.push({ indice, monto: deCentimos(a), saldoDespues: deCentimos(s - a), pagada: s - a === 0 })
+  })
+  return { partes, sobrante: deCentimos(resto) }
+}
+
+// ─── Antigüedad de la deuda ─────────────────────────────────────────────────────────────────────────────────────────
+
+export const TRAMOS_ANTIGUEDAD = ['vigente', 'mora1a30', 'mora31a60', 'mora61a90', 'mora91omas'] as const
+export type TramoAntiguedad = (typeof TRAMOS_ANTIGUEDAD)[number]
+
+export const ETIQUETAS_TRAMO: Record<TramoAntiguedad, string> = {
+  vigente: 'Vigente', mora1a30: '1-30 días', mora31a60: '31-60 días', mora61a90: '61-90 días', mora91omas: 'Más de 90 días',
+}
+
+/** Días de atraso de una cuenta respecto a `hoy` (AAAA-MM-DD). 0 o menos = aún no vence (vence hoy tampoco está vencida). */
+export function diasDeMora(vence: string, hoy: string): number {
+  return Math.round((Date.parse(`${hoy}T00:00:00Z`) - Date.parse(`${vence}T00:00:00Z`)) / 86_400_000)
+}
+
+export function tramoDeMora(dias: number): TramoAntiguedad {
+  if (dias <= 0) return 'vigente'
+  if (dias <= 30) return 'mora1a30'
+  if (dias <= 60) return 'mora31a60'
+  if (dias <= 90) return 'mora61a90'
+  return 'mora91omas'
+}
+
+export type MontosPorTramo = Record<TramoAntiguedad, number> & { total: number; vencido: number }
+
+/** Suma el SALDO (lo que falta por pagar) de cuentas abiertas en su tramo de antigüedad. «Vigente» va aparte de la mora real. */
+export function clasificarAntiguedad(cuentas: readonly CuentaVencible[], hoy: string): MontosPorTramo {
+  const c: Record<TramoAntiguedad, number> = { vigente: 0, mora1a30: 0, mora31a60: 0, mora61a90: 0, mora91omas: 0 }
+  for (const x of cuentas) {
+    const saldo = aCentimos(x.amount) - aCentimos(x.paidAmount)
+    if (saldo > 0) c[tramoDeMora(diasDeMora(x.dueDate, hoy))] += saldo
+  }
+  const total = TRAMOS_ANTIGUEDAD.reduce((a, t) => a + c[t], 0)
+  return {
+    vigente: deCentimos(c.vigente), mora1a30: deCentimos(c.mora1a30), mora31a60: deCentimos(c.mora31a60),
+    mora61a90: deCentimos(c.mora61a90), mora91omas: deCentimos(c.mora91omas), total: deCentimos(total), vencido: deCentimos(total - c.vigente),
+  }
+}

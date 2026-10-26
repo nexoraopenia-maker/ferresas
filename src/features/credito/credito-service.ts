@@ -34,7 +34,7 @@ export {
   construirInfoCredito, hoyEnZona, resumenVencido, sumarDias, tieneDocumentoValido, validarFiado,
   type ClienteCredito, type InfoCreditoCliente,
 } from './reglas'
-import { hoyEnZona, sumarDias, tieneDocumentoValido, validarFiado, construirInfoCredito, type ClienteCredito, type InfoCreditoCliente } from './reglas'
+import { hoyEnZona, repartirAbono, sumarDias, tieneDocumentoValido, validarFiado, construirInfoCredito, type ClienteCredito, type InfoCreditoCliente } from './reglas'
 
 const SELECCION_CLIENTE = {
   name: true, docType: true, docNumber: true, isActive: true, deletedAt: true,
@@ -280,22 +280,20 @@ export async function registrarAbono(db: TenantPrismaClient, ctx: TenantContext,
       })
 
       const reparto: RepartoAbono[] = []
-      let resto = M
-      for (let i = 0; i < destino.length && resto > 0; i++) {
-        const r = destino[i]!
-        const a = Math.min(resto, saldos[i]!)
-        if (a <= 0) continue
-        resto -= a
+      // El reparto lo calcula la función pura que también usa la pantalla para la vista previa: lo visto es lo escrito.
+      for (const parte of repartirAbono(saldos.map(deCentimos), deCentimos(M)).partes) {
+        const r = destino[parte.indice]!
+        const a = aCentimos(parte.monto)
         const pagado = aCentimos(num(r.paidAmount)) + a
         const total = aCentimos(num(r.amount))
-        const cerrada = pagado === total
+        const cerrada = parte.pagada
         await t.paymentAllocation.create({ data: { tenantId: ctx.tenantId, customerPaymentId: pago.id, receivableId: r.id, amount: deCentimos(a) }, select: { id: true } })
         await t.receivable.update({
           where: { id: r.id },
           data: cerrada ? { paidAmount: deCentimos(pagado), status: 'PAGADA', closedAt: new Date() } : { paidAmount: deCentimos(pagado) },
           select: { id: true },
         })
-        reparto.push({ receivableId: r.id, venta: r.sale.number, monto: deCentimos(a), saldoDespues: deCentimos(total - pagado), pagada: cerrada })
+        reparto.push({ receivableId: r.id, venta: r.sale.number, monto: parte.monto, saldoDespues: deCentimos(total - pagado), pagada: cerrada })
       }
 
       await t.customer.update({ where: { id: input.customerId }, data: { creditBalance: { decrement: deCentimos(M) } }, select: { id: true } })
