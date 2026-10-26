@@ -1,9 +1,12 @@
+import { Prisma } from '@/generated/prisma/client'
 import { BusinessError } from '@/lib/errors'
 import { validarDocumento } from '@/lib/documentos'
+import { P2002_UNIQUE } from '@/lib/prisma-errors'
 import { puede } from '@/lib/puede'
-import type { TenantContext } from '@/lib/tenant-context'
+import { requireBranch, type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
-import type { ConfigurarCreditoInput } from './schemas'
+import { turnoAbiertoId } from '@/features/branches/queries'
+import type { AnularAbonoInput, AnularCuentaInput, ConfigurarCreditoInput, DescartarRevisionInput, RegistrarAbonoInput } from './schemas'
 
 /**
  * Crédito (fiado): línea de cada cliente, deuda viva y cuentas por cobrar.
@@ -200,5 +203,306 @@ export async function configurarCredito(db: TenantPrismaClient, ctx: TenantConte
       },
     })
     return { creditLimit: input.creditLimit, creditTermDays: input.creditTermDays, bloqueado: input.bloqueado, creditBalance: antes.creditBalance }
+  })
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════════
+//  ABONOS, ANULACIONES, CASTIGO Y REVISIÓN
+// ═════════════════════════════════════════════════════════════════════════════════════════════════
+
+const noExiste = (que: string) => new BusinessError('TENANT_MISMATCH', `${que} no existe.`)
+const invalido = (m: string, d?: Record<string, string | number>) => new BusinessError('INVALID_DOCUMENT', m, d)
+const soles = (c: number) => `S/ ${deCentimos(c).toFixed(2)}`
+
+export interface RepartoAbono {
+  receivableId: string
+  /** Número de la venta que originó la deuda. */
+  venta: string
+  monto: number
+  /** Lo que queda por pagar de esa cuenta después de este abono. */
+  saldoDespues: number
+  /** Con este abono la cuenta quedó pagada por completo. */
+  pagada: boolean
+}
+
+export interface AbonoRegistrado {
+  paymentId: string
+  customerId: string
+  method: string
+  monto: number
+  reparto: RepartoAbono[]
+  /** `null` en un reintento: lo que valía antes ya no se puede reconstruir. */
+  deudaAntes: number | null
+  /** En un reintento es la deuda ACTUAL del cliente. */
+  deudaDespues: number
+  /** Fue un reintento del mismo envío: no se cobró otra vez. */
+  replayed: boolean
+}
+
+/** El abono ya registrado con esa clave de idempotencia, listo para devolverse como reintento. */
+async function abonoPorClave(t: TenantPrismaClient, idempotencyKey: string): Promise<AbonoRegistrado | null> {
+  const p = await t.customerPayment.findFirst({
+    where: { idempotencyKey },
+    select: {
+      id: true, customerId: true, method: true, amount: true,
+      customer: { select: { creditBalance: true } },
+      allocations: { select: { receivableId: true, amount: true, receivable: { select: { amount: true, paidAmount: true, status: true, sale: { select: { number: true } } } } } },
+    },
+  })
+  if (!p) return null
+  return {
+    paymentId: p.id, customerId: p.customerId, method: p.method, monto: num(p.amount),
+    reparto: p.allocations.map((a) => ({
+      receivableId: a.receivableId, venta: a.receivable.sale.number, monto: num(a.amount),
+      saldoDespues: deCentimos(aCentimos(num(a.receivable.amount)) - aCentimos(num(a.receivable.paidAmount))), pagada: a.receivable.status === 'PAGADA',
+    })),
+    deudaAntes: null, deudaDespues: num(p.customer.creditBalance), replayed: true,
+  }
+}
+
+/**
+ * Registra el abono de un cliente con deuda y lo reparte entre sus cuentas: la MÁS ANTIGUA primero (vencimiento, luego antigüedad),
+ * o solo las que se elijan y en el orden en que se elijan. Todo en una transacción que EMPIEZA bloqueando al cliente.
+ *
+ *  · Idempotente: la clave es obligatoria; el mismo envío repetido devuelve el abono original y no cobra dos veces (también si dos
+ *    llegan a la vez: el segundo espera el bloqueo del cliente y encuentra el primero).
+ *  · Un abono nunca supera lo que el cliente debe en las cuentas a las que se aplica.
+ *  · En EFECTIVO exige un turno de caja abierto (el dinero entra al arqueo); con otros medios, si hay turno abierto queda enlazado.
+ */
+export async function registrarAbono(db: TenantPrismaClient, ctx: TenantContext, input: RegistrarAbonoInput): Promise<AbonoRegistrado> {
+  if (!puede(ctx, 'credito.cobrar')) throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para registrar abonos de clientes.')
+  const branchId = requireBranch(ctx)
+
+  const previo = await abonoPorClave(db, input.idempotencyKey)
+  if (previo) return previo
+
+  const turno = await turnoAbiertoId(db, branchId)
+  if (input.method === 'EFECTIVO' && !turno) {
+    throw invalido('Abre la caja antes de cobrar un abono en efectivo: ese dinero tiene que entrar a un turno.')
+  }
+
+  try {
+    return await db.$transaction(async (tx) => {
+      const t = tx as unknown as TenantPrismaClient
+      const cliente = await bloquearCliente(t, input.customerId)   // ← siempre lo primero
+      const dup = await abonoPorClave(t, input.idempotencyKey)       // dos envíos a la vez: el segundo llega aquí tras esperar el bloqueo
+      if (dup) return dup
+      if (cliente.deletedAt) throw noExiste('El cliente')
+
+      const abiertas = await t.receivable.findMany({
+        where: { customerId: input.customerId, status: 'ABIERTA' },
+        orderBy: [{ dueDate: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+        select: { id: true, amount: true, paidAmount: true, sale: { select: { number: true } } },
+      })
+      let destino = abiertas
+      if (input.receivableIds) {
+        const porId = new Map(abiertas.map((r) => [r.id, r]))
+        destino = input.receivableIds.map((id) => {
+          const r = porId.get(id)
+          if (!r) throw invalido('Una de las cuentas elegidas no está abierta o no es de este cliente.')
+          return r
+        })
+      }
+      const saldos = destino.map((r) => aCentimos(num(r.amount)) - aCentimos(num(r.paidAmount)))
+      const deudaElegida = saldos.reduce((a, b) => a + b, 0)
+      if (deudaElegida <= 0) throw invalido('El cliente no tiene deuda pendiente.')
+      const M = aCentimos(input.amount)
+      if (M > deudaElegida) {
+        throw invalido(
+          `El abono (${soles(M)}) supera lo que el cliente debe${input.receivableIds ? ' en las cuentas elegidas' : ''} (${soles(deudaElegida)}).`,
+          { abono: deCentimos(M), deuda: deCentimos(deudaElegida) },
+        )
+      }
+
+      const pago = await t.customerPayment.create({
+        data: {
+          tenantId: ctx.tenantId, customerId: input.customerId, branchId, cashSessionId: turno, userId: ctx.userId,
+          method: input.method, amount: deCentimos(M), reference: input.reference ?? null, notes: input.notes ?? null,
+          idempotencyKey: input.idempotencyKey,
+        },
+        select: { id: true },
+      })
+
+      const reparto: RepartoAbono[] = []
+      let resto = M
+      for (let i = 0; i < destino.length && resto > 0; i++) {
+        const r = destino[i]!
+        const a = Math.min(resto, saldos[i]!)
+        if (a <= 0) continue
+        resto -= a
+        const pagado = aCentimos(num(r.paidAmount)) + a
+        const total = aCentimos(num(r.amount))
+        const cerrada = pagado === total
+        await t.paymentAllocation.create({ data: { tenantId: ctx.tenantId, customerPaymentId: pago.id, receivableId: r.id, amount: deCentimos(a) }, select: { id: true } })
+        await t.receivable.update({
+          where: { id: r.id },
+          data: cerrada ? { paidAmount: deCentimos(pagado), status: 'PAGADA', closedAt: new Date() } : { paidAmount: deCentimos(pagado) },
+          select: { id: true },
+        })
+        reparto.push({ receivableId: r.id, venta: r.sale.number, monto: deCentimos(a), saldoDespues: deCentimos(total - pagado), pagada: cerrada })
+      }
+
+      await t.customer.update({ where: { id: input.customerId }, data: { creditBalance: { decrement: deCentimos(M) } }, select: { id: true } })
+      const deudaAntes = cliente.creditBalance
+      const deudaDespues = deCentimos(aCentimos(deudaAntes) - M)
+      await t.auditLog.create({
+        data: {
+          tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role,
+          action: 'credito.abono', entityType: 'CustomerPayment', entityId: pago.id,
+          after: { cliente: cliente.name, monto: deCentimos(M), metodo: input.method, reparto: reparto.map((r) => ({ venta: r.venta, monto: r.monto, pagada: r.pagada })), deudaAntes, deudaDespues },
+          impersonationId: ctx.impersonationId ?? null,
+        },
+      })
+      return { paymentId: pago.id, customerId: input.customerId, method: input.method, monto: deCentimos(M), reparto, deudaAntes, deudaDespues, replayed: false }
+    }, { maxWait: 15_000, timeout: 30_000 })
+  } catch (e) {
+    // Dos envíos simultáneos con la misma clave: uno ganó el índice único y el otro se deshizo entero. Solo si de verdad existe.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === P2002_UNIQUE) {
+      const ganador = await abonoPorClave(db, input.idempotencyKey)
+      if (ganador) return ganador
+    }
+    throw e
+  }
+}
+
+/**
+ * Anula un abono: devuelve lo repartido a sus cuentas (una cuenta PAGADA vuelve a ABIERTA) y restituye la deuda del cliente
+ * (`credito.castigar`, con motivo). Nunca borra: el abono queda marcado con quién, cuándo y por qué.
+ *
+ * UN TURNO CERRADO ES INMUTABLE: si el abono está enlazado a un turno ya cerrado no se anula; el arqueo congelado no se reescribe.
+ * Un error descubierto después del cierre se corrige con un ingreso o egreso manual justificado por la administración.
+ */
+export async function anularAbono(db: TenantPrismaClient, ctx: TenantContext, input: AnularAbonoInput): Promise<{ paymentId: string; deudaDespues: number }> {
+  if (!puede(ctx, 'credito.castigar')) throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para anular abonos.')
+  return db.$transaction(async (tx) => {
+    const t = tx as unknown as TenantPrismaClient
+    const previo = await t.customerPayment.findFirst({ where: { id: input.paymentId }, select: { customerId: true } })
+    if (!previo) throw noExiste('El abono')
+    const cliente = await bloquearCliente(t, previo.customerId)   // ← primero; luego se vuelve a leer el abono con el estado ya firme
+
+    const pago = await t.customerPayment.findFirst({
+      where: { id: input.paymentId },
+      select: {
+        id: true, amount: true, voidedAt: true, cashSessionId: true, cashSession: { select: { status: true } },
+        allocations: { select: { receivableId: true, amount: true } },
+      },
+    })
+    if (!pago) throw noExiste('El abono')
+    if (pago.voidedAt) throw invalido('Este abono ya está anulado.')
+    if (pago.cashSessionId && pago.cashSession?.status !== 'ABIERTA') {
+      throw invalido('El turno de caja de este abono ya cerró y un turno cerrado no se modifica: haz el ajuste como ingreso o egreso manual justificado por la administración.')
+    }
+    if (cliente.deletedAt) throw new BusinessError('CREDIT_BLOCKED', 'El cliente está dado de baja: no se puede reabrir su deuda.')
+
+    let restituido = 0
+    for (const a of pago.allocations) {
+      const r = await t.receivable.findFirst({ where: { id: a.receivableId }, select: { amount: true, paidAmount: true, status: true } })
+      if (!r) throw noExiste('La cuenta')
+      const monto = aCentimos(num(a.amount))
+      const pagado = aCentimos(num(r.paidAmount)) - monto
+      const datos = r.status === 'PAGADA' ? { paidAmount: deCentimos(pagado), status: 'ABIERTA' as const, closedAt: null } : { paidAmount: deCentimos(pagado) }
+      await t.receivable.update({ where: { id: a.receivableId }, data: datos, select: { id: true } })
+      // Una cuenta ya ANULADA no cuenta en la deuda: devolverle lo abonado no la reabre ni toca el saldo.
+      if (r.status !== 'ANULADA') restituido += monto
+    }
+    if (restituido > 0) {
+      await t.customer.update({ where: { id: previo.customerId }, data: { creditBalance: { increment: deCentimos(restituido) } }, select: { id: true } })
+    }
+    await t.customerPayment.update({
+      where: { id: pago.id },
+      data: { voidedAt: new Date(), voidedById: ctx.userId, voidReason: input.motivo },
+      select: { id: true },
+    })
+    const deudaDespues = deCentimos(aCentimos(cliente.creditBalance) + restituido)
+    await t.auditLog.create({
+      data: {
+        tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role,
+        action: 'credito.abono_anulado', entityType: 'CustomerPayment', entityId: pago.id, reason: input.motivo,
+        after: { cliente: cliente.name, monto: num(pago.amount), restituido: deCentimos(restituido), deudaAntes: cliente.creditBalance, deudaDespues },
+        impersonationId: ctx.impersonationId ?? null,
+      },
+    })
+    return { paymentId: pago.id, deudaDespues }
+  }, { maxWait: 15_000, timeout: 30_000 })
+}
+
+/**
+ * Da de baja una cuenta por cobrar con saldo (castigo de una deuda incobrable, error, nota de crédito aceptada): `credito.castigar`,
+ * con motivo. El saldo que quedaba sale de la deuda del cliente; lo ya abonado se conserva en el historial. Solo cuentas ABIERTAS.
+ */
+export async function anularCuenta(db: TenantPrismaClient, ctx: TenantContext, input: AnularCuentaInput): Promise<{ receivableId: string; saldoCastigado: number; deudaDespues: number }> {
+  if (!puede(ctx, 'credito.castigar')) throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para dar de baja una deuda.')
+  return db.$transaction(async (tx) => {
+    const t = tx as unknown as TenantPrismaClient
+    const previa = await t.receivable.findFirst({ where: { id: input.receivableId }, select: { customerId: true } })
+    if (!previa) throw noExiste('La cuenta')
+    const cliente = await bloquearCliente(t, previa.customerId)
+
+    const r = await t.receivable.findFirst({ where: { id: input.receivableId }, select: { id: true, amount: true, paidAmount: true, status: true, sale: { select: { number: true } } } })
+    if (!r) throw noExiste('La cuenta')
+    if (r.status === 'ANULADA') throw invalido('Esta cuenta ya está dada de baja.')
+    if (r.status === 'PAGADA') throw invalido('Esta cuenta ya está pagada por completo: no hay saldo que dar de baja.')
+    const saldo = aCentimos(num(r.amount)) - aCentimos(num(r.paidAmount))
+
+    const ahora = new Date()
+    await t.receivable.update({ where: { id: r.id }, data: { status: 'ANULADA', voidedAt: ahora, closedAt: ahora, voidReason: input.motivo }, select: { id: true } })
+    await t.customer.update({ where: { id: previa.customerId }, data: { creditBalance: { decrement: deCentimos(saldo) } }, select: { id: true } })
+    const deudaDespues = deCentimos(aCentimos(cliente.creditBalance) - saldo)
+    await t.auditLog.create({
+      data: {
+        tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role,
+        action: 'credito.cuenta_anulada', entityType: 'Receivable', entityId: r.id, reason: input.motivo,
+        after: { venta: r.sale.number, cliente: cliente.name, monto: num(r.amount), abonado: num(r.paidAmount), saldoCastigado: deCentimos(saldo), deudaAntes: cliente.creditBalance, deudaDespues },
+        impersonationId: ctx.impersonationId ?? null,
+      },
+    })
+    return { receivableId: r.id, saldoCastigado: deCentimos(saldo), deudaDespues }
+  }, { maxWait: 15_000, timeout: 30_000 })
+}
+
+/**
+ * Marca la cuenta de una venta como «pendiente de revisión» porque se le emitió una nota de crédito. NO la anula ni toca la deuda:
+ * decidir si se perdona o se mantiene es del dueño (`anularCuenta` o `descartarRevision`). Se llama DENTRO de la transacción que
+ * emite la nota (por eso recibe el cliente transaccional), de modo que la nota y la marca nacen juntas o no nacen.
+ * Devuelve `true` si había una cuenta viva que marcar.
+ */
+export async function marcarRevisionPorNota(
+  t: TenantPrismaClient,
+  ctx: TenantContext,
+  input: { saleId: string; nota: string; motivo: string },
+): Promise<boolean> {
+  const r = await t.receivable.findFirst({ where: { saleId: input.saleId }, select: { id: true, status: true } })
+  if (!r || r.status === 'ANULADA') return false
+  const razon = `Nota de crédito ${input.nota}: ${input.motivo}`.slice(0, 300)
+  await t.receivable.update({ where: { id: r.id }, data: { reviewRequestedAt: new Date(), reviewReason: razon }, select: { id: true } })
+  await t.auditLog.create({
+    data: {
+      tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role,
+      action: 'credito.revision_marcada', entityType: 'Receivable', entityId: r.id, reason: razon,
+      after: { nota: input.nota, estadoCuenta: r.status },
+      impersonationId: ctx.impersonationId ?? null,
+    },
+  })
+  return true
+}
+
+/** El dueño revisó la cuenta marcada por una nota de crédito y decide MANTENERLA: quita la marca y deja la nota escrita (`credito.castigar`). */
+export async function descartarRevision(db: TenantPrismaClient, ctx: TenantContext, input: DescartarRevisionInput): Promise<{ receivableId: string }> {
+  if (!puede(ctx, 'credito.castigar')) throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para resolver la revisión de una deuda.')
+  return db.$transaction(async (tx) => {
+    const t = tx as unknown as TenantPrismaClient
+    const r = await t.receivable.findFirst({ where: { id: input.receivableId }, select: { id: true, reviewRequestedAt: true, reviewReason: true } })
+    if (!r) throw noExiste('La cuenta')
+    if (!r.reviewRequestedAt) throw invalido('Esta cuenta no está pendiente de revisión.')
+    await t.receivable.update({ where: { id: r.id }, data: { reviewRequestedAt: null, reviewReason: null }, select: { id: true } })
+    await t.auditLog.create({
+      data: {
+        tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role,
+        action: 'credito.revision_descartada', entityType: 'Receivable', entityId: r.id, reason: input.nota,
+        before: { revision: r.reviewReason }, after: { decision: 'MANTENER' },
+        impersonationId: ctx.impersonationId ?? null,
+      },
+    })
+    return { receivableId: r.id }
   })
 }

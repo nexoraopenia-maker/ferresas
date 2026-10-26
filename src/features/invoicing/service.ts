@@ -4,6 +4,7 @@ import { validarRuc } from '@/lib/documentos'
 import { type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { claimNextNumber, ensureCounter } from '@/features/pos/sale-service'
+import { marcarRevisionPorNota } from '@/features/credito/credito-service'
 import { exigirRequisitosFiscales } from './requisitos-fiscales'
 import { modoFiscal, numeraEnPrueba } from './modo-fiscal'
 import { encolarComprobante, seEncola } from '@/features/cola-fiscal/encolar'
@@ -91,6 +92,8 @@ export async function issueTaxDocument(
       customer: {
         select: { docType: true, docNumber: true, name: true, address: true },
       },
+      // Si la venta se fió: su cuenta por cobrar (la factura a crédito no está soportada).
+      receivable: { select: { status: true } },
       // El comprobante de venta (boleta o factura); las notas de crédito/débito de la venta no cuentan.
       taxDocuments: {
         where: { documentType: { in: ['BOLETA', 'FACTURA'] } },
@@ -123,6 +126,12 @@ export async function issueTaxDocument(
       isTrial: d.isTrial,
       alreadyIssued: true,
     }
+  }
+
+  // Una venta fiada no admite factura: la factura a crédito necesita forma de pago y cuotas en el XML, que no están soportadas.
+  // Boleta y nota de venta sí. (Una cuenta ya dada de baja deja de ser un fiado vivo.)
+  if (input.documentType === 'FACTURA' && sale.receivable && sale.receivable.status !== 'ANULADA') {
+    throw new BusinessError('INVALID_DOCUMENT', 'Esta venta se fió: la factura a crédito todavía no está disponible. Emite una boleta.')
   }
 
   /*
@@ -578,6 +587,10 @@ export async function emitirNotaCreditoTotal(
       })
 
       if (seEncola({ isTrial: false }, modo)) await encolarComprobante(t, ctx.tenantId, nota.id)
+
+      // Si la venta se fió, su cuenta por cobrar queda «pendiente de revisión» (el dueño decide: anular la deuda o mantenerla).
+      // En la MISMA transacción: la nota y la marca nacen juntas o no nacen.
+      await marcarRevisionPorNota(t, ctx, { saleId: input.saleId, nota: fullNumber, motivo: sustento })
 
       await t.auditLog.create({
         data: {
