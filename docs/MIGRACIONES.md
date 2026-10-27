@@ -25,7 +25,8 @@ receta para revertir a mano, y debe haberse probado en un esquema temporal.
    producción en P3009).
 3. Repetir TODAS las migraciones en un esquema temporal de staging y comprobar que no
    queda deriva (`No difference detected`).
-4. Aplicar a staging con `prisma migrate deploy`. Producción lo aplica el build de Vercel.
+4. Aplicar a staging con `prisma migrate deploy`. Producción lo aplica el build de Vercel **si Vercel ejecuta el script `build` del repositorio y el despliegue es de Production**. No se da por hecho: el build imprime `[build] …` con lo que decidió, y `/api/diagnostics` avisa de las migraciones sin aplicar. Si falta una, se aplica a mano:
+   `I_UNDERSTAND_THIS_IS_PRODUCTION=true npx prisma migrate deploy` con `DIRECT_URL` (sin `-pooler`), `DATABASE_URL` y `PROD_DB_FINGERPRINT` de producción **escritos en la propia línea de comandos** (el shell gana sobre `.env.local`, que es staging). Primero `migrate status`. Ocurrió con la Fase 4 (2026-10-27): ver `docs/DESPLIEGUE-FASE4.md`.
 
 ## Nombres y orden
 

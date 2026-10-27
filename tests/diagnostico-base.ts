@@ -1,5 +1,8 @@
-import { readFileSync } from 'node:fs'
-import { clasificarMigraciones, diagnosticarHuella } from '../src/lib/diagnostico-base'
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { calcularMigracionesPendientes, clasificarMigraciones, diagnosticarHuella } from '../src/lib/diagnostico-base'
 
 /** Diagnóstico de la base de la app en ejecución: huella y migraciones reintentadas. Puro: sin base ni red. */
 let pass = 0, fail = 0
@@ -49,6 +52,45 @@ const ruta = readFileSync('src/app/api/diagnostics/route.ts', 'utf8')
 check('>>> /api/diagnostics clasifica las migraciones con clasificarMigraciones (ya no cuenta filas sueltas)', ruta.includes('clasificarMigraciones(migraciones)') && !/migraciones\.filter\(\(m\) => !m\.ok\)/.test(ruta))
 check('>>> y suma los problemas de la huella y expone host/base y la coincidencia', ruta.includes('diagnosticarHuella(process.env)') && ruta.includes('...huellaBase.problemas') && ruta.includes('coincideConHuellaProduccion'))
 check('la ruta sigue protegida por CRON_SECRET', ruta.includes('autorizado(req)'))
+
+console.log('\n6) Migraciones pendientes: nunca un falso «todo aplicado»')
+const repo = ['20261110_a', '20261111_b', '20261112_compras']
+const dosAplicadas = ['20261110_a', '20261111_b']
+const pend = calcularMigracionesPendientes(repo, dosAplicadas)
+check('>>> falta una (el caso real: compras) → la nombra y levanta un problema', JSON.stringify(pend.pendientes) === JSON.stringify(['20261112_compras']) && (pend.problema ?? '').includes('20261112_compras') && (pend.problema ?? '').includes('SIN APLICAR'))
+const ok = calcularMigracionesPendientes(repo, repo)
+check('todas aplicadas → lista vacía y sin problema', ok.pendientes?.length === 0 && ok.problema === null)
+check('>>> la base va POR DELANTE del despliegue (tras volver a un despliegue anterior) → nada pendiente, sin alarma', calcularMigracionesPendientes(repo.slice(0, 2), repo).pendientes?.length === 0 && calcularMigracionesPendientes(repo.slice(0, 2), repo).problema === null)
+const sinCarpeta = calcularMigracionesPendientes(null, repo)
+check('>>> carpeta ilegible → `null` y un problema que lo dice (ANTES devolvía «ninguna pendiente» en silencio)', sinCarpeta.pendientes === null && (sinCarpeta.problema ?? '').includes('No se pudo comparar') && (sinCarpeta.problema ?? '').includes('migrate status'))
+check('>>> carpeta vacía tampoco se toma por «todo aplicado»', calcularMigracionesPendientes([], repo).pendientes === null && calcularMigracionesPendientes([], repo).problema !== null)
+check('el orden de entrada no importa y los nombres no se duplican', JSON.stringify(calcularMigracionesPendientes(['z', 'a', 'm'], ['m']).pendientes) === JSON.stringify(['a', 'z']))
+
+console.log('\n7) La ruta lo usa y ya no se traga el fallo')
+check('>>> usa calcularMigracionesPendientes, expone cuántas trae el despliegue y suma el problema', ruta.includes('calcularMigracionesPendientes(enDespliegue, aplicadas)') && ruta.includes('migracionesEnElDespliegue') && ruta.includes('problemaMigraciones') && ruta.includes('problemas.push(problemaMigraciones)'))
+check('>>> el `catch` de la carpeta ya NO fija «ninguna pendiente» (pendientes = [])', !/catch \{[^}]*pendientes = \[\]/s.test(ruta))
+
+console.log('\n8) El build imprime su decisión y falla si la migración falla')
+const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> }
+const guion = pkg.scripts.build!
+const bin = mkdtempSync(join(tmpdir(), 'build-shims-'))
+const bitacora = join(bin, 'llamadas.log')
+const shim = (nombre: string, codigo = 0) => { const f = join(bin, nombre); writeFileSync(f, `#!/bin/sh\necho "${nombre} $*" >> "${bitacora}"\necho "(${nombre} $*)"\nexit ${codigo}\n`); chmodSync(f, 0o755) }
+const correrBuild = (env: Record<string, string>, prismaFalla = false) => {
+  writeFileSync(bitacora, '')
+  shim('prisma', prismaFalla ? 1 : 0); shim('next')
+  const r = spawnSync('sh', ['-c', guion], { env: { PATH: `${bin}:/usr/bin:/bin`, ...env } as unknown as NodeJS.ProcessEnv, encoding: 'utf8' })
+  return { salida: `${r.stdout}${r.stderr}`, estado: r.status, llamadas: readFileSync(bitacora, 'utf8').trim().split('\n').filter(Boolean) }
+}
+const prod2 = correrBuild({ VERCEL_ENV: 'production' })
+check('>>> PRODUCCIÓN: lo dice en el log, corre `prisma migrate deploy` ANTES de `next build` y sale bien', prod2.salida.includes('[build] VERCEL_ENV=production') && prod2.salida.includes('PRODUCCION') && JSON.stringify(prod2.llamadas) === JSON.stringify(['prisma migrate deploy', 'next build']) && prod2.estado === 0, JSON.stringify(prod2.llamadas))
+const prev = correrBuild({ VERCEL_ENV: 'preview' })
+check('>>> PREVIEW: dice que OMITE las migraciones, no llama a prisma y compila', prev.salida.includes('[build] VERCEL_ENV=preview') && prev.salida.includes('se OMITEN las migraciones') && JSON.stringify(prev.llamadas) === JSON.stringify(['next build']) && prev.estado === 0)
+const sin = correrBuild({})
+check('>>> SIN VERCEL_ENV: lo dice («no definida»), omite y compila (así un build local no migra nada)', sin.salida.includes('VERCEL_ENV=no definida') && sin.salida.includes('se OMITEN') && JSON.stringify(sin.llamadas) === JSON.stringify(['next build']))
+const falla = correrBuild({ VERCEL_ENV: 'production' }, true)
+check('>>> si la migración FALLA en producción, el build falla y NO se compila ni se despliega (el código viejo sigue sirviendo)', falla.estado !== 0 && JSON.stringify(falla.llamadas) === JSON.stringify(['prisma migrate deploy']) && !falla.llamadas.includes('next build'))
+check('>>> el texto del script conserva «prisma migrate deploy» y «next build» (se puede buscar en el log de Vercel)', guion.includes('prisma migrate deploy') && guion.includes('next build') && guion.includes('"$VERCEL_ENV" = "production"'))
 
 console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
 process.exit(fail === 0 ? 0 : 1)

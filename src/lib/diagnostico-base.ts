@@ -29,6 +29,35 @@ export function clasificarMigraciones(filas: FilaMigracion[]): { aplicadas: stri
   return { aplicadas, fallidas, reintentadas }
 }
 
+export interface MigracionesPendientes {
+  /** Las que vienen en el despliegue y NO están aplicadas en la base. `null` = no se pudo comparar (nunca «ninguna» a ciegas). */
+  pendientes: string[] | null
+  problema: string | null
+}
+
+/**
+ * ¿Falta aplicar alguna migración del despliegue? Distingue tres casos que NO deben confundirse:
+ *  · se pudo comparar y falta alguna → `pendientes` con sus nombres y un problema;
+ *  · se pudo comparar y no falta ninguna → `pendientes` vacío, sin problema;
+ *  · NO se pudo comparar (carpeta ausente del bundle o vacía) → `null` y un problema que lo dice. Antes esto devolvía «ninguna
+ *    pendiente» en silencio: un falso verde justo cuando una migración no se aplicó.
+ */
+export function calcularMigracionesPendientes(enDespliegue: readonly string[] | null, aplicadas: readonly string[]): MigracionesPendientes {
+  if (!enDespliegue || enDespliegue.length === 0) {
+    return {
+      pendientes: null,
+      problema: 'No se pudo comparar las migraciones del despliegue con las de la base (la carpeta prisma/migrations no está en el bundle o está vacía). No tomes esto por «todo aplicado»: comprueba con `prisma migrate status`.',
+    }
+  }
+  const hechas = new Set(aplicadas)
+  const pendientes = [...enDespliegue].sort().filter((m) => !hechas.has(m))
+  return {
+    pendientes,
+    problema: pendientes.length === 0 ? null
+      : `${pendientes.length} migración(es) SIN APLICAR: ${pendientes.join(', ')}. El código está desplegado pero el esquema no se movió: las pantallas que usen esas tablas fallarán. Aplícalas ya (ver docs/DESPLIEGUE-FASE4.md) y revisa en el log del build la línea «[build] …».`,
+  }
+}
+
 export interface DiagnosticoHuella {
   /** Base a la que está conectada la app (DATABASE_URL), como «host/base». */
   conectadaA: string | null

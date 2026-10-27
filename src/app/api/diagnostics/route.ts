@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { hayClaveMaestra } from '@/lib/cifrado'
 import { prisma } from '@/lib/prisma'
-import { clasificarMigraciones, diagnosticarHuella } from '@/lib/diagnostico-base'
+import { calcularMigracionesPendientes, clasificarMigraciones, diagnosticarHuella } from '@/lib/diagnostico-base'
 
 /**
  * GET /api/diagnostics?key=$CRON_SECRET — estado de la configuración.
@@ -193,25 +193,28 @@ export async function GET(req: NextRequest) {
      * tarde como un error de runtime sin relación aparente. Compararlo a
      * mano cada vez no es un proceso, es un descuido esperando a ocurrir.
      */
-    let pendientes: string[] = []
+    let enDespliegue: string[] | null = null
     try {
       const dir = join(process.cwd(), 'prisma', 'migrations')
-      const enRepo = readdirSync(dir, { withFileTypes: true })
+      enDespliegue = readdirSync(dir, { withFileTypes: true })
         .filter((d) => d.isDirectory())
         .map((d) => d.name)
         .sort()
-      pendientes = enRepo.filter((m) => !aplicadas.includes(m))
     } catch {
-      // En el bundle serverless el directorio puede no viajar. No es un
-      // fallo: simplemente no se puede comparar.
-      pendientes = []
+      // Si el directorio no viaja en el bundle NO es «ninguna pendiente»: es «no se pudo comparar», y se dice (ver calcularMigracionesPendientes).
+      enDespliegue = null
     }
+    const comparacion = calcularMigracionesPendientes(enDespliegue, aplicadas)
+    const pendientes = comparacion.pendientes
 
     baseDatos = {
       alcanzable: true,
       latenciaMs: Date.now() - t0,
       migracionesAplicadas: aplicadas,
       migracionesPendientes: pendientes,
+      /** Cuántas migraciones trae este despliegue (`null` = no se pudo leer la carpeta). */
+      migracionesEnElDespliegue: enDespliegue?.length ?? null,
+      problemaMigraciones: comparacion.problema,
       migracionesFallidas: fallidas,
       /** Fallaron antes y hoy están aplicadas: informativo. */
       migracionesReintentadas: reintentadas,
@@ -270,14 +273,8 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  const pend = baseDatos.migracionesPendientes
-  if (Array.isArray(pend) && pend.length > 0) {
-    problemas.push(
-      `${pend.length} migración(es) SIN APLICAR: ${pend.join(', ')}. ` +
-        'El código está desplegado pero el esquema no se movió. Revisa el log ' +
-        'del build en Vercel: `prisma migrate deploy` no se ejecutó o falló.',
-    )
-  }
+  const problemaMigraciones = baseDatos.problemaMigraciones
+  if (typeof problemaMigraciones === 'string') problemas.push(problemaMigraciones)
   if (typeof baseDatos.tenantsSinSucursal === 'number' && baseDatos.tenantsSinSucursal > 0) {
     problemas.push(
       `${baseDatos.tenantsSinSucursal} negocio(s) SIN NINGUNA SUCURSAL. ` +

@@ -5,7 +5,7 @@
   "scripts": {
     "postinstall": "prisma generate",
     "dev": "next dev",
-    "build": "if [ \"$VERCEL_ENV\" = \"production\" ]; then prisma migrate deploy; fi && next build",
+    "build": "echo \"[build] VERCEL_ENV=${VERCEL_ENV:-no definida}\" && if [ \"$VERCEL_ENV\" = \"production\" ]; then echo \"[build] PRODUCCION: se aplican las migraciones (prisma migrate deploy)\" && prisma migrate deploy; else echo \"[build] NO es produccion: se OMITEN las migraciones\"; fi && next build",
     "start": "next start",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
