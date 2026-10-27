@@ -34,6 +34,10 @@ export interface CashCloseResult extends CashSessionResult {
   cashReceiptsTotal: number
   /** Abonos de deuda por otros medios (Yape, transferencia…): no entraron al cajón. */
   otherReceiptsTotal: number
+  /** Pagos a proveedores en EFECTIVO: SALIERON del cajón y restan al esperado. */
+  supplierCashPaymentsTotal: number
+  /** Pagos a proveedores por otros medios (transferencia, Yape…): no tocaron el cajón. */
+  supplierOtherPaymentsTotal: number
   closedAt: string
 }
 
@@ -45,11 +49,19 @@ export interface TotalesTurno {
   creditSalesTotal: number
   cashReceiptsTotal: number
   otherReceiptsTotal: number
+  supplierCashPaymentsTotal: number
+  supplierOtherPaymentsTotal: number
 }
 
-/** Lo que debería haber en el cajón: fondo + cobros en efectivo + abonos de deuda en efectivo − vueltos. El fiado no entra. */
-export function efectivoEsperado(fondo: number, t: Pick<TotalesTurno, 'cashTotal' | 'cashReceiptsTotal' | 'changeTotal'>): number {
-  return redondearCentimos(fondo + t.cashTotal + t.cashReceiptsTotal - t.changeTotal)
+/**
+ * Lo que debería haber en el cajón: fondo + cobros en efectivo + abonos de deuda en efectivo − vueltos − pagos a proveedores en
+ * efectivo. El fiado no entra; las transferencias y el Yape (a clientes o a proveedores) tampoco.
+ */
+export function efectivoEsperado(
+  fondo: number,
+  t: Pick<TotalesTurno, 'cashTotal' | 'cashReceiptsTotal' | 'changeTotal' | 'supplierCashPaymentsTotal'>,
+): number {
+  return redondearCentimos(fondo + t.cashTotal + t.cashReceiptsTotal - t.changeTotal - t.supplierCashPaymentsTotal)
 }
 
 /**
@@ -68,9 +80,15 @@ export async function totalesDelTurno(t: TenantPrismaClient, sessionId: string):
     select: { method: true, amount: true },
   })
 
+  const pagosProveedor = await t.supplierPayment.findMany({
+    where: { cashSessionId: sessionId, voidedAt: null },
+    select: { method: true, amount: true },
+  })
+
   const r: TotalesTurno = {
     salesCount: ventas.length, salesTotal: 0, cashTotal: 0, changeTotal: 0,
     creditSalesTotal: 0, cashReceiptsTotal: 0, otherReceiptsTotal: 0,
+    supplierCashPaymentsTotal: 0, supplierOtherPaymentsTotal: 0,
   }
   for (const v of ventas) {
     r.salesTotal = redondearCentimos(r.salesTotal + num(v.total))
@@ -84,6 +102,10 @@ export async function totalesDelTurno(t: TenantPrismaClient, sessionId: string):
   for (const a of abonos) {
     if (a.method === 'EFECTIVO') r.cashReceiptsTotal = redondearCentimos(r.cashReceiptsTotal + num(a.amount))
     else r.otherReceiptsTotal = redondearCentimos(r.otherReceiptsTotal + num(a.amount))
+  }
+  for (const p of pagosProveedor) {
+    if (p.method === 'EFECTIVO') r.supplierCashPaymentsTotal = redondearCentimos(r.supplierCashPaymentsTotal + num(p.amount))
+    else r.supplierOtherPaymentsTotal = redondearCentimos(r.supplierOtherPaymentsTotal + num(p.amount))
   }
   return r
 }
@@ -211,7 +233,10 @@ export async function closeCashSession(
 
     // Ventas COMPLETADAS (las anuladas no cuentan: su dinero salió del cajón o nunca entró) y abonos NO anulados del turno.
     const tot = await totalesDelTurno(t, sesion.id)
-    const { salesCount, salesTotal, cashTotal, changeTotal, creditSalesTotal, cashReceiptsTotal, otherReceiptsTotal } = tot
+    const {
+      salesCount, salesTotal, cashTotal, changeTotal, creditSalesTotal, cashReceiptsTotal, otherReceiptsTotal,
+      supplierCashPaymentsTotal, supplierOtherPaymentsTotal,
+    } = tot
 
     const openingAmount = num(sesion.openingAmount)
     const expectedAmount = efectivoEsperado(openingAmount, tot)
@@ -234,6 +259,8 @@ export async function closeCashSession(
         creditSalesTotal: new Prisma.Decimal(creditSalesTotal.toFixed(2)),
         cashReceiptsTotal: new Prisma.Decimal(cashReceiptsTotal.toFixed(2)),
         otherReceiptsTotal: new Prisma.Decimal(otherReceiptsTotal.toFixed(2)),
+        supplierCashPaymentsTotal: new Prisma.Decimal(supplierCashPaymentsTotal.toFixed(2)),
+        supplierOtherPaymentsTotal: new Prisma.Decimal(supplierOtherPaymentsTotal.toFixed(2)),
         closingNotes: input.notes ?? null,
       },
       select: { id: true, branchId: true, status: true, openedAt: true },
@@ -260,6 +287,8 @@ export async function closeCashSession(
           fiado: creditSalesTotal,
           abonosEfectivo: cashReceiptsTotal,
           abonosOtros: otherReceiptsTotal,
+          pagosProveedorEfectivo: supplierCashPaymentsTotal,
+          pagosProveedorOtros: supplierOtherPaymentsTotal,
           pedidosVencidos,
         },
         reason: input.notes ?? null,
@@ -283,6 +312,8 @@ export async function closeCashSession(
       creditSalesTotal,
       cashReceiptsTotal,
       otherReceiptsTotal,
+      supplierCashPaymentsTotal,
+      supplierOtherPaymentsTotal,
       closedAt: cerrado.toISOString(),
     }
   }, { maxWait: 15_000, timeout: 30_000 })

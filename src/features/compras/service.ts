@@ -407,7 +407,8 @@ export async function anularCompra(db: TenantPrismaClient, ctx: TenantContext, i
       await bloquearProveedor(t, c.supplierId)                                         // ② el proveedor
       cxp = await t.accountPayable.findFirst({ where: { purchaseId: c.id }, select: { id: true, paidAmount: true, amount: true } })
       if (cxp) {
-        const aplicaciones = await t.supplierPaymentAllocation.count({ where: { payableId: cxp.id } })
+        // Solo cuentan los pagos VIGENTES: el reparto de un pago anulado se conserva en el historial pero ya no aplica nada.
+        const aplicaciones = await t.supplierPaymentAllocation.count({ where: { payableId: cxp.id, supplierPayment: { voidedAt: null } } })
         if (num(cxp.paidAmount) > 0 || aplicaciones > 0) {
           throw invalido('Esta compra ya tiene pagos aplicados. Anula primero esos pagos; luego podrás anular la compra.')
         }

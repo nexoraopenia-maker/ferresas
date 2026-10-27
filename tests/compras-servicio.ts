@@ -12,6 +12,7 @@ import { anularCompra, crearBorrador, editarBorrador, listarCompras, obtenerComp
 import { crearProveedor } from '../src/features/proveedores/service'
 import { crearProveedorSchema } from '../src/features/proveedores/schemas'
 import { crearPresentacion } from '../src/features/inventory/presentaciones-service'
+import { hoyEnZona, sumarDias } from '../src/features/credito/reglas'
 import type { Role } from '../src/generated/prisma/enums'
 import type { TenantContext } from '../src/lib/tenant-context'
 
@@ -149,8 +150,9 @@ async function main() {
   check('>>> vencimiento inexistente (31 de febrero) → rechazado', await code(e.crear([e.L(p1.id, 1, 1)], { supplierId: sup.id, paymentCondition: 'CREDITO', vence: '2026-02-31' })) === 'INVALID_DOCUMENT')
   const cc = await e.crear([e.L(p1.id, 1, 1)], { supplierId: sup.id, paymentCondition: 'CREDITO' })
   const dd = (await prisma.purchase.findUniqueOrThrow({ where: { id: cc.id } })).dueDate!
-  const esperado = new Date(); esperado.setUTCDate(esperado.getUTCDate() + 15)
-  check('>>> a crédito sin fecha: vence hoy + plazo del proveedor (15 días, ±1 por zona horaria)', Math.abs((dd.getTime() - esperado.getTime()) / 86_400_000) <= 1.01)
+  const tzC = (await prisma.tenant.findUniqueOrThrow({ where: { id: e.t.id } })).timezone
+  const esperadoDia = sumarDias(hoyEnZona(tzC), 15).toISOString().slice(0, 10)
+  check('>>> a crédito sin fecha: vence el día del negocio de hoy + el plazo del proveedor (15 días)', dd.toISOString().slice(0, 10) === esperadoDia, `${dd.toISOString().slice(0, 10)} vs ${esperadoDia}`)
   const bajaS = await e.proveedor(); await prisma.supplier.update({ where: { id: bajaS.id }, data: { isActive: false, deletedAt: new Date() } })
   check('>>> proveedor dado de baja → rechazado', await code(e.crear([e.L(p1.id, 1, 1)], { supplierId: bajaS.id })) === 'INVALID_DOCUMENT')
 
