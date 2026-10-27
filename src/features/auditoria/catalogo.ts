@@ -37,6 +37,7 @@ export const ACCIONES: Readonly<Record<string, { categoria: Categoria; etiqueta:
   'compra.editada': { categoria: CP, etiqueta: 'Compra editada' },
   'compra.recibida': { categoria: CP, etiqueta: 'Compra recibida' },
   'compra.anulada': { categoria: CP, etiqueta: 'Compra anulada' },
+  'compra.documento': { categoria: CP, etiqueta: 'Documento de una compra completado' },
   'proveedor.creado': { categoria: CP, etiqueta: 'Proveedor creado' },
   'proveedor.editado': { categoria: CP, etiqueta: 'Proveedor editado' },
   'proveedor.baja': { categoria: CP, etiqueta: 'Proveedor dado de baja' },

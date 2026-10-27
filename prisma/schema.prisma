@@ -1571,6 +1571,16 @@ model QuoteItem {
 //  COMPRAS (ingreso de mercadería)
 // ============================================================================
 
+/// Tipo del documento que respalda una compra. ⚠️ Los códigos del catálogo oficial de SUNAT se asignan en F5.6, con validación del contador.
+enum PurchaseDocType {
+  FACTURA
+  BOLETA
+  NOTA_CREDITO
+  NOTA_DEBITO
+  RECIBO_HONORARIOS
+  OTRO
+}
+
 model Purchase {
   id       String @id @default(cuid())
   tenantId String
@@ -1589,6 +1599,16 @@ model Purchase {
   status     PurchaseStatus @default(BORRADOR)
   /// N.º del documento del proveedor (factura, boleta o guía). Único por proveedor: la misma factura no se registra dos veces.
   invoiceRef String?
+
+  // --- Documento del proveedor, estructurado (F5.4). Las cuatro columnas van juntas o ninguna (CHECK en la migración): las compras
+  // anteriores las tienen vacías y se completan después con «Completar documento», sin tocar costos ni stock.
+  docType   PurchaseDocType?
+  /// Serie del documento tal como viene impresa («F001», «E001»…), en mayúsculas y sin espacios.
+  docSeries String?          @db.VarChar(20)
+  /// Correlativo del documento. Texto, no número: los ceros a la izquierda cuentan.
+  docNumber String?          @db.VarChar(20)
+  /// Día de emisión del documento (fecha del calendario, no un instante: no se corre por la zona horaria).
+  issueDate DateTime?        @db.Date
 
   /// CONTADO: se pagó al recibir. CREDITO: genera una cuenta por pagar que vence en `dueDate`.
   paymentCondition PurchaseCondition @default(CONTADO)
@@ -1623,6 +1643,7 @@ model Purchase {
   @@unique([tenantId, supplierId, invoiceRef])
   @@index([tenantId, status, createdAt])
   @@index([tenantId, supplierId])
+  @@index([tenantId, issueDate])
   @@map("purchases")
 }
 

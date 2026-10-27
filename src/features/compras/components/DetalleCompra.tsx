@@ -4,6 +4,8 @@ import type { obtenerCompra } from '../service'
 import { ETIQUETA_CONDICION, ETIQUETA_ESTADO } from '../borrador-ui'
 import { AccionesCompra, type PermisosCompra } from './AccionesCompra'
 import { ESTILO_ESTADO } from './ComprasLista'
+import { CompletarDocumento } from './CompletarDocumento'
+import { ETIQUETA_DOCUMENTO_COMPRA, type TipoDocumentoCompra } from '../documento'
 
 const money = (n: number) => `S/ ${n.toFixed(2)}`
 const cant = (n: number) => String(Number(n.toFixed(4)))
@@ -15,7 +17,9 @@ const ESTADO_CUENTA: Record<string, string> = { ABIERTA: 'Pendiente', PAGADA: 'P
  * Detalle de una compra: estado, proveedor, líneas (cantidad tecleada y en unidad base, costo sin IGV), totales, la cuenta por pagar si
  * es a crédito, y quién la creó, recibió o anuló. Las acciones dependen del estado y de los permisos (resueltos en el servidor).
  */
-export function DetalleCompra({ compra, permisos, zona, verCostos }: {
+export function DetalleCompra({ compra, permisos, zona, verCostos, hoy }: {
+  /** Día del negocio (AAAA-MM-DD): tope de la fecha de emisión. */
+  hoy: string
   compra: CompraDetalle
   permisos: PermisosCompra
   zona: string
@@ -41,7 +45,13 @@ export function DetalleCompra({ compra, permisos, zona, verCostos }: {
             {c.supplier ? <Link href={`/proveedores/${c.supplier.id}`} data-enlace="proveedor" className="font-semibold text-industrial-600 underline">{c.supplier.name}</Link> : 'Sin proveedor'}
             {c.invoiceRef ? ` · Doc. ${c.invoiceRef}` : ''} · {c.warehouse.name}
           </p>
+          {c.docType && c.issueDate && <p data-documento="estructurado" className="text-xs text-ink-muted">{ETIQUETA_DOCUMENTO_COMPRA[c.docType as TipoDocumentoCompra]} {c.docSeries}-{c.docNumber} · emitido el {fechaDiaCorta(c.issueDate)}</p>}
+          {c.status === 'RECIBIDA' && !c.docType && <p data-documento="pendiente" role="status" className="mt-1 text-xs font-semibold text-stock-low">Falta el documento del proveedor: el registro de compras usa la fecha de recepción como provisional.</p>}
         </div>
+        {c.status === 'RECIBIDA' && permisos.puedeRegistrar && (
+          <CompletarDocumento purchaseId={c.id} hoy={hoy} puedeOperar={permisos.puedeOperar}
+            actual={c.docType && c.docSeries && c.docNumber && c.issueDate ? { docType: c.docType, docSeries: c.docSeries, docNumber: c.docNumber, issueDate: c.issueDate } : null} />
+        )}
         <AccionesCompra
           purchaseId={c.id} numero={c.number} estado={c.status} proveedor={c.supplier ? { id: c.supplier.id, name: c.supplier.name, deudaActual: c.supplier.payableBalance } : null} vence={c.dueDate} condicion={c.paymentCondition} total={c.total} lineas={c.items.length}
           conPagos={!!cxp && cxp.paidAmount > 0} permisos={permisos}

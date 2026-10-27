@@ -7,9 +7,9 @@ import { requireTenantContext } from '@/lib/session'
 import { isBusinessError, type ActionResult } from '@/lib/errors'
 import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
-import { anularCompraSchema, buscarProductoCompraSchema, crearBorradorSchema, editarBorradorSchema, listarComprasSchema, recibirCompraSchema, verCompraSchema } from './schemas'
+import { anularCompraSchema, buscarProductoCompraSchema, completarDocumentoSchema, crearBorradorSchema, editarBorradorSchema, listarComprasSchema, recibirCompraSchema, verCompraSchema } from './schemas'
 import {
-  anularCompra as runAnular, crearBorrador as runCrear, editarBorrador as runEditar, listarCompras as runListar,
+  anularCompra as runAnular, completarDocumento as runCompletar, crearBorrador as runCrear, editarBorrador as runEditar, listarCompras as runListar,
   obtenerCompra as runObtener, recibirCompra as runRecibir, buscarProductosParaCompra as runBuscar,
   type PaginaCompras, type ProductoParaCompra, type ResultadoCompra, type ResultadoRecibir,
 } from './service'
@@ -62,6 +62,14 @@ export async function recibirCompra(raw: unknown): Promise<ActionResult<Resultad
   const p = recibirCompraSchema.safeParse(raw)
   if (!p.success) return invalida(p.error)
   const r = await conTenant('recibirCompra', (db, ctx) => runRecibir(db, ctx, p.data))
+  if (r.ok) refrescar(p.data.purchaseId)
+  return r
+}
+
+export async function completarDocumento(raw: unknown): Promise<ActionResult<{ id: string; invoiceRef: string }>> {
+  const p = completarDocumentoSchema.safeParse(raw)
+  if (!p.success) return invalida(p.error)
+  const r = await conTenant('completarDocumento', (db, ctx) => runCompletar(db, ctx, p.data))
   if (r.ok) refrescar(p.data.purchaseId)
   return r
 }

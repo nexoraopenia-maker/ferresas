@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { MENSAJE_SIN_RED, useEnLinea } from '@/lib/en-linea'
 import { buscarProductosCompra, crearBorrador, editarBorrador } from '../actions'
+import { CamposDocumento, DOCUMENTO_VACIO, type ValorDocumento } from './CamposDocumento'
 import type { BorradorParaEditar, OpcionesCompra, ProductoParaCompra } from '../service'
 import { ETIQUETA_CONDICION, motivoNoGuardable, resumenBorrador, venceSugerido, type CondicionCompra } from '../borrador-ui'
 
@@ -58,6 +59,7 @@ export function FormularioCompra({ modo, opciones, hoy, inicial, proveedorInicia
   const [vence, setVence] = useState(inicial?.vence ?? '')
   const [venceTocado, setVenceTocado] = useState(!!inicial?.vence)
   const [documento, setDocumento] = useState(inicial?.invoiceRef ?? '')
+  const [doc, setDoc] = useState<ValorDocumento>(inicial?.documento ?? DOCUMENTO_VACIO)
   const [notas, setNotas] = useState(inicial?.notes ?? '')
   const [lineas, setLineas] = useState<LineaFormulario[]>(() => (inicial?.lineas ?? []).map((l) => ({
     key: nuevaClave(), producto: l.producto, presentationId: l.presentationId ?? '', cantidad: l.cantidad, costo: l.costo,
@@ -104,7 +106,7 @@ export function FormularioCompra({ modo, opciones, hoy, inicial, proveedorInicia
     setError(null)
     startTransition(async () => {
       const cabecera = {
-        warehouseId: almacen, supplierId: proveedorId || null, invoiceRef: documento, paymentCondition: condicion,
+        warehouseId: almacen, supplierId: proveedorId || null, invoiceRef: doc.docType ? '' : documento, ...doc, paymentCondition: condicion,
         vence: condicion === 'CREDITO' ? venceMostrado : undefined, notes: notas,
         items: lineas.map((l) => ({
           productId: l.producto.productId, presentationId: l.presentationId || null,
@@ -133,9 +135,12 @@ export function FormularioCompra({ modo, opciones, hoy, inicial, proveedorInicia
               {opciones.almacenes.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-sm font-semibold text-ink">N.º de factura, boleta o guía del proveedor
-            <input name="invoiceRef" value={documento} onChange={(e) => setDocumento(e.target.value)} maxLength={40} placeholder="F001-000123" className={campo} />
-          </label>
+          <div className="sm:col-span-2"><CamposDocumento valor={doc} onChange={setDoc} hoy={hoy} /></div>
+          {!doc.docType && (
+            <label className="flex flex-col gap-1 text-sm font-semibold text-ink">Referencia libre (solo si aún no tienes los datos del documento)
+              <input name="invoiceRef" value={documento} onChange={(e) => setDocumento(e.target.value)} maxLength={40} placeholder="F001-000123" className={campo} />
+            </label>
+          )}
           <fieldset className="flex flex-col gap-1 text-sm font-semibold text-ink">
             <legend className="mb-1">Condición de pago</legend>
             <div className="flex gap-2">

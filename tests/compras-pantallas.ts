@@ -90,7 +90,7 @@ async function main() {
   const sinAlm = form({ opciones: { ...opciones, almacenes: [] } })
   check('>>> sin almacenes activos en la sucursal lo avisa y no deja guardar', sinAlm.includes('data-aviso="sin-almacen"') && deshabilitado(sinAlm, 'data-boton="guardar-compra"'))
   const borrador: BorradorParaEditar = {
-    id: 'k1', number: 'C001-00000007', warehouseId: 'w2', supplierId: 's1', invoiceRef: 'F9', paymentCondition: 'CREDITO', vence: null, notes: 'n',
+    id: 'k1', number: 'C001-00000007', warehouseId: 'w2', supplierId: 's1', invoiceRef: 'F9', documento: null, paymentCondition: 'CREDITO', vence: null, notes: 'n',
     lineas: [{ producto: producto(), presentationId: 'caja', cantidad: '3', costo: '45.5' }, { producto: producto({ productId: 'p2', name: 'Arena', taxRate: 0, presentaciones: [] }), presentationId: null, cantidad: '2.5', costo: '10' }],
   }
   const he = form({ modo: 'editar', inicial: borrador })
@@ -163,13 +163,13 @@ async function main() {
   check('>>> una compra RECIBIDA ya no se puede abrir para editar', await code(borradorParaEditar(db, O, k.id)) === 'INVALID_DOCUMENT')
 
   const det = await obtenerCompra(db, O, k.id)
-  const dh = (verCostos: boolean, permisos = P) => html(createElement(DetalleCompra, { compra: det, permisos, zona: 'America/Lima', verCostos }))
+  const dh = (verCostos: boolean, permisos = P) => html(createElement(DetalleCompra, { compra: det, permisos, zona: 'America/Lima', verCostos, hoy }))
   check('>>> detalle: estado, proveedor enlazado, almacén, líneas con la presentación (3 × Bolsa x 10 = 30) y la cuenta por pagar', dh(true).includes('data-insignia="estado-RECIBIDA"') && dh(true).includes(`href="/proveedores/${sA.id}"`) && dh(true).includes('Principal') && dh(true).includes('3 × Bolsa x 10 = 30') && dh(true).includes('Cuenta por pagar · Pendiente'))
   check('>>> el costo por línea se ve SOLO con permiso de costos o de compras; quien solo paga ve los totales de la factura', dh(true).includes('data-costo-linea') && dh(true).includes('c/u sin IGV') && !dh(false).includes('data-costo-linea') && !dh(false).includes('c/u sin IGV') && dh(false).includes(`S/ ${num(g.total).toFixed(2)}`))
   check('>>> dice quién la registró y quién la recibió', dh(true).includes('Registrada por OWNER') && dh(true).includes('Recibida por OWNER'))
   const k2 = await crearBorrador(db, O, crearBorradorSchema.parse({ idempotencyKey: randomUUID(), warehouseId: b1.warehouse.id, supplierId: sB.id, items: [{ productId: pr.id, enteredQuantity: '1', unitCost: 1 }] }))
   await anularCompra(db, O, anularCompraSchema.parse({ purchaseId: k2.id, motivo: 'Pedido duplicado' }))
-  const an = html(createElement(DetalleCompra, { compra: await obtenerCompra(db, O, k2.id), permisos: P, zona: 'America/Lima', verCostos: true }))
+  const an = html(createElement(DetalleCompra, { compra: await obtenerCompra(db, O, k2.id), permisos: P, zona: 'America/Lima', verCostos: true, hoy }))
   check('>>> una anulada muestra quién, cuándo y por qué, y ninguna acción', an.includes('data-aviso="anulada"') && an.includes('Pedido duplicado') && an.includes('por OWNER') && !an.includes('data-boton='))
 
   console.log('\nF) Páginas, menú y permisos')

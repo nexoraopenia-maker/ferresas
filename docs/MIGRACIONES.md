@@ -54,3 +54,7 @@ anterior que no queda **ninguna** diferencia. (Hecho para `20261102120000_fiscal
 - `--config` y las URL pasadas por opción (`--url`, `--from-url`, `--to-url`, `--shadow-database-url`) se evalúan o se prohíben: no hay forma de saltarse la guardia.
 - **Lista blanca:** fuera del camino de producción, un comando solo corre si TODAS las URL de conexión tienen la huella de `STAGING_DB_FINGERPRINT` (obligatoria, distinta de la de producción). Una base desconocida se niega aunque no sea producción.
 - La suite (`tests/guard.ts`) y `scripts/migrar-staging.sh` usan la misma comprobación.
+
+## Registro de migraciones recientes
+
+- `20261113100000_compras_documento` (F5.4, expand): añade a `purchases` las columnas nulas `docType`, `docSeries`, `docNumber`, `issueDate`, el tipo `PurchaseDocType`, un índice y dos CHECK («todo o nada» y formato). Sin cambios de datos. `down.sql` ensayado (sin deriva). Despliegue: el build de producción de Vercel la aplica con `migrate deploy`; el código anterior sigue funcionando (columnas nulas) durante la ventana de despliegue.

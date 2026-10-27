@@ -3,6 +3,7 @@ import { requireTenantContext } from '@/lib/session'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { puede } from '@/lib/puede'
 import { isBusinessError } from '@/lib/errors'
+import { hoyEnZona } from '@/features/credito/reglas'
 import { DetalleCompra } from '@/features/compras/components/DetalleCompra'
 import { obtenerCompra } from '@/features/compras/service'
 import { puedeVerProveedores } from '@/features/proveedores/permisos'
@@ -26,7 +27,7 @@ export default async function DetalleCompraPage({ params }: { params: Promise<{ 
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-4 p-4">
       <DetalleCompra
-        compra={compra} zona={tenant.timezone} verCostos={puede(ctx, 'productos.ver_costo') || puede(ctx, 'compras.registrar')}
+        compra={compra} zona={tenant.timezone} hoy={hoyEnZona(tenant.timezone)} verCostos={puede(ctx, 'productos.ver_costo') || puede(ctx, 'compras.registrar')}
         permisos={{ puedeRegistrar: puede(ctx, 'compras.registrar'), puedeAjustar: puede(ctx, 'stock.ajustar'), puedeOperar: ctx.access === 'FULL' || ctx.access === 'WARN', puedePagar: puede(ctx, 'proveedores.pagar') }}
       />
     </main>

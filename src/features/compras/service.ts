@@ -16,9 +16,10 @@ import { bloquearProveedor } from '@/features/proveedores/service'
 import { palabras, relevancia } from '@/features/pos/busqueda'
 import { variantesConTilde } from '@/features/pos/resaltado'
 import { puedeVerProveedores } from '@/features/proveedores/permisos'
+import { validarDocumento, type DocumentoCompra } from './documento'
 import { costoBase, costoTrasCompra, costoTrasDevolucion, igvDeCompra, totalDeLinea } from './costo'
 import type {
-  AnularCompraInput, CrearBorradorInput, EditarBorradorInput, LineaCompraInput, ListarComprasInput, RecibirCompraInput,
+  AnularCompraInput, CompletarDocumentoInput, CrearBorradorInput, EditarBorradorInput, LineaCompraInput, ListarComprasInput, RecibirCompraInput,
 } from './schemas'
 
 /**
@@ -137,6 +138,19 @@ function fechaDia(texto: string): Date {
   return f
 }
 
+/** El documento estructurado del formulario, validado con el día de hoy EN LA ZONA DEL NEGOCIO (una factura no se emite mañana). */
+async function resolverDocumento(t: TenantPrismaClient, e: { docType?: string; docSeries?: string; docNumber?: string; issueDate?: string }): Promise<DocumentoCompra | null> {
+  if (!e.docType && !e.docSeries && !e.docNumber && !e.issueDate) return null
+  const { timezone } = await t.tenant.findFirstOrThrow({ select: { timezone: true } })
+  const r = validarDocumento(e, hoyEnZona(timezone))
+  if (!r.ok) throw invalido(r.mensaje)
+  return r.documento
+}
+
+/** Las columnas del documento para guardar (todo nulo si no hay documento estructurado). */
+const columnasDocumento = (d: DocumentoCompra | null) =>
+  d ? { docType: d.docType, docSeries: d.docSeries, docNumber: d.docNumber, issueDate: new Date(`${d.issueDate}T00:00:00.000Z`) } : { docType: null, docSeries: null, docNumber: null, issueDate: null }
+
 async function exigirFacturaLibre(t: TenantPrismaClient, supplierId: string | null, invoiceRef: string | undefined, excepto?: string) {
   if (!supplierId || !invoiceRef) return
   const otra = await t.purchase.findFirst({
@@ -165,7 +179,9 @@ export async function crearBorrador(db: TenantPrismaClient, ctx: TenantContext, 
       const t = tx as unknown as TenantPrismaClient
       const lineas = await resolverLineas(t, input.items)
       const cab = await resolverCabecera(t, input)
-      await exigirFacturaLibre(t, cab.supplierId, input.invoiceRef)
+      const doc = await resolverDocumento(t, input)
+      const referencia = doc?.invoiceRef ?? input.invoiceRef
+      await exigirFacturaLibre(t, cab.supplierId, referencia)
       const tot = totales(lineas)
       const n = await claimNextNumber(t, ctx.tenantId, 'PURCHASE', serie.series)
       const number = `${n.prefix}-${String(n.correlativo).padStart(8, '0')}`
@@ -173,7 +189,7 @@ export async function crearBorrador(db: TenantPrismaClient, ctx: TenantContext, 
       const c = await t.purchase.create({
         data: {
           tenantId: ctx.tenantId, warehouseId: input.warehouseId, supplierId: cab.supplierId, userId: ctx.userId, number,
-          invoiceRef: input.invoiceRef ?? null, paymentCondition: input.paymentCondition, dueDate: cab.dueDate,
+          invoiceRef: referencia ?? null, ...columnasDocumento(doc), paymentCondition: input.paymentCondition, dueDate: cab.dueDate,
           idempotencyKey: input.idempotencyKey, subtotal: tot.subtotal, taxTotal: tot.igv, total: tot.total, notes: input.notes ?? null,
         },
         select: { id: true },
@@ -182,7 +198,7 @@ export async function crearBorrador(db: TenantPrismaClient, ctx: TenantContext, 
       await t.auditLog.create({
         data: {
           tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role, action: 'compra.creada', entityType: 'Purchase', entityId: c.id,
-          after: { number, proveedor: cab.supplierId, condicion: input.paymentCondition, total: tot.total, lineas: lineas.length },
+          after: { number, proveedor: cab.supplierId, condicion: input.paymentCondition, total: tot.total, lineas: lineas.length, documento: doc ? `${doc.docType} ${doc.invoiceRef} · ${doc.issueDate}` : null },
           impersonationId: ctx.impersonationId ?? null,
         },
       })
@@ -232,7 +248,9 @@ export async function editarBorrador(db: TenantPrismaClient, ctx: TenantContext,
       if (c.status !== 'BORRADOR') throw invalido('Solo se puede editar una compra en borrador.')
       const lineas = await resolverLineas(t, input.items)
       const cab = await resolverCabecera(t, input)
-      await exigirFacturaLibre(t, cab.supplierId, input.invoiceRef, c.id)
+      const doc = await resolverDocumento(t, input)
+      const referencia = doc?.invoiceRef ?? input.invoiceRef
+      await exigirFacturaLibre(t, cab.supplierId, referencia, c.id)
       const tot = totales(lineas)
 
       await t.purchaseItem.deleteMany({ where: { purchaseId: c.id } })
@@ -240,7 +258,7 @@ export async function editarBorrador(db: TenantPrismaClient, ctx: TenantContext,
       await t.purchase.update({
         where: { id: c.id },
         data: {
-          warehouseId: input.warehouseId, supplierId: cab.supplierId, invoiceRef: input.invoiceRef ?? null,
+          warehouseId: input.warehouseId, supplierId: cab.supplierId, invoiceRef: referencia ?? null, ...columnasDocumento(doc),
           paymentCondition: input.paymentCondition, dueDate: cab.dueDate, subtotal: tot.subtotal, taxTotal: tot.igv, total: tot.total,
           notes: input.notes ?? null,
         },
@@ -260,6 +278,41 @@ export async function editarBorrador(db: TenantPrismaClient, ctx: TenantContext,
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === P2002_UNIQUE) {
       throw new BusinessError('DUPLICATE_CODE', 'Ese documento del proveedor ya está registrado.')
     }
+    throw e
+  }
+}
+
+// ─── Completar el documento de una compra ya recibida ───────────────────────────────────────────────────────────────
+
+/**
+ * «Completar documento»: asigna (o corrige) el tipo, la serie, el número y la fecha de emisión de una compra RECIBIDA. Es lo que permite
+ * estructurar las compras anteriores a F5.4 para el registro de compras SIN reabrirlas: no toca líneas, costos, stock ni deuda, solo estas
+ * cuatro columnas y `invoiceRef`. Pide `compras.registrar`. Un borrador se completa editándolo; una anulada ya no tiene documento.
+ */
+export async function completarDocumento(db: TenantPrismaClient, ctx: TenantContext, input: CompletarDocumentoInput): Promise<{ id: string; invoiceRef: string }> {
+  exigir(ctx, 'compras.registrar')
+  try {
+    return await db.$transaction(async (tx) => {
+      const t = tx as unknown as TenantPrismaClient
+      const c = await bloquearCompra(t, input.purchaseId)
+      if (c.status !== 'RECIBIDA') throw invalido(c.status === 'BORRADOR' ? 'Un borrador se completa editándolo.' : 'Una compra anulada ya no tiene documento.')
+      const doc = await resolverDocumento(t, input)
+      if (!doc) throw invalido('Completa el tipo, la serie, el número y la fecha de emisión del documento.')
+      await exigirFacturaLibre(t, c.supplierId, doc.invoiceRef, c.id)
+      const antes = await t.purchase.findFirstOrThrow({ where: { id: c.id }, select: { docType: true, docSeries: true, docNumber: true, issueDate: true } })
+      await t.purchase.update({ where: { id: c.id }, data: { invoiceRef: doc.invoiceRef, ...columnasDocumento(doc) }, select: { id: true } })
+      await t.auditLog.create({
+        data: {
+          tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role, action: 'compra.documento', entityType: 'Purchase', entityId: c.id,
+          before: { documento: c.invoiceRef, tipo: antes.docType, serie: antes.docSeries, numero: antes.docNumber, emision: antes.issueDate ? antes.issueDate.toISOString().slice(0, 10) : null },
+          after: { number: c.number, documento: doc.invoiceRef, tipo: doc.docType, serie: doc.docSeries, numero: doc.docNumber, emision: doc.issueDate },
+          impersonationId: ctx.impersonationId ?? null,
+        },
+      })
+      return { id: c.id, invoiceRef: doc.invoiceRef }
+    }, OPCIONES_TX)
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === P2002_UNIQUE) throw new BusinessError('DUPLICATE_CODE', 'Ese documento del proveedor ya está registrado.')
     throw e
   }
 }
@@ -389,7 +442,7 @@ export async function anularCompra(db: TenantPrismaClient, ctx: TenantContext, i
     const ahora = new Date()
     // La factura queda libre para registrarse bien; el número original se conserva en las notas.
     const liberar = {
-      invoiceRef: null,
+      invoiceRef: null, docType: null, docSeries: null, docNumber: null, issueDate: null,
       notes: [c.notes, c.invoiceRef ? `Documento anulado: ${c.invoiceRef}` : null].filter(Boolean).join(' · ') || null,
     }
     const marca = { status: 'ANULADA' as const, voidedAt: ahora, voidedById: ctx.userId, voidReason: input.motivo, ...liberar }
@@ -508,7 +561,7 @@ export async function obtenerCompra(db: TenantPrismaClient, ctx: TenantContext, 
   const c = await db.purchase.findFirst({
     where: { id: purchaseId },
     select: {
-      id: true, number: true, status: true, invoiceRef: true, paymentCondition: true, dueDate: true, notes: true, warehouseId: true,
+      id: true, number: true, status: true, invoiceRef: true, docType: true, docSeries: true, docNumber: true, issueDate: true, paymentCondition: true, dueDate: true, notes: true, warehouseId: true,
       subtotal: true, taxTotal: true, total: true, createdAt: true, receivedAt: true, voidedAt: true, voidReason: true,
       warehouse: { select: { name: true } }, user: { select: { name: true } }, receivedBy: { select: { name: true } }, voidedBy: { select: { name: true } },
       supplier: { select: { id: true, name: true, taxId: true, payableBalance: true } },
@@ -524,6 +577,7 @@ export async function obtenerCompra(db: TenantPrismaClient, ctx: TenantContext, 
     ...c, supplier: c.supplier ? { ...c.supplier, payableBalance: num(c.supplier.payableBalance) } : null,
     subtotal: num(c.subtotal), taxTotal: num(c.taxTotal), total: num(c.total),
     dueDate: c.dueDate ? c.dueDate.toISOString().slice(0, 10) : null,
+    issueDate: c.issueDate ? c.issueDate.toISOString().slice(0, 10) : null,
     accountPayable: c.accountPayable ? { ...c.accountPayable, amount: num(c.accountPayable.amount), paidAmount: num(c.accountPayable.paidAmount), dueDate: c.accountPayable.dueDate.toISOString().slice(0, 10) } : null,
     items: c.items.map((i) => ({ ...i, quantity: num(i.quantity), unitCost: num(i.unitCost), lineTotal: num(i.lineTotal), taxRate: num(i.taxRate), enteredQuantity: i.enteredQuantity ? num(i.enteredQuantity) : null })),
   }
@@ -605,6 +659,8 @@ export interface BorradorParaEditar {
   warehouseId: string
   supplierId: string | null
   invoiceRef: string | null
+  /** Documento estructurado (F5.4); `null` si el borrador solo tiene referencia libre. */
+  documento: { docType: string; docSeries: string; docNumber: string; issueDate: string } | null
   paymentCondition: 'CONTADO' | 'CREDITO'
   /** AAAA-MM-DD o `null`. */
   vence: string | null
@@ -628,7 +684,7 @@ export async function borradorParaEditar(db: TenantPrismaClient, ctx: TenantCont
   const c = await db.purchase.findFirst({
     where: { id: purchaseId },
     select: {
-      id: true, number: true, status: true, warehouseId: true, supplierId: true, invoiceRef: true, paymentCondition: true, dueDate: true, notes: true,
+      id: true, number: true, status: true, warehouseId: true, supplierId: true, invoiceRef: true, docType: true, docSeries: true, docNumber: true, issueDate: true, paymentCondition: true, dueDate: true, notes: true,
       items: {
         orderBy: { id: 'asc' },
         select: {
@@ -647,6 +703,7 @@ export async function borradorParaEditar(db: TenantPrismaClient, ctx: TenantCont
   if (c.status !== 'BORRADOR') throw invalido('Solo se puede editar una compra en borrador.')
   return {
     id: c.id, number: c.number, warehouseId: c.warehouseId, supplierId: c.supplierId, invoiceRef: c.invoiceRef, paymentCondition: c.paymentCondition,
+    documento: c.docType && c.docSeries && c.docNumber && c.issueDate ? { docType: c.docType, docSeries: c.docSeries, docNumber: c.docNumber, issueDate: c.issueDate.toISOString().slice(0, 10) } : null,
     vence: c.dueDate ? c.dueDate.toISOString().slice(0, 10) : null, notes: c.notes,
     lineas: c.items.map((i) => {
       const cantidad = (i.enteredQuantity ?? i.quantity).toString()

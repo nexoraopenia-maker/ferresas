@@ -28,6 +28,11 @@ const cabecera = {
   supplierId: id.nullish(),
   /** N.º del documento del proveedor (factura, boleta o guía). Único por proveedor. */
   invoiceRef: opcional(40),
+  /** Documento estructurado (F5.4). Los cuatro juntos o ninguno; el servicio valida y, si vienen, compone `invoiceRef` con ellos. */
+  docType: opcional(30),
+  docSeries: opcional(30),
+  docNumber: opcional(30),
+  issueDate: opcional(10),
   paymentCondition: z.enum(['CONTADO', 'CREDITO']).default('CONTADO'),
   /** AAAA-MM-DD. Solo a crédito; si falta, se usa hoy + el plazo del proveedor. */
   vence: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha va como AAAA-MM-DD.').optional()),
@@ -40,6 +45,10 @@ export type CrearBorradorInput = z.infer<typeof crearBorradorSchema>
 
 export const editarBorradorSchema = z.object({ purchaseId: id, ...cabecera })
 export type EditarBorradorInput = z.infer<typeof editarBorradorSchema>
+
+/** «Completar documento»: solo estos cuatro datos, sobre una compra ya recibida. No toca costos, stock ni deuda. */
+export const completarDocumentoSchema = z.object({ purchaseId: id, docType: z.string().trim().min(1, 'Elige el tipo de documento.').max(30), docSeries: z.string().trim().min(1, 'Falta la serie.').max(30), docNumber: z.string().trim().min(1, 'Falta el número.').max(30), issueDate: z.string().trim().min(1, 'Falta la fecha de emisión.').max(10) })
+export type CompletarDocumentoInput = z.infer<typeof completarDocumentoSchema>
 
 export const recibirCompraSchema = z.object({ purchaseId: id })
 export type RecibirCompraInput = z.infer<typeof recibirCompraSchema>
