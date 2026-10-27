@@ -110,6 +110,9 @@ async function main() {
     // línea solo con `productos.ver_costo` o `compras.registrar` (`verCostos`); quien solo paga ve los totales de la factura.
     'src/features/compras/components/FormularioCompra.tsx',
     'src/features/compras/components/DetalleCompra.tsx',
+    // Rentabilidad (F5.3): lee `unitCost` de las líneas vendidas y `costPrice` del producto. TODA función exportada pasa por `exigirCostos`
+    // (`productos.ver_costo` y nada más); lo prueba `rentabilidad-servicio` (cajero/vendedor/almacenero denegados, y `reportes.ver` solo no basta).
+    'src/features/reportes/rentabilidad-service.ts',
   ])
   const proj = proyecto()
   const fuentes = ficheros(join(RAIZ, 'src'), (f) => f.endsWith('.ts') || f.endsWith('.tsx'))
