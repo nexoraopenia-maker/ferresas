@@ -896,3 +896,10 @@ Lógica pura; **no cambia el comportamiento de la venta**: `registerSale` valida
 - **Tarjeta «Por pagar» del panel:** solo para quien ve las cuentas por pagar y solo si hay deuda; sale del mismo informe que la pantalla.
 - **Descargas CSV:** `GET /api/proveedores/por-pagar` y `GET /api/proveedores/[id]/estado-cuenta?desde=&hasta=`: sesión (401), permiso del servicio (403), proveedor inexistente (404), cabeceras de `respuestaCsv` (attachment, no-store, nosniff) y cada descarga auditada.
 - **Fuera de este subpaso:** estado de cuenta de proveedor en A4 imprimible (hoy solo CSV); revisión final, barrido global y despliegue (F4.7).
+
+### F4.7: cierre de la Fase 4
+
+- **Qué quedó:** modelo (migración aditiva única), permisos (`proveedores.gestionar`, `compras.registrar`, `proveedores.pagar`), proveedores, compras (borrador → recibida → anulada con costo promedio ponderado sin IGV), pagos con egreso de caja y columna congelada, antigüedad, estado de cuenta, CSV, auditoría de coherencia (`scripts/auditar-compras.ts`), pantallas (`/proveedores`, `/compras`, `/por-pagar`), voucher de pago, tarjeta del panel y «pagar al recibir».
+- **Invariantes que sostienen todo** (las vigila la auditoría): la deuda del proveedor es la suma de sus cuentas abiertas; lo pagado de una cuenta es la suma de los repartos de pagos vigentes; cada compra recibida dejó exactamente su entrada de stock (y su devolución si se anuló); un turno cerrado conserva sus pagos y su esperado congelados.
+- **Cómo se despliega:** ver `docs/DESPLIEGUE-FASE4.md` (la migración la aplica el build de Vercel antes de compilar; rollback = redesplegar el anterior).
+- **Fuera de la Fase 4 (a propósito):** órdenes de compra, devoluciones parciales, notas de crédito de proveedor, compras en dólares, PLE/SIRE, cheques/letras, estado de cuenta de proveedor en A4 imprimible.
