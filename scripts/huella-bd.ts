@@ -30,7 +30,7 @@ export interface Veredicto {
  * todas las URL de conexión deben tener la huella de `STAGING_DB_FINGERPRINT`. No basta con «no es producción»:
  * una base desconocida, una local olvidada o una URL mal copiada también se niegan.
  *
- * Además se niega si falta cualquiera de las dos huellas, si son la misma, si algún destino coincide con
+ * Además se niega si DATABASE_URL y DIRECT_URL apuntan a bases distintas (migración cruzada), si falta cualquiera de las dos huellas, si son la misma, si algún destino coincide con
  * producción (la variable explícita o lo que diga `.env`) o si alguna URL no se puede interpretar.
  */
 export function evaluarDestinos(
@@ -42,6 +42,18 @@ export function evaluarDestinos(
   const prod = normalizarHuella(huellaProduccion)
   if (!prod) {
     return { ok: false, motivo: 'PROD_DB_FINGERPRINT no está definida o no tiene la forma «host/nombre_de_base». Sin la huella de producción no se puede comprobar que el destino sea otro.' }
+  }
+  // La app lee DATABASE_URL y el CLI de Prisma migra por DIRECT_URL (`prisma.config.ts`). Si apuntan a bases DISTINTAS, se migraría una y se leería
+  // otra. Pasó en Vercel: DATABASE_URL a producción y DIRECT_URL a staging; el build migró STAGING y producción se quedó sin sus tablas. La
+  // directa es la misma base que la pooled sin `-pooler` (misma huella), así que una diferencia nunca es legítima. Aplica en TODO entorno,
+  // y antes que cualquier otro veredicto: ni siquiera «producción a propósito» autoriza migrar una base distinta de la que lee la app.
+  const baseApp = huella(destinos.DATABASE_URL), baseCli = huella(destinos.DIRECT_URL)
+  if (baseApp && baseCli && baseApp !== baseCli) {
+    return {
+      ok: false,
+      motivo: `DATABASE_URL (${baseApp}) y DIRECT_URL (${baseCli}) apuntan a bases DISTINTAS: Prisma migraría una y la app leería otra. ` +
+        'Corrige las variables: la directa es la MISMA base que la pooled, solo que sin «-pooler» ni los parámetros de pgbouncer.',
+    }
   }
   const conocidas = new Set([prod, ...huellasExtraProduccion])
   const definidos = Object.entries(destinos).filter(([, v]) => v)

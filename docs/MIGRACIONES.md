@@ -50,6 +50,7 @@ anterior que no queda **ninguna** diferencia. (Hecho para `20261102120000_fiscal
 
 - Sin `PROD_DB_FINGERPRINT`: se niega todo (no se puede comprobar). **Hay que definirla también en las variables de Vercel**, o el build de producción no migrará.
 - Contra producción solo se permiten `migrate deploy` y `migrate status`, y solo en el build de producción de Vercel (`VERCEL_ENV=production`) o con `I_UNDERSTAND_THIS_IS_PRODUCTION=true` escrito en la línea de comandos.
+- **`DATABASE_URL` y `DIRECT_URL` deben ser la MISMA base** (la directa es la pooled sin `-pooler`; misma huella). Si difieren, todo comando de Prisma que toca la base se NIEGA, en cualquier entorno y aunque haya permiso de producción: la app leería una base y las migraciones se aplicarían a otra. Ocurrió en Vercel (2026-10-27): `DATABASE_URL` a producción y `DIRECT_URL` a staging; el build migró STAGING y producción se quedó sin las tablas de la Fase 4. Ahora ese build falla de inmediato con un mensaje que nombra las dos bases.
 - `--config` y las URL pasadas por opción (`--url`, `--from-url`, `--to-url`, `--shadow-database-url`) se evalúan o se prohíben: no hay forma de saltarse la guardia.
 - **Lista blanca:** fuera del camino de producción, un comando solo corre si TODAS las URL de conexión tienen la huella de `STAGING_DB_FINGERPRINT` (obligatoria, distinta de la de producción). Una base desconocida se niega aunque no sea producción.
 - La suite (`tests/guard.ts`) y `scripts/migrar-staging.sh` usan la misma comprobación.

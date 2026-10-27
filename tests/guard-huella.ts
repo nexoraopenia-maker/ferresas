@@ -61,6 +61,18 @@ check('>>> sin variable, pero el destino coincide con .env → NEGADO', !evaluar
 check('destino distinto de .env y de la variable → permitido', evaluarEntorno({ DATABASE_URL: OTRA_BASE_MISMO_HOST, PROD_DB_FINGERPRINT: HUELLA, STAGING_DB_FINGERPRINT: STG }, envProd).ok)
 check('la variable puede venir solo de .env', evaluarEntorno({ DATABASE_URL: OTRA_BASE_MISMO_HOST, STAGING_DB_FINGERPRINT: STG }, envProd).ok)
 
+console.log('\n3b) DATABASE_URL y DIRECT_URL deben ser la MISMA base (migración cruzada)')
+const STG_POOLER = 'postgresql://u:x@ep-aaa-pooler.c-5.us-east-2.aws.neon.tech/staging'
+const STG_DIRECTA = 'postgresql://u:x@ep-aaa.c-5.us-east-2.aws.neon.tech/staging'
+const OTRA_DIRECTA = 'postgresql://u:x@ep-ddd.c-5.us-east-2.aws.neon.tech/otra'
+check('>>> el caso REAL: DATABASE_URL a producción y DIRECT_URL a staging → NEGADO, y el motivo dice «DISTINTAS» con las dos bases', (() => { const v = evaluarDestinos({ DATABASE_URL: PROD, DIRECT_URL: STG_DIRECTA }, HUELLA, [], STG); return !v.ok && !v.contraProduccion && v.motivo.includes('DISTINTAS') && v.motivo.includes(HUELLA) && v.motivo.includes(STG) })())
+check('>>> al revés (app en staging, directa a producción) → NEGADO', !evaluarDestinos({ DATABASE_URL: STG_POOLER, DIRECT_URL: PROD_DIRECTA }, HUELLA, [], STG).ok)
+check('>>> dos bases de staging distintas → NEGADO (no basta con que ambas sean «staging»)', !evaluarDestinos({ DATABASE_URL: STG_POOLER, DIRECT_URL: OTRA_DIRECTA }, HUELLA, [], STG).ok)
+check('pooled y directa de la MISMA base (con o sin -pooler, con puerto) → permitido', evaluarDestinos({ DATABASE_URL: STG_POOLER, DIRECT_URL: STG_DIRECTA }, HUELLA, [], STG).ok)
+check('solo una de las dos definida → no hay con qué comparar (sigue como antes)', evaluarDestinos({ DATABASE_URL: STG_POOLER }, HUELLA, [], STG).ok && evaluarDestinos({ DIRECT_URL: STG_DIRECTA }, HUELLA, [], STG).ok)
+check('>>> el mensaje no contiene credenciales', !evaluarDestinos({ DATABASE_URL: PROD, DIRECT_URL: STG_DIRECTA }, HUELLA, [], STG).motivo.includes('clave-falsa') && !evaluarDestinos({ DATABASE_URL: PROD, DIRECT_URL: STG_DIRECTA }, HUELLA, [], STG).motivo.includes('postgresql://'))
+check('>>> la suite (evaluarEntorno) también lo niega', !evaluarEntorno({ DATABASE_URL: STG_POOLER, DIRECT_URL: OTRA_DIRECTA, PROD_DB_FINGERPRINT: HUELLA, STAGING_DB_FINGERPRINT: STG }, envProd).ok)
+
 console.log('\n4) Guardia del CLI de Prisma')
 const A = ['node', 'prisma']
 const E = (extra: Record<string, string | undefined> = {}) => ({ DATABASE_URL: PROD, PROD_DB_FINGERPRINT: HUELLA, ...extra })
@@ -77,6 +89,14 @@ check('contra staging todo se permite', ['migrate dev', 'migrate deploy', 'db pu
 check('>>> --url a producción desde la línea de comandos → NEGADO', !evaluarComandoPrisma([...A, 'db', 'execute', '--url', PROD], ES, envProd).ok && !evaluarComandoPrisma([...A, 'migrate', 'diff', `--from-url=${PROD_DIRECTA}`], ES, envProd).ok)
 check('>>> --config (saltaría la guardia) → NEGADO', !evaluarComandoPrisma([...A, 'migrate', 'deploy', '--config', 'otra.ts'], ES, envProd).ok)
 check('>>> prisma migrate / db contra una base DESCONOCIDA → NEGADO (lista blanca)', ['migrate deploy', 'migrate dev', 'db push', 'db seed'].every((c) => !evaluarComandoPrisma([...A, ...c.split(' ')], desconocida, envProd).ok))
+const MEZCLA = { DATABASE_URL: PROD, DIRECT_URL: STG_DIRECTA, PROD_DB_FINGERPRINT: HUELLA, STAGING_DB_FINGERPRINT: STG }
+check('>>> EL BUILD DE VERCEL del incidente (production, DATABASE_URL=producción, DIRECT_URL=staging): migrate deploy → NEGADO, ya no migra la base equivocada', !evaluarComandoPrisma([...A, 'migrate', 'deploy'], { ...MEZCLA, VERCEL_ENV: 'production' }, envProd).ok)
+const AL_REVES = { DATABASE_URL: STG_POOLER, DIRECT_URL: PROD_DIRECTA, PROD_DB_FINGERPRINT: HUELLA, STAGING_DB_FINGERPRINT: STG }
+check('>>> AL REVÉS en un build de producción (la app lee staging pero `DIRECT_URL` es producción): migrate deploy → NEGADO, no se confunde con «producción a propósito»', !evaluarComandoPrisma([...A, 'migrate', 'deploy'], { ...AL_REVES, VERCEL_ENV: 'production' }, envProd).ok && !evaluarComandoPrisma([...A, 'migrate', 'deploy'], { ...AL_REVES, I_UNDERSTAND_THIS_IS_PRODUCTION: 'true' }, envProd).ok)
+check('>>> ni siquiera con el permiso explícito de producción', !evaluarComandoPrisma([...A, 'migrate', 'deploy'], { ...MEZCLA, I_UNDERSTAND_THIS_IS_PRODUCTION: 'true' }, envProd).ok && !evaluarComandoPrisma([...A, 'migrate', 'status'], { ...MEZCLA, I_UNDERSTAND_THIS_IS_PRODUCTION: 'true' }, envProd).ok)
+check('>>> tampoco contra staging: migrate dev / db push con las variables cruzadas → NEGADO', ['migrate deploy', 'migrate dev', 'db push', 'db seed'].every((c) => !evaluarComandoPrisma([...A, ...c.split(' ')], { ...MEZCLA, DATABASE_URL: STG_POOLER, DIRECT_URL: OTRA_DIRECTA }, envProd).ok))
+check('>>> el build correcto de Vercel (las dos a producción, misma base) sigue permitido', evaluarComandoPrisma([...A, 'migrate', 'deploy'], E({ DIRECT_URL: PROD_DIRECTA, VERCEL_ENV: 'production' }), envProd).ok)
+check('>>> `prisma generate` (postinstall) NO se bloquea aunque estén cruzadas: no toca la base', evaluarComandoPrisma([...A, 'generate'], { ...MEZCLA, VERCEL_ENV: 'production' }, envProd).ok)
 check('generate / validate / format no tocan la base → permitidos siempre', ['generate', 'validate', 'format'].every((c) => evaluarComandoPrisma([...A, c], E(), envProd).ok))
 const cfg = readFileSync('prisma.config.ts', 'utf8')
 check('>>> prisma.config.ts ejecuta la guardia ANTES de defineConfig', cfg.indexOf('evaluarComandoPrisma(process.argv)') > 0 && cfg.indexOf('evaluarComandoPrisma(process.argv)') < cfg.indexOf('export default defineConfig'))
