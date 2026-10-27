@@ -7,11 +7,11 @@ import { requireTenantContext } from '@/lib/session'
 import { isBusinessError, type ActionResult } from '@/lib/errors'
 import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
-import { anularCompraSchema, crearBorradorSchema, editarBorradorSchema, listarComprasSchema, recibirCompraSchema, verCompraSchema } from './schemas'
+import { anularCompraSchema, buscarProductoCompraSchema, crearBorradorSchema, editarBorradorSchema, listarComprasSchema, recibirCompraSchema, verCompraSchema } from './schemas'
 import {
   anularCompra as runAnular, crearBorrador as runCrear, editarBorrador as runEditar, listarCompras as runListar,
-  obtenerCompra as runObtener, recibirCompra as runRecibir,
-  type PaginaCompras, type ResultadoCompra, type ResultadoRecibir,
+  obtenerCompra as runObtener, recibirCompra as runRecibir, buscarProductosParaCompra as runBuscar,
+  type PaginaCompras, type ProductoParaCompra, type ResultadoCompra, type ResultadoRecibir,
 } from './service'
 
 /**
@@ -84,4 +84,10 @@ export async function verCompra(raw: unknown): Promise<ActionResult<Awaited<Retu
   const p = verCompraSchema.safeParse(raw)
   if (!p.success) return invalida(p.error)
   return conTenant('verCompra', (db, ctx) => runObtener(db, ctx, p.data.purchaseId))
+}
+
+export async function buscarProductosCompra(raw: unknown): Promise<ActionResult<ProductoParaCompra[]>> {
+  const p = buscarProductoCompraSchema.safeParse(raw)
+  if (!p.success) return invalida(p.error)
+  return conTenant('buscarProductosCompra', (db, ctx) => runBuscar(db, ctx, p.data.texto))
 }

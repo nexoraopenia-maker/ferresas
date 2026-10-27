@@ -6,7 +6,8 @@ import { readFileSync } from 'node:fs'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
 import { completarRuc } from '../src/lib/documentos'
-import { costoBase, costoTrasCompra, costoTrasDevolucion, igvDeCompra, totalDeLinea } from '../src/features/compras/costo'
+import { aEscala, costoBase, costoTrasCompra, costoTrasDevolucion, igvDeCompra, totalDeLinea } from '../src/features/compras/costo'
+import { Prisma } from '../src/generated/prisma/client'
 import { anularCompraSchema, crearBorradorSchema, editarBorradorSchema, listarComprasSchema, recibirCompraSchema } from '../src/features/compras/schemas'
 import { anularCompra, crearBorrador, editarBorrador, listarCompras, obtenerCompra, recibirCompra } from '../src/features/compras/service'
 import { crearProveedor } from '../src/features/proveedores/service'
@@ -100,11 +101,29 @@ async function main() {
   check('>>> cantidad cero o negativa → error (no hay compra de nada)', (() => { try { costoTrasCompra({ stock: 1, costo: 1, cantidad: 0, valor: 1 }); return false } catch { return true } })())
   check('>>> total de línea: 3 cajas × 60.005 = 180.02 (mitad hacia arriba)', totalDeLinea(3, 60.005) === 180.02)
   check('>>> costo base = total / unidades base: 180.00 / 36 = 5.0000; 100 / 3 = 33.3333', costoBase(180, 36) === 5 && costoBase(100, 3) === 33.3333)
-  check('>>> IGV sobre la BASE de cada tasa, no línea a línea: 3 × 0.05 al 18 % = 0.03, no 3 × 0.01', (() => {
-    const r = igvDeCompra([{ total: 0.05, tasa: 0.18 }, { total: 0.05, tasa: 0.18 }, { total: 0.05, tasa: 0.18 }])
-    return r.subtotal === 0.15 && r.igv === 0.03 && r.total === 0.18
+  check('>>> IGV sobre la BASE de cada tasa, no línea a línea: 3 líneas de 0.02 al 18 % = 0.01 (0.06 × 18 %), no 0.00 (3 × 0.0036 → 0)', (() => {
+    const r = igvDeCompra([{ total: 0.02, tasa: 0.18 }, { total: 0.02, tasa: 0.18 }, { total: 0.02, tasa: 0.18 }])
+    return r.subtotal === 0.06 && r.igv === 0.01 && r.total === 0.07
   })())
   check('>>> mezcla de tasas (18 % y exonerado) suma por separado', (() => { const r = igvDeCompra([{ total: 100, tasa: 0.18 }, { total: 50, tasa: 0 }]); return r.subtotal === 150 && r.igv === 18 && r.total === 168 })())
+  check('>>> aEscala: redondeo mitad hacia arriba lejos del cero, notación científica y texto', aEscala('60.005', 2) === 6001n && aEscala('-1.005', 2) === -101n && aEscala(1e-7, 8) === 10n && aEscala(1e21, 0) === 10n ** 21n && aEscala(' 3 ', 0) === 3n && aEscala('.5', 0) === 1n)
+  check('>>> aEscala: lo que no es un número se rechaza (no se convierte en 0)', ['', 'abc', '1,5', '1.2.3', '--1'].every((t) => { try { aEscala(t, 2); return false } catch { return true } }) && (() => { try { aEscala(NaN, 2); return false } catch { return true } })())
+  check('>>> el costo NO depende de Prisma: se puede usar en el navegador (sin imports)', !/^import /m.test(readFileSync('src/features/compras/costo.ts', 'utf8')))
+  check('>>> equivalencia: 2000 casos al azar dan EXACTAMENTE lo mismo que Prisma.Decimal (línea, costo base e IGV)', (() => {
+    const D = Prisma.Decimal
+    for (let k = 0; k < 2000; k++) {
+      const q = (Math.floor(Math.random() * 99_999) + 1) / [1, 10, 100, 10_000][k % 4]!
+      const c = Math.floor(Math.random() * 99_999_999) / 10_000
+      const t = Number(new D(q).mul(c).toDecimalPlaces(2, D.ROUND_HALF_UP).toString())
+      if (totalDeLinea(q, c) !== t) return false
+      const base = (Math.floor(Math.random() * 999_999) + 1) / 10_000
+      if (costoBase(t, base) !== Number(new D(t).div(base).toDecimalPlaces(4, D.ROUND_HALF_UP).toString())) return false
+      const tasa = [0, 0.18, 0.1, 0.105][k % 4]!
+      const igv = Number(new D(t).mul(tasa).toDecimalPlaces(2, D.ROUND_HALF_UP).toString())
+      if (igvDeCompra([{ total: t, tasa }]).igv !== igv) return false
+    }
+    return true
+  })())
 
   // ─── B) Esquemas ──────────────────────────────────────────────────────────────────────────────────────────────────
   console.log('\nB) Esquemas')
@@ -359,8 +378,8 @@ async function main() {
   check('>>> la deuda del proveedor se sube y baja con el MISMO monto de la cuenta por pagar', /payableBalance: \{ increment: total \}/.test(svc) && /payableBalance: \{ decrement: num\(cxp\.amount\) \}/.test(svc))
   check('>>> crear usa la clave de idempotencia y el correlativo se toma DENTRO de la transacción', /compraPorClave\(db, input\.idempotencyKey\)/.test(cuerpo('crearBorrador')) && cuerpo('crearBorrador').indexOf('$transaction') < cuerpo('crearBorrador').indexOf('claimNextNumber('))
   const cuerpoAccion = (n: string) => { const i = act.indexOf(`export async function ${n}(`); const j = act.indexOf('export async function', i + 10); return act.slice(i, j < 0 ? undefined : j) }
-  const conEsquema: [string, string][] = [['crearBorrador', 'crearBorradorSchema'], ['editarBorrador', 'editarBorradorSchema'], ['recibirCompra', 'recibirCompraSchema'], ['anularCompra', 'anularCompraSchema'], ['listarCompras', 'listarComprasSchema'], ['verCompra', 'verCompraSchema']]
-  check('>>> las acciones son "use server", validan con SU esquema antes de tocar nada, no deciden permisos y solo exportan 6 funciones', act.startsWith("'use server'") && act.includes('requireTenantContext') && !/puede\(|exigir\(/.test(act) && (act.match(/export async function/g) ?? []).length === 6 && !/export (const|let|class)/.test(act) && conEsquema.every(([n, esq]) => { const c = cuerpoAccion(n); return c.includes(`${esq}.safeParse(`) && /if \(!p\.success\) return invalida\(p\.error\)/.test(c) && c.indexOf('safeParse(') < c.indexOf('conTenant(') }))
+  const conEsquema: [string, string][] = [['crearBorrador', 'crearBorradorSchema'], ['editarBorrador', 'editarBorradorSchema'], ['recibirCompra', 'recibirCompraSchema'], ['anularCompra', 'anularCompraSchema'], ['listarCompras', 'listarComprasSchema'], ['verCompra', 'verCompraSchema'], ['buscarProductosCompra', 'buscarProductoCompraSchema']]
+  check('>>> las acciones son "use server", validan con SU esquema antes de tocar nada, no deciden permisos y solo exportan 7 funciones', act.startsWith("'use server'") && act.includes('requireTenantContext') && !/puede\(|exigir\(/.test(act) && (act.match(/export async function/g) ?? []).length === 7 && !/export (const|let|class)/.test(act) && conEsquema.every(([n, esq]) => { const c = cuerpoAccion(n); return c.includes(`${esq}.safeParse(`) && /if \(!p\.success\) return invalida\(p\.error\)/.test(c) && c.indexOf('safeParse(') < c.indexOf('conTenant(') }))
 
   } catch (x) { check(`>>> la sección M terminó sin excepciones`, false, String((x as Error)?.message ?? x).slice(0, 200)) }
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)

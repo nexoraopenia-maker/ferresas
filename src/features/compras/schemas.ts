@@ -58,3 +58,5 @@ export const listarComprasSchema = z.object({
 export type ListarComprasInput = z.infer<typeof listarComprasSchema>
 
 export const verCompraSchema = z.object({ purchaseId: id })
+
+export const buscarProductoCompraSchema = z.object({ texto: z.string().trim().min(2).max(80) })

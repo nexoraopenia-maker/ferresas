@@ -13,6 +13,8 @@ import { applyStockMovement } from '@/features/inventory/stock-service'
 import type { CreateStockMovementInput } from '@/features/inventory/schemas'
 import { claimNextNumber, ensureCounter } from '@/features/pos/sale-service'
 import { bloquearProveedor } from '@/features/proveedores/service'
+import { palabras, relevancia } from '@/features/pos/busqueda'
+import { variantesConTilde } from '@/features/pos/resaltado'
 import { puedeVerProveedores } from '@/features/proveedores/permisos'
 import { costoBase, costoTrasCompra, costoTrasDevolucion, igvDeCompra, totalDeLinea } from './costo'
 import type {
@@ -508,6 +510,7 @@ export async function obtenerCompra(db: TenantPrismaClient, ctx: TenantContext, 
     select: {
       id: true, number: true, status: true, invoiceRef: true, paymentCondition: true, dueDate: true, notes: true, warehouseId: true,
       subtotal: true, taxTotal: true, total: true, createdAt: true, receivedAt: true, voidedAt: true, voidReason: true,
+      warehouse: { select: { name: true } }, user: { select: { name: true } }, receivedBy: { select: { name: true } }, voidedBy: { select: { name: true } },
       supplier: { select: { id: true, name: true, taxId: true } },
       accountPayable: { select: { id: true, amount: true, paidAmount: true, status: true, dueDate: true } },
       items: {
@@ -525,3 +528,137 @@ export async function obtenerCompra(db: TenantPrismaClient, ctx: TenantContext, 
   }
 }
 
+
+// ─── Para el formulario ─────────────────────────────────────────────────────────────────────────────────────────────
+
+export interface OpcionesCompra {
+  almacenes: { id: string; name: string; isDefault: boolean }[]
+  /** Proveedores ACTIVOS, en orden alfabético del español. */
+  proveedores: { id: string; name: string; taxId: string | null; paymentTermDays: number }[]
+}
+
+/** Lo que el formulario necesita para elegir: los almacenes de la sucursal en la que se opera y los proveedores activos. */
+export async function opcionesDeCompra(db: TenantPrismaClient, ctx: TenantContext): Promise<OpcionesCompra> {
+  exigir(ctx, 'compras.registrar')
+  const branchId = requireBranch(ctx)
+  const [almacenes, proveedores] = await Promise.all([
+    db.warehouse.findMany({ where: { branchId, isActive: true, deletedAt: null }, orderBy: [{ isDefault: 'desc' }, { name: 'asc' }], select: { id: true, name: true, isDefault: true } }),
+    db.supplier.findMany({ where: { deletedAt: null, isActive: true }, select: { id: true, name: true, taxId: true, paymentTermDays: true }, take: 1000 }),
+  ])
+  const orden = new Intl.Collator('es', { sensitivity: 'base', numeric: true })
+  proveedores.sort((a, b) => orden.compare(a.name, b.name))
+  return { almacenes, proveedores }
+}
+
+export interface ProductoParaCompra {
+  productId: string
+  name: string
+  sku: string
+  unitType: string
+  /** IGV del producto (0.18, 0…): con él se calcula el impuesto de la línea. */
+  taxRate: number
+  /** Costo promedio actual, SIN IGV. 0 = todavía sin costo. */
+  costPrice: number
+  presentaciones: { id: string; name: string; unitType: string; factor: string }[]
+}
+
+/**
+ * Búsqueda de productos para una compra: solo los que llevan control de stock (los servicios no se compran como mercadería), con su
+ * costo actual y sus presentaciones (para comprar por caja o por saco). Mismo criterio de parecido que el POS.
+ */
+export async function buscarProductosParaCompra(db: TenantPrismaClient, ctx: TenantContext, texto: string): Promise<ProductoParaCompra[]> {
+  exigir(ctx, 'compras.registrar')
+  const t = texto.trim()
+  if (t.length < 2 || t.length > 80) return []
+  const ps = palabras(t)
+  const productos = await db.product.findMany({
+    where: {
+      deletedAt: null, isActive: true, trackStock: true,
+      OR: [
+        { barcode: { startsWith: t } },
+        { qrCode: t },
+        { sku: { startsWith: t, mode: 'insensitive' } },
+        { AND: ps.map((p) => ({ OR: variantesConTilde(p).flatMap((v) => [{ name: { contains: v, mode: 'insensitive' as const } }, { sku: { contains: v, mode: 'insensitive' as const } }]) })) },
+      ],
+    },
+    take: 60,
+    orderBy: { name: 'asc' },
+    select: {
+      id: true, name: true, sku: true, barcode: true, qrCode: true, unitType: true, taxRate: true, costPrice: true,
+      presentations: { where: { isActive: true, deletedAt: null }, orderBy: { factor: 'asc' }, select: { id: true, name: true, unitType: true, factor: true } },
+    },
+  })
+  return productos
+    .map((p) => ({ p, r: relevancia(p, t) }))
+    .sort((a, b) => a.r - b.r || a.p.name.localeCompare(b.p.name, 'es'))
+    .slice(0, 20)
+    .map(({ p }) => ({
+      productId: p.id, name: p.name, sku: p.sku, unitType: p.unitType, taxRate: num(p.taxRate), costPrice: num(p.costPrice),
+      presentaciones: p.presentations.map((x) => ({ id: x.id, name: x.name, unitType: x.unitType, factor: x.factor.toString() })),
+    }))
+}
+
+export interface BorradorParaEditar {
+  id: string
+  number: string
+  warehouseId: string
+  supplierId: string | null
+  invoiceRef: string | null
+  paymentCondition: 'CONTADO' | 'CREDITO'
+  /** AAAA-MM-DD o `null`. */
+  vence: string | null
+  notes: string | null
+  lineas: {
+    producto: ProductoParaCompra
+    presentationId: string | null
+    /** Lo que se tecleó: unidades de compra (cajas) o unidades base si no hubo presentación. */
+    cantidad: string
+    /** Costo por unidad de COMPRA, sin IGV: total de la línea / cantidad tecleada. */
+    costo: string
+  }[]
+}
+
+/**
+ * Un borrador listo para el formulario de edición. Solo `compras.registrar` y solo BORRADOR (una recibida o anulada no se edita).
+ * El costo por unidad de compra se reconstruye del total de la línea, que es lo que se guardó exacto.
+ */
+export async function borradorParaEditar(db: TenantPrismaClient, ctx: TenantContext, purchaseId: string): Promise<BorradorParaEditar> {
+  exigir(ctx, 'compras.registrar')
+  const c = await db.purchase.findFirst({
+    where: { id: purchaseId },
+    select: {
+      id: true, number: true, status: true, warehouseId: true, supplierId: true, invoiceRef: true, paymentCondition: true, dueDate: true, notes: true,
+      items: {
+        orderBy: { id: 'asc' },
+        select: {
+          presentationId: true, enteredQuantity: true, quantity: true, lineTotal: true,
+          product: {
+            select: {
+              id: true, name: true, sku: true, unitType: true, taxRate: true, costPrice: true,
+              presentations: { where: { isActive: true, deletedAt: null }, orderBy: { factor: 'asc' }, select: { id: true, name: true, unitType: true, factor: true } },
+            },
+          },
+        },
+      },
+    },
+  })
+  if (!c) throw noExiste()
+  if (c.status !== 'BORRADOR') throw invalido('Solo se puede editar una compra en borrador.')
+  return {
+    id: c.id, number: c.number, warehouseId: c.warehouseId, supplierId: c.supplierId, invoiceRef: c.invoiceRef, paymentCondition: c.paymentCondition,
+    vence: c.dueDate ? c.dueDate.toISOString().slice(0, 10) : null, notes: c.notes,
+    lineas: c.items.map((i) => {
+      const cantidad = (i.enteredQuantity ?? i.quantity).toString()
+      const costo = new Prisma.Decimal(i.lineTotal.toString()).div(cantidad).toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP)
+      return {
+        producto: {
+          productId: i.product.id, name: i.product.name, sku: i.product.sku, unitType: i.product.unitType, taxRate: num(i.product.taxRate), costPrice: num(i.product.costPrice),
+          presentaciones: i.product.presentations.map((x) => ({ id: x.id, name: x.name, unitType: x.unitType, factor: x.factor.toString() })),
+        },
+        presentationId: i.presentationId,
+        cantidad: new Prisma.Decimal(cantidad).toString(),
+        costo: costo.toString(),
+      }
+    }),
+  }
+}

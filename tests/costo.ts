@@ -106,6 +106,10 @@ async function main() {
     // Compras: el costo es el dato de la compra (lo teclea quien tiene `compras.registrar`, que lo da el dueño) y de ahí sale el promedio.
     'src/features/compras/schemas.ts',
     'src/features/compras/service.ts',
+    // Pantallas de compras: el formulario solo lo abre `compras.registrar` (página 404 sin él) y el detalle muestra el costo por
+    // línea solo con `productos.ver_costo` o `compras.registrar` (`verCostos`); quien solo paga ve los totales de la factura.
+    'src/features/compras/components/FormularioCompra.tsx',
+    'src/features/compras/components/DetalleCompra.tsx',
   ])
   const proj = proyecto()
   const fuentes = ficheros(join(RAIZ, 'src'), (f) => f.endsWith('.ts') || f.endsWith('.tsx'))
