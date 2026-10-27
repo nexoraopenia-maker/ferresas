@@ -60,6 +60,9 @@ export const PERMISOS = [
   'guias.anular',
   'usuarios.gestionar',
   'sucursales.gestionar',
+  // El registro de auditoría muestra quién hizo qué, con el antes y el después: solo dueño y administrador (ver MATRIZ: ADMIN lo hereda al
+  // ser «todo menos lo fiscal y el plan»). No es opcional: nadie más puede recibirlo.
+  'auditoria.ver',
   'config.fiscal',
   'plan.gestionar',
 ] as const
@@ -251,6 +254,7 @@ export const ETIQUETAS: Record<Permiso, string> = {
   'guias.anular': 'Anular guías de remisión',
   'usuarios.gestionar': 'Gestionar usuarios',
   'sucursales.gestionar': 'Gestionar sucursales',
+  'auditoria.ver': 'Ver el registro de auditoría (quién hizo qué)',
   'config.fiscal': 'Configurar series y datos fiscales',
   'plan.gestionar': 'Contratar y pagar el plan',
 }

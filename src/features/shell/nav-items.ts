@@ -203,6 +203,15 @@ export const NAV_ITEMS: NavItem[] = [
     permisos: ['usuarios.gestionar'],
   },
   {
+    href: '/auditoria',
+    label: 'Auditoría',
+    short: 'Auditoría',
+    // Lupa sobre una lista
+    icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2M9 5h6m-1 9a3 3 0 1 0 6 0 3 3 0 0 0-6 0Zm5.2 2.2L21 18',
+    // Los mismos permisos que la página y el servicio: solo dueño y administrador.
+    permisos: ['auditoria.ver'],
+  },
+  {
     href: '/seguridad',
     label: 'Seguridad',
     short: 'Seguridad',

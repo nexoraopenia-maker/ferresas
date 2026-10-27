@@ -99,6 +99,7 @@ Seis roles. **Un usuario puede tener varios**, y entonces se queda con la
 | `stock.transferir_despachar` | ✅ | ✅ | — | — | ✅ | — |
 | `stock.transferir_recibir` | ✅ | ✅ | — | — | ✅ | — |
 | `reportes.ver` | ✅ | ✅ | — | — | **❌** | ✅ |
+| `auditoria.ver` (F5.5) | ✅ | ✅ | — | — | — | **❌** |
 | `comprobantes.emitir` | ✅ | ✅ | — | ✅ | — | — |
 | `comprobantes.anular` | ✅ | ✅ | — | — | — | — |
 | `usuarios.gestionar` | ✅ | ✅ | — | — | — | — |
