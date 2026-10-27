@@ -903,3 +903,21 @@ Lógica pura; **no cambia el comportamiento de la venta**: `registerSale` valida
 - **Invariantes que sostienen todo** (las vigila la auditoría): la deuda del proveedor es la suma de sus cuentas abiertas; lo pagado de una cuenta es la suma de los repartos de pagos vigentes; cada compra recibida dejó exactamente su entrada de stock (y su devolución si se anuló); un turno cerrado conserva sus pagos y su esperado congelados.
 - **Cómo se despliega:** ver `docs/DESPLIEGUE-FASE4.md` (la migración la aplica el build de Vercel antes de compilar; rollback = redesplegar el anterior).
 - **Fuera de la Fase 4 (a propósito):** órdenes de compra, devoluciones parciales, notas de crédito de proveedor, compras en dólares, PLE/SIRE, cheques/letras, estado de cuenta de proveedor en A4 imprimible.
+
+## Fase 5: reportes y SUNAT
+
+### F5.1 y F5.2: base de reportes y reportes de ventas (`src/features/reportes/`)
+
+- **Rutas:** `/reportes` (centro) y `/reportes/ventas` (cuatro pestañas: por periodo, por vendedor, por medio de pago y cobros), más `GET /api/reportes/ventas/[tipo]` (CSV). Todo exige `reportes.ver`: dueño, administrador **y contador**; cajero, vendedor y almacenero no. Ninguno de estos reportes lee costos ni márgenes (eso será de `productos.ver_costo`, en F5.3).
+- **El periodo** (`periodo.ts`, puro): días civiles **del negocio**, de la medianoche del primer día (incluida) a la del día siguiente al último (excluida). Una venta de las 23:59 en Lima es de ese día aunque en UTC ya sea mañana; dos periodos contiguos nunca se solapan ni dejan huecos; el día que cambia la hora dura 23 o 25 horas y sigue siendo un día. Presets (hoy, ayer, semana —desde el LUNES—, semana pasada, mes, mes pasado, últimos 30) y rango libre de hasta 366 días. Una dirección manipulada vuelve al periodo por defecto con un aviso, no con un error. Agrupación por día, semana (identificada por su lunes) o mes, automática según la longitud, y **sin huecos** (los días sin ventas salen en cero).
+- **Definiciones** (las mismas en pantalla, CSV y pruebas), en `ventas-calculo.ts`, todo en céntimos enteros:
+  - *Venta*: COMPLETADA, fechada por el día en que se completó. Anuladas, borradores y devueltas no cuentan.
+  - *A crédito*: cuenta como venta el día de la operación; el fiado es un «medio» más. El abono posterior no es venta: es un cobro.
+  - *Monto de un medio*: lo cobrado **menos el vuelto**, de modo que los medios de una venta suman su total. Si no suman (datos históricos), el reporte lo **avisa** con la diferencia en vez de esconderlo.
+  - *Vendedor*: quien armó el pedido o la cotización de la que nació la venta (`Quote.userId`); si no viene de uno, quien la registró. Alternativa: «quien cobró en caja».
+  - *Cobros*: el dinero que ENTRÓ: pagos de las ventas completadas (sin lo fiado, netos de vuelto) más abonos de deuda **no anulados**, por la fecha en que se cobraron.
+- **Sucursales:** el cliente aislado acota ventas y pagos de ventas; los **abonos no se acotan solos**, así que el reporte de cobros los filtra por las sucursales del usuario (si no, un administrador de una sucursal vería los abonos de otra).
+- **Lectura por lotes** de 1000 (orden estable por fecha e id): un periodo largo no se trae de golpe y ninguna venta se pierde ni se cuenta dos veces (probado con 2050).
+- **CSV** es-PE (BOM, «;», punto decimal, protección de fórmulas ya existente), con fila de TOTAL. Cada descarga queda en la auditoría (`reporte.exportado`: quién, qué reporte, qué periodo, cuántas filas); una descarga denegada o fallida no deja registro. Sin dependencia nueva: no hay `.xlsx`.
+- **Pruebas:** `reportes-periodo` (45), `reportes-calculo` (50, incluye la conciliación de 3000 ventas al azar: días = semanas = meses = por vendedor = por medio = total, **sin redondear antes de comparar**), `reportes-ventas` (42, contra la base) y `reportes-pantallas` (32).
+- **Límite conocido:** el reporte «por vendedor» atribuye al creador del pedido/cotización; una venta directa se atribuye a quien la registró. Si el negocio quisiera comisiones por otra regla, hay que decidirla antes de usarlo para pagar.

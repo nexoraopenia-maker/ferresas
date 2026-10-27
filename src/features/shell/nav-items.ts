@@ -120,6 +120,15 @@ export const NAV_ITEMS: NavItem[] = [
     permisos: [...PERMISOS_VER_POR_PAGAR],
   },
   {
+    href: '/reportes',
+    label: 'Reportes',
+    short: 'Reportes',
+    // Barras
+    icon: 'M4 20V10m6 10V4m6 16v-7m4 7H2',
+    // Los mismos permisos que la página y el servicio: `reportes.ver` (dueño, administrador y contador).
+    permisos: ['reportes.ver'],
+  },
+  {
     href: '/comprobantes',
     label: 'Comprobantes',
     short: 'Docs',
