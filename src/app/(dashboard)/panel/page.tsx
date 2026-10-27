@@ -8,6 +8,10 @@ import { contarCostosPendientes } from '@/features/inventory/costos-service'
 import { puedeVerCobranza, resumenPorCobrar } from '@/features/clientes/cobranza'
 import { puedeVerClientes } from '@/features/clientes/service'
 import { PorCobrarWidget } from '@/features/clientes/components/PorCobrarWidget'
+import { resumenPorPagar } from '@/features/por-pagar/informes'
+import { puedeVerPorPagar } from '@/features/por-pagar/permisos'
+import { PorPagarWidget } from '@/features/por-pagar/components/PorPagarWidget'
+import { puedeVerProveedores } from '@/features/proveedores/permisos'
 import {
   AlertasStockWidget, CajaWidget, GraficoSemana, KpiVentas, PendientesWidget, TopProductos,
 } from '@/features/dashboard/components/Widgets'
@@ -30,7 +34,7 @@ export default async function PanelPage() {
   const verVentas = puede(ctx, 'reportes.ver')
   const verCaja = verVentas || puede(ctx, 'caja.arqueo')
 
-  const [ventas, caja, alertas, tenant, mermasPendientes, costosPendientes, porCobrar] = await Promise.all([
+  const [ventas, caja, alertas, tenant, mermasPendientes, costosPendientes, porCobrar, porPagar] = await Promise.all([
     verVentas ? resumenDeVentas(db, ctx) : null,
     verCaja ? rendimientoDeCaja(db, ctx) : null,
     alertasDeStock(db, ctx),
@@ -40,6 +44,8 @@ export default async function PanelPage() {
     puede(ctx, 'productos.ver_costo') ? contarCostosPendientes(db, ctx) : Promise.resolve(null),
     // Lo que te deben: solo para quien ve la cobranza; el panel no lo calcula para los demás.
     puedeVerCobranza(ctx) ? resumenPorCobrar(db, ctx) : Promise.resolve(null),
+    // Lo que debes: solo para quien ve las cuentas por pagar; el panel no lo calcula para los demás.
+    puedeVerPorPagar(ctx) ? resumenPorPagar(db, ctx) : Promise.resolve(null),
   ])
 
   return (
@@ -76,10 +82,11 @@ export default async function PanelPage() {
         {ventas && <TopProductos items={ventas.topProductos} />}
         {caja && <CajaWidget caja={caja} />}
         {porCobrar && porCobrar.clientesConDeuda > 0 && <PorCobrarWidget resumen={porCobrar} enlazarFichas={puedeVerClientes(ctx)} />}
+        {porPagar && porPagar.proveedoresConDeuda > 0 && <PorPagarWidget resumen={porPagar} enlazarFichas={puedeVerProveedores(ctx)} />}
         <AlertasStockWidget {...alertas} />
       </div>
 
-      {!ventas && !caja && !porCobrar && (
+      {!ventas && !caja && !porCobrar && !porPagar && (
         <p className="rounded-2xl border border-hairline bg-surface p-4 text-sm text-ink-muted">
           Tu rol no incluye informes de ventas. Usa el menú para ir a lo tuyo.
         </p>

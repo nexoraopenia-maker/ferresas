@@ -35,6 +35,9 @@ export const PERMISOS = [
   'credito.limite',
   'credito.castigar',
   'clientes.gestionar',
+  'proveedores.gestionar',
+  'compras.registrar',
+  'proveedores.pagar',
   'cotizaciones.crear',
   'caja.abrir_cerrar',
   'caja.arqueo',
@@ -77,7 +80,8 @@ export const OPCIONALES: Partial<Record<Role, readonly Permiso[]>> = {
   // Fiar es una decisión de confianza sobre dinero que no está en el cajón: apagado de fábrica, lo activa el dueño. Solo el CAJERO
   // (quien cobra); el VENDEDOR arma pedidos y no cobra, así que no tendría dónde usarlo.
   CAJERO: ['ventas.descuento', 'credito.otorgar'],
-  ALMACENERO: ['productos.editar_precio', 'stock.ajustar'],
+  // Registrar una compra implica ver y teclear COSTOS: el almacenero no los ve de fábrica, así que lo activa el dueño si de verdad lo quiere así.
+  ALMACENERO: ['productos.editar_precio', 'stock.ajustar', 'compras.registrar'],
 }
 
 /**
@@ -222,6 +226,9 @@ export const ETIQUETAS: Record<Permiso, string> = {
   'credito.limite': 'Cambiar la línea de crédito, el plazo o bloquear a un cliente',
   'credito.castigar': 'Dar de baja o castigar una deuda y anular abonos',
   'clientes.gestionar': 'Crear, editar y dar de baja clientes',
+  'proveedores.gestionar': 'Crear, editar y dar de baja proveedores',
+  'compras.registrar': 'Registrar compras de mercadería (con sus costos)',
+  'proveedores.pagar': 'Pagar a proveedores (sale dinero del negocio)',
   'cotizaciones.crear': 'Cotizar',
   'caja.abrir_cerrar': 'Abrir y cerrar caja',
   'caja.arqueo': 'Ver arqueos y descuadres',

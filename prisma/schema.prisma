@@ -247,6 +247,22 @@ enum CashSessionStatus {
   CERRADA
 }
 
+/// Cómo se paga una compra. CONTADO: ya se pagó al recibirla (no genera deuda). CREDITO: genera una cuenta por pagar con vencimiento.
+enum PurchaseCondition {
+  CONTADO
+  CREDITO
+}
+
+/// Estado de una cuenta por pagar (compra a crédito). «Vencida» NO es un estado: se deriva de `dueDate`.
+enum PayableStatus {
+  /// Con saldo pendiente.
+  ABIERTA
+  /// Pagada por completo.
+  PAGADA
+  /// Anulada con motivo (la compra se anuló). El saldo que quedaba sale de la deuda con el proveedor.
+  ANULADA
+}
+
 /// Estado de una cuenta por cobrar (venta a crédito). «Vencida» NO es un estado: se deriva de `dueDate` y se desactualizaría.
 enum ReceivableStatus {
   /// Con saldo pendiente.
@@ -468,6 +484,9 @@ model Tenant {
   receivables        Receivable[]
   customerPayments   CustomerPayment[]
   paymentAllocations PaymentAllocation[]
+  accountPayables    AccountPayable[]
+  supplierPayments   SupplierPayment[]
+  supplierPaymentAllocations SupplierPaymentAllocation[]
   quotes             Quote[]
   quoteItems         QuoteItem[]
   purchases          Purchase[]
@@ -638,6 +657,10 @@ model User {
   payments        Payment[]
   customerPaymentsTaken  CustomerPayment[] @relation("CustomerPaymentTakenBy")
   customerPaymentsVoided CustomerPayment[] @relation("CustomerPaymentVoidedBy")
+  supplierPaymentsMade   SupplierPayment[] @relation("SupplierPaymentMadeBy")
+  supplierPaymentsVoided SupplierPayment[] @relation("SupplierPaymentVoidedBy")
+  purchasesReceived      Purchase[]        @relation("PurchaseReceivedBy")
+  purchasesVoided        Purchase[]        @relation("PurchaseVoidedBy")
   quotes          Quote[]
   purchases       Purchase[]
   auditLogs       AuditLog[]             @relation("AuditActor")
@@ -774,6 +797,12 @@ model Supplier {
   address String?
   notes   String?
 
+  /// Plazo de pago por defecto, en días, de una compra a crédito a este proveedor (0 = sin plazo propio).
+  paymentTermDays Int @default(0)
+  /// Deuda viva con el proveedor = Σ (monto − pagado) de sus cuentas por pagar ABIERTAS. Es una CACHÉ que se actualiza en la misma
+  /// transacción que la cuenta, bajo bloqueo de la fila; una auditoría la compara con la suma real. Nunca se escribe suelta.
+  payableBalance Decimal @default(0) @db.Decimal(14, 2)
+
   isActive  Boolean   @default(true)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -781,6 +810,8 @@ model Supplier {
 
   products  Product[]
   purchases Purchase[]
+  accountPayables  AccountPayable[]
+  supplierPayments SupplierPayment[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, taxId])
@@ -1341,6 +1372,115 @@ model PaymentAllocation {
 }
 
 // ============================================================================
+//  CUENTAS POR PAGAR (proveedores)
+//
+//  Espejo de las cuentas por cobrar, con tablas PROPIAS: el dominio del deudor (cliente) y el del acreedor (proveedor) no se mezclan.
+//  Mismas reglas de aislamiento: toda referencia dentro del negocio es una FK COMPUESTA con tenantId, y entre tablas de un negocio
+//  nada se borra en cascada (solo el negocio entero arrastra).
+// ============================================================================
+
+/// Lo que se le debe a un proveedor por UNA compra a crédito. El saldo es `amount − paidAmount`.
+model AccountPayable {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  supplierId String
+  supplier   Supplier @relation(fields: [tenantId, supplierId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  purchaseId String
+  purchase   Purchase @relation(fields: [tenantId, purchaseId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  /// Monto financiado (el total de la compra a crédito).
+  amount     Decimal       @db.Decimal(14, 2)
+  /// Lo ya pagado. El saldo es `amount − paidAmount`.
+  paidAmount Decimal       @default(0) @db.Decimal(14, 2)
+  /// Día de vencimiento (fecha del negocio, sin hora).
+  dueDate    DateTime      @db.Date
+  status     PayableStatus @default(ABIERTA)
+
+  closedAt   DateTime?
+  voidedAt   DateTime?
+  voidReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  allocations SupplierPaymentAllocation[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, purchaseId])
+  @@index([tenantId, supplierId, status])
+  @@index([tenantId, status, dueDate])
+  @@map("account_payables")
+}
+
+/// Un pago a un proveedor. Si es en EFECTIVO sale del cajón: exige un turno de caja abierto y resta al esperado del cierre.
+model SupplierPayment {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  supplierId String
+  supplier   Supplier @relation(fields: [tenantId, supplierId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  branchId String
+  branch   Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  cashSessionId String?
+  cashSession   CashSession? @relation(fields: [tenantId, cashSessionId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  userId String
+  user   User   @relation("SupplierPaymentMadeBy", fields: [userId], references: [id], onDelete: Restrict)
+
+  method    PaymentMethod
+  amount    Decimal       @db.Decimal(14, 2)
+  /// Nº de operación / voucher.
+  reference String?
+  notes     String?
+  /// Reintento seguro: el mismo pago enviado dos veces (red lenta) no se duplica.
+  idempotencyKey String?
+
+  paidAt    DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  voidedAt   DateTime?
+  voidedById String?
+  voidedBy   User?     @relation("SupplierPaymentVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  voidReason String?
+
+  allocations SupplierPaymentAllocation[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, supplierId, paidAt])
+  @@index([tenantId, cashSessionId])
+  @@index([tenantId, branchId, paidAt])
+  @@map("supplier_payments")
+}
+
+/// Cuánto de un pago se aplicó a cada cuenta por pagar (la más antigua primero, o las que elija la persona). Σ de un pago = su monto.
+model SupplierPaymentAllocation {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  supplierPaymentId String
+  supplierPayment   SupplierPayment @relation(fields: [tenantId, supplierPaymentId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  payableId String
+  payable   AccountPayable @relation(fields: [tenantId, payableId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  amount    Decimal  @db.Decimal(14, 2)
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, supplierPaymentId, payableId])
+  @@index([tenantId, payableId])
+  @@map("supplier_payment_allocations")
+}
+
+// ============================================================================
 //  COTIZACIONES
 // ============================================================================
 
@@ -1447,7 +1587,21 @@ model Purchase {
 
   number     String
   status     PurchaseStatus @default(BORRADOR)
+  /// N.º del documento del proveedor (factura, boleta o guía). Único por proveedor: la misma factura no se registra dos veces.
   invoiceRef String?
+
+  /// CONTADO: se pagó al recibir. CREDITO: genera una cuenta por pagar que vence en `dueDate`.
+  paymentCondition PurchaseCondition @default(CONTADO)
+  dueDate          DateTime?         @db.Date
+  /// Reintento seguro: recibir la misma compra dos veces (red lenta) no duplica stock ni deuda.
+  idempotencyKey   String?
+
+  receivedById String?
+  receivedBy   User?   @relation("PurchaseReceivedBy", fields: [receivedById], references: [id], onDelete: Restrict)
+  voidedAt     DateTime?
+  voidedById   String?
+  voidedBy     User?     @relation("PurchaseVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  voidReason   String?
 
   subtotal Decimal @default(0) @db.Decimal(14, 2)
   taxTotal Decimal @default(0) @db.Decimal(14, 2)
@@ -1461,9 +1615,12 @@ model Purchase {
   updatedAt DateTime @updatedAt
 
   items PurchaseItem[]
+  accountPayable AccountPayable?
 
   @@unique([tenantId, id])
   @@unique([tenantId, number])
+  @@unique([tenantId, idempotencyKey])
+  @@unique([tenantId, supplierId, invoiceRef])
   @@index([tenantId, status, createdAt])
   @@index([tenantId, supplierId])
   @@map("purchases")
@@ -1923,6 +2080,7 @@ model Branch {
   quotes         Quote[]
   cashSessions   CashSession[]
   customerPayments CustomerPayment[]
+  supplierPayments SupplierPayment[]
   transfersOut   BranchTransfer[]  @relation("TransferFrom")
   transfersIn    BranchTransfer[]  @relation("TransferTo")
   mermas         Merma[]
@@ -2001,6 +2159,11 @@ model CashSession {
   cashTotal   Decimal @default(0) @db.Decimal(14, 2)
   changeTotal Decimal @default(0) @db.Decimal(14, 2)
 
+  /// Pagos a proveedores hechos en EFECTIVO durante el turno (no anulados). SALEN del cajón y restan al esperado.
+  supplierCashPaymentsTotal  Decimal @default(0) @db.Decimal(14, 2)
+  /// Pagos a proveedores por otros medios (transferencia, Yape…) enlazados al turno. NO tocan el cajón.
+  supplierOtherPaymentsTotal Decimal @default(0) @db.Decimal(14, 2)
+
   /// Fiado del turno: Σ de lo vendido a crédito (líneas CREDITO de las ventas COMPLETADAS). Informativo: NO entra al cajón.
   creditSalesTotal   Decimal @default(0) @db.Decimal(14, 2)
   /// Abonos de deuda cobrados en EFECTIVO durante el turno (no anulados). SÍ entran al cajón y al esperado.
@@ -2020,6 +2183,7 @@ model CashSession {
   sales Sale[]
   /// Abonos de clientes cobrados en efectivo durante el turno (entran al arqueo).
   customerPayments CustomerPayment[]
+  supplierPayments SupplierPayment[]
 
   @@unique([tenantId, id])
   @@index([tenantId, branchId, status])

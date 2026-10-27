@@ -30,6 +30,10 @@ export interface CierreReciente {
   creditSalesTotal: number
   cashReceiptsTotal: number
   otherReceiptsTotal: number
+  /** Pagos a proveedores en efectivo: SALIERON del cajón y restan al esperado. */
+  supplierCashPaymentsTotal: number
+  /** Pagos a proveedores por otros medios: no tocaron el cajón. */
+  supplierOtherPaymentsTotal: number
   closedAt: string
   /** Ausente justo tras cerrar: el servicio devuelve el arqueo, no el nombre. */
   cerradoPor?: string
@@ -132,6 +136,9 @@ export function CashPanel({
           {resultado.cashReceiptsTotal > 0 && (
             <Dato k="Abonos de deuda en efectivo" v={money(resultado.cashReceiptsTotal)} />
           )}
+          {resultado.supplierCashPaymentsTotal > 0 && (
+            <Dato k="Pagos a proveedores en efectivo" v={`- ${money(resultado.supplierCashPaymentsTotal)}`} />
+          )}
           <Dato k="Debía haber" v={money(resultado.expectedAmount)} />
           <Dato k="Contaste" v={money(resultado.countedAmount)} />
           <Dato k="Ventas del turno" v={`${resultado.salesCount} · ${money(resultado.salesTotal)}`} />
@@ -140,6 +147,9 @@ export function CashPanel({
           )}
           {resultado.otherReceiptsTotal > 0 && (
             <Dato k="Abonos por otros medios" v={money(resultado.otherReceiptsTotal)} />
+          )}
+          {resultado.supplierOtherPaymentsTotal > 0 && (
+            <Dato k="Pagos a proveedores por otros medios (no salieron del cajón)" v={money(resultado.supplierOtherPaymentsTotal)} />
           )}
         </dl>
 
@@ -304,6 +314,9 @@ export function CashPanel({
             {ultimoCierre.creditSalesTotal > 0 && <Dato k="Fiado" v={money(ultimoCierre.creditSalesTotal)} />}
             {ultimoCierre.cashReceiptsTotal > 0 && (
               <Dato k="Abonos en efectivo" v={money(ultimoCierre.cashReceiptsTotal)} />
+            )}
+            {ultimoCierre.supplierCashPaymentsTotal > 0 && (
+              <Dato k="Pagos a proveedores en efectivo" v={`- ${money(ultimoCierre.supplierCashPaymentsTotal)}`} />
             )}
           </dl>
         </div>
