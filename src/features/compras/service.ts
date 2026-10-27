@@ -511,7 +511,7 @@ export async function obtenerCompra(db: TenantPrismaClient, ctx: TenantContext, 
       id: true, number: true, status: true, invoiceRef: true, paymentCondition: true, dueDate: true, notes: true, warehouseId: true,
       subtotal: true, taxTotal: true, total: true, createdAt: true, receivedAt: true, voidedAt: true, voidReason: true,
       warehouse: { select: { name: true } }, user: { select: { name: true } }, receivedBy: { select: { name: true } }, voidedBy: { select: { name: true } },
-      supplier: { select: { id: true, name: true, taxId: true } },
+      supplier: { select: { id: true, name: true, taxId: true, payableBalance: true } },
       accountPayable: { select: { id: true, amount: true, paidAmount: true, status: true, dueDate: true } },
       items: {
         orderBy: { id: 'asc' },
@@ -521,7 +521,8 @@ export async function obtenerCompra(db: TenantPrismaClient, ctx: TenantContext, 
   })
   if (!c) throw noExiste()
   return {
-    ...c, subtotal: num(c.subtotal), taxTotal: num(c.taxTotal), total: num(c.total),
+    ...c, supplier: c.supplier ? { ...c.supplier, payableBalance: num(c.supplier.payableBalance) } : null,
+    subtotal: num(c.subtotal), taxTotal: num(c.taxTotal), total: num(c.total),
     dueDate: c.dueDate ? c.dueDate.toISOString().slice(0, 10) : null,
     accountPayable: c.accountPayable ? { ...c.accountPayable, amount: num(c.accountPayable.amount), paidAmount: num(c.accountPayable.paidAmount), dueDate: c.accountPayable.dueDate.toISOString().slice(0, 10) } : null,
     items: c.items.map((i) => ({ ...i, quantity: num(i.quantity), unitCost: num(i.unitCost), lineTotal: num(i.lineTotal), taxRate: num(i.taxRate), enteredQuantity: i.enteredQuantity ? num(i.enteredQuantity) : null })),

@@ -27,7 +27,7 @@ export default async function DetalleCompraPage({ params }: { params: Promise<{ 
     <main className="mx-auto flex max-w-3xl flex-col gap-4 p-4">
       <DetalleCompra
         compra={compra} zona={tenant.timezone} verCostos={puede(ctx, 'productos.ver_costo') || puede(ctx, 'compras.registrar')}
-        permisos={{ puedeRegistrar: puede(ctx, 'compras.registrar'), puedeAjustar: puede(ctx, 'stock.ajustar'), puedeOperar: ctx.access === 'FULL' || ctx.access === 'WARN' }}
+        permisos={{ puedeRegistrar: puede(ctx, 'compras.registrar'), puedeAjustar: puede(ctx, 'stock.ajustar'), puedeOperar: ctx.access === 'FULL' || ctx.access === 'WARN', puedePagar: puede(ctx, 'proveedores.pagar') }}
       />
     </main>
   )

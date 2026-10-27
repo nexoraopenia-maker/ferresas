@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState, useTransition } from 'react'
 import { MENSAJE_SIN_RED, useEnLinea } from '@/lib/en-linea'
+import { ModalPago } from '@/features/por-pagar/components/ModalPago'
+import type { CuentaPagable } from '@/features/por-pagar/pago-ui'
 import { anularCompra, recibirCompra } from '../actions'
 import type { CondicionCompra, EstadoCompra } from '../borrador-ui'
 
@@ -18,20 +20,29 @@ export interface PermisosCompra {
   puedeAjustar: boolean
   /** La cuenta del negocio permite escribir. */
   puedeOperar: boolean
+  /** `proveedores.pagar`: además, ofrece «pagar al recibir» en una compra a crédito. */
+  puedePagar: boolean
 }
+
+/** Lo que «pagar al recibir» necesita saber del proveedor. */
+export interface ProveedorDeCompra { id: string; name: string; deudaActual: number }
 
 /**
  * Lo que se puede hacer con una compra según su estado. Recibir y anular piden confirmación porque mueven stock, costos y deuda.
  * Cada botón aparece solo con su permiso; el servidor decide igualmente (y rechaza anular si el stock ya salió o hay pagos).
  */
-export function AccionesCompra({ purchaseId, estado, condicion, total, lineas, conPagos, permisos }: {
+export function AccionesCompra({ purchaseId, numero, estado, condicion, total, lineas, conPagos, proveedor, vence, permisos }: {
   purchaseId: string
+  numero: string
   estado: EstadoCompra
   condicion: CondicionCompra
   total: number
   lineas: number
   /** La cuenta por pagar ya tiene pagos: anular se rechazará hasta anularlos. */
   conPagos: boolean
+  proveedor: ProveedorDeCompra | null
+  /** Vencimiento de la cuenta que nacerá (AAAA-MM-DD), o `null`. */
+  vence: string | null
   permisos: PermisosCompra
 }) {
   const router = useRouter()
@@ -40,6 +51,9 @@ export function AccionesCompra({ purchaseId, estado, condicion, total, lineas, c
   const [abierto, setAbierto] = useState<'recibir' | 'anular' | null>(null)
   const [motivo, setMotivo] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [pagarAlRecibir, setPagarAlRecibir] = useState(false)
+  // Tras recibir con «pagar al recibir»: la cuenta recién nacida, para abrir el modal de pago ya apuntando a ella.
+  const [aPagar, setAPagar] = useState<CuentaPagable[] | null>(null)
 
   if (!permisos.puedeRegistrar || estado === 'ANULADA') return null
   const puedeAnular = estado === 'BORRADOR' || permisos.puedeAjustar
@@ -50,7 +64,15 @@ export function AccionesCompra({ purchaseId, estado, condicion, total, lineas, c
     startTransition(async () => {
       const r = que === 'recibir' ? await recibirCompra({ purchaseId }) : await anularCompra({ purchaseId, motivo })
       if (!r.ok) { setError(r.message); return }
-      setAbierto(null); setMotivo(''); router.refresh()
+      setAbierto(null); setMotivo('')
+      // «Pagar al recibir»: es recibir a crédito y, sin pasar por otra pantalla, pagar esa cuenta. Son dos operaciones del servidor (cada una
+      // atómica): si el pago falla o se cancela, la compra queda recibida con su deuda y se paga después desde la ficha del proveedor.
+      const cuenta = que === 'recibir' ? ((r.data as { cuentaPorPagarId?: string | null }).cuentaPorPagarId ?? null) : null
+      if (pagarAlRecibir && cuenta && vence) {
+        setAPagar([{ id: cuenta, compra: numero, saldo: total, vence, vencida: false }])
+        return
+      }
+      router.refresh()
     })
   }
 
@@ -80,6 +102,15 @@ export function AccionesCompra({ purchaseId, estado, condicion, total, lineas, c
             <li>Se actualiza el costo promedio de cada producto (sin IGV).</li>
             {condicion === 'CREDITO' && <li data-aviso="nace-deuda">Nace una deuda con el proveedor por {money(total)}.</li>}
           </ul>
+          {condicion === 'CREDITO' && permisos.puedePagar && proveedor && (
+            <label className="flex items-center gap-2 rounded-xl border border-hairline px-3 py-2">
+              <input type="checkbox" name="pagarAlRecibir" checked={pagarAlRecibir} onChange={(e) => setPagarAlRecibir(e.target.checked)} className="size-5" />
+              <span><b>Pagar al recibir</b><span className="block text-xs text-ink-muted">Al recibir se abre el pago de {money(total)} a {proveedor.name}. Si pagas en efectivo, sale de la caja.</span></span>
+            </label>
+          )}
+          {condicion === 'CONTADO' && permisos.puedePagar && proveedor && (
+            <p data-aviso="contado-sin-egreso" className="text-xs text-ink-muted">Al contado no queda deuda, así que el pago no se registra aquí. Si lo vas a pagar de la caja o por transferencia y quieres que quede en el arqueo, edita el borrador como «A crédito» y marca «Pagar al recibir».</p>
+          )}
           <p className="text-xs text-ink-muted">Después ya no se puede editar; si te equivocas, se anula (solo mientras el stock siga ahí y sin pagos).</p>
           <div className="flex gap-2">
             <button type="submit" data-boton="confirmar-recibir" disabled={pendiente || !enLinea} className="h-touch flex-1 rounded-xl bg-industrial-600 font-bold text-white disabled:opacity-40">{pendiente ? 'Recibiendo…' : 'Sí, recibir'}</button>
@@ -106,6 +137,12 @@ export function AccionesCompra({ purchaseId, estado, condicion, total, lineas, c
             <button type="button" onClick={() => setAbierto(null)} className="h-touch rounded-xl border border-hairline px-4 font-semibold text-ink">Cancelar</button>
           </div>
         </form>
+      )}
+      {aPagar && proveedor && (
+        <ModalPago
+          abierto onCerrar={() => { setAPagar(null); router.refresh() }} supplierId={proveedor.id} nombre={proveedor.name}
+          cuentas={aPagar} deudaTotal={proveedor.deudaActual + total} elegidasIniciales={aPagar.map((x) => x.id)} montoInicial={total.toFixed(2)}
+        />
       )}
       {error && <p role="alert" data-form="error" className="rounded-xl bg-stock-out-soft px-3 py-2 text-sm font-semibold text-stock-out">{error}</p>}
     </div>

@@ -32,10 +32,10 @@ async function main() {
   const roles: Role[] = ['OWNER', 'ADMIN', 'CAJERO', 'VENDEDOR', 'ALMACENERO', 'CONTADOR']
   check('>>> cada rol ve en la barra EXACTAMENTE los enlaces que le tocan (los mismos que el menú de escritorio)', roles.every((r) => enlaces(barra(r)).length === visibleItems([...permisosDe(ctxDe(r))]).length))
   const dueno = enlaces(barra('OWNER'))
-  check('>>> el dueño ve 19 enlaces (más de los que caben en un móvil: por eso la barra se desliza)', dueno.length === NAV_ITEMS.length && dueno.length === 19, String(dueno.length))
+  check('>>> el dueño ve 20 enlaces (más de los que caben en un móvil: por eso la barra se desliza)', dueno.length === NAV_ITEMS.length && dueno.length === 20, String(dueno.length))
   check('>>> TODO enlace tiene ancho mínimo legible (4.25rem) y NO se encoge: nunca se aprieta hasta ser ilegible', roles.every((r) => enlaces(barra(r)).every((a) => a.includes('min-w-[4.25rem]') && a.includes('shrink-0'))) && !roles.some((r) => enlaces(barra(r)).some((a) => a.includes('min-w-0'))))
   check('con pocos enlaces siguen repartiéndose el ancho (flex-1): un rol de pocos enlaces no queda arrinconado', enlaces(barra('CONTADOR')).every((a) => a.includes('flex-1')))
-  check('>>> a 390 px el dueño NO cabe sin deslizar (19 enlaces × 4.25rem = 1292 px): por eso la barra se desliza; hasta el contador (7 enlaces, 476 px) pasa del ancho de un móvil pequeño', dueno.length * 68 > 390 && enlaces(barra('CONTADOR')).length * 68 > 390, `contador: ${enlaces(barra('CONTADOR')).length} enlaces`)
+  check('>>> a 390 px el dueño NO cabe sin deslizar (20 enlaces × 4.25rem = 1360 px): por eso la barra se desliza; hasta el contador (7 enlaces, 476 px) pasa del ancho de un móvil pequeño', dueno.length * 68 > 390 && enlaces(barra('CONTADOR')).length * 68 > 390, `contador: ${enlaces(barra('CONTADOR')).length} enlaces`)
 
   console.log('\nB) El enlace activo')
   const hC = barra('OWNER', '/clientes/abc123')

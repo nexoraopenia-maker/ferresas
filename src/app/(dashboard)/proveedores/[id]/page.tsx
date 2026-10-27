@@ -7,6 +7,8 @@ import { FichaProveedorVista } from '@/features/proveedores/components/FichaProv
 import { obtenerFichaProveedor, puedeVerProveedores } from '@/features/proveedores/service'
 import { listarCompras } from '@/features/compras/service'
 import { listarComprasSchema } from '@/features/compras/schemas'
+import { puedeVerPorPagar } from '@/features/por-pagar/permisos'
+import { ultimosPagosDeProveedor } from '@/features/por-pagar/informes'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,14 +24,18 @@ export default async function FichaProveedorPage({ params }: { params: Promise<{
     throw e
   })
   if (!ficha) notFound()
-  const compras = await listarCompras(db, ctx, listarComprasSchema.parse({ supplierId: ficha.id, limite: 10 }))
+  const verDeuda = puedeVerPorPagar(ctx)
+  const [compras, pagos] = await Promise.all([
+    listarCompras(db, ctx, listarComprasSchema.parse({ supplierId: ficha.id, limite: 10 })),
+    verDeuda ? ultimosPagosDeProveedor(db, ctx, ficha.id) : Promise.resolve(null),
+  ])
 
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-4 p-4">
       <FichaProveedorVista
-        ficha={ficha} compras={compras.filas}
+        ficha={ficha} compras={compras.filas} pagos={pagos}
         permisos={{
-          puedeGestionar: puede(ctx, 'proveedores.gestionar'), puedeComprar: puede(ctx, 'compras.registrar'),
+          puedeGestionar: puede(ctx, 'proveedores.gestionar'), puedeComprar: puede(ctx, 'compras.registrar'), puedePagar: puede(ctx, 'proveedores.pagar'), puedeVerDeuda: verDeuda,
           puedeOperar: ctx.access === 'FULL' || ctx.access === 'WARN',
         }}
       />

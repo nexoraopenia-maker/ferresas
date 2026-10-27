@@ -43,7 +43,7 @@ export function DetalleCompra({ compra, permisos, zona, verCostos }: {
           </p>
         </div>
         <AccionesCompra
-          purchaseId={c.id} estado={c.status} condicion={c.paymentCondition} total={c.total} lineas={c.items.length}
+          purchaseId={c.id} numero={c.number} estado={c.status} proveedor={c.supplier ? { id: c.supplier.id, name: c.supplier.name, deudaActual: c.supplier.payableBalance } : null} vence={c.dueDate} condicion={c.paymentCondition} total={c.total} lineas={c.items.length}
           conPagos={!!cxp && cxp.paidAmount > 0} permisos={permisos}
         />
       </header>

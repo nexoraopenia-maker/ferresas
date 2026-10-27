@@ -50,7 +50,7 @@ const num = (d: { toString(): string } | null | undefined) => Number(d?.toString
 const producto = (o: Partial<ProductoParaCompra> = {}): ProductoParaCompra => ({ productId: 'p1', name: 'Clavo 2"', sku: 'CLA', unitType: 'UNIDAD', taxRate: 0.18, costPrice: 0.5, presentaciones: [{ id: 'caja', name: 'Caja x 100', unitType: 'CAJA', factor: '100' }], ...o })
 const opciones: OpcionesCompra = { almacenes: [{ id: 'w1', name: 'Principal', isDefault: true }, { id: 'w2', name: 'Depósito', isDefault: false }], proveedores: [{ id: 's1', name: 'Aceros', taxId: '20111111111', paymentTermDays: 30 }, { id: 's2', name: 'Bravo', taxId: null, paymentTermDays: 0 }] }
 const fila = (o: Partial<FilaCompra> = {}): FilaCompra => ({ id: 'k1', number: 'C001-00000001', status: 'BORRADOR', invoiceRef: 'F001-1', supplierName: 'Aceros', paymentCondition: 'CONTADO', dueDate: null, total: 118, createdAt: new Date('2026-10-27T03:00:00Z'), ...o })
-const P: PermisosCompra = { puedeRegistrar: true, puedeAjustar: true, puedeOperar: true }
+const P: PermisosCompra = { puedeRegistrar: true, puedeAjustar: true, puedeOperar: true, puedePagar: true }
 
 async function main() {
   console.log('\nA) La lógica del formulario (pura)')
@@ -103,7 +103,7 @@ async function main() {
   check('>>> el costo se pide SIN IGV, por la unidad en que se compra', he.includes('Costo sin IGV') && he.includes('por Caja x 100 (100 unidad)'))
 
   console.log('\nD) Acciones según el estado')
-  const ac = (o: Record<string, unknown> = {}) => html(createElement(AccionesCompra, { purchaseId: 'k1', estado: 'BORRADOR', condicion: 'CREDITO', total: 118, lineas: 2, conPagos: false, permisos: P, ...o } as never))
+  const ac = (o: Record<string, unknown> = {}) => html(createElement(AccionesCompra, { purchaseId: 'k1', numero: 'C001-00000001', estado: 'BORRADOR', condicion: 'CREDITO', total: 118, lineas: 2, conPagos: false, proveedor: { id: 's1', name: 'Aceros', deudaActual: 0 }, vence: '2026-11-01', permisos: P, ...o } as never))
   check('>>> BORRADOR: recibir, editar y descartar', ac().includes('data-boton="recibir"') && ac().includes('href="/compras/k1/editar"') && ac().includes('Descartar borrador'))
   check('>>> RECIBIDA: ni recibir ni editar; anular solo con stock.ajustar, y si no, explica por qué', !ac({ estado: 'RECIBIDA' }).includes('data-boton="recibir"') && !ac({ estado: 'RECIBIDA' }).includes('data-enlace="editar"') && ac({ estado: 'RECIBIDA' }).includes('Anular compra') && !ac({ estado: 'RECIBIDA', permisos: { ...P, puedeAjustar: false } }).includes('data-boton="anular"') && ac({ estado: 'RECIBIDA', permisos: { ...P, puedeAjustar: false } }).includes(MENSAJE_ANULAR_SIN_AJUSTE))
   check('>>> el almacenero sin ajustar SÍ puede descartar un borrador (no sale mercadería)', ac({ permisos: { ...P, puedeAjustar: false } }).includes('data-boton="anular"'))

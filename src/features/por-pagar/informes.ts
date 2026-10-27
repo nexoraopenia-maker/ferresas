@@ -217,3 +217,40 @@ export async function resumenPorPagar(db: TenantPrismaClient, ctx: TenantContext
     coherente: i.coherente,
   }
 }
+
+// ─── Pagos de un proveedor ──────────────────────────────────────────────────────────────────────────────────────────
+
+export interface PagoDeProveedor {
+  id: string
+  /** AAAA-MM-DD en la zona del negocio. */
+  fecha: string
+  metodo: string
+  monto: number
+  referencia: string | null
+  pagadoPor: string
+  anulado: boolean
+  motivoAnulacion: string | null
+  /** El pago salió del cajón y su turno sigue abierto: se puede anular. Con el turno cerrado, ya no. */
+  anulable: boolean
+}
+
+/**
+ * Los últimos pagos hechos a un proveedor, para su ficha: de quién, cuánto, con qué y si se anuló. Quién ve las cuentas por pagar los
+ * ve; anular es de `proveedores.pagar` y lo decide el servicio. `anulable` adelanta la regla del turno cerrado para no ofrecer un botón
+ * que el servidor va a rechazar.
+ */
+export async function ultimosPagosDeProveedor(db: TenantPrismaClient, ctx: TenantContext, supplierId: string, limite = 10): Promise<PagoDeProveedor[]> {
+  exigirVer(ctx)
+  const tenant = await db.tenant.findFirstOrThrow({ select: { timezone: true } })
+  const pagos = await db.supplierPayment.findMany({
+    where: { supplierId }, orderBy: [{ paidAt: 'desc' }, { id: 'desc' }], take: Math.min(Math.max(limite, 1), 50),
+    select: {
+      id: true, paidAt: true, method: true, amount: true, reference: true, voidedAt: true, voidReason: true,
+      user: { select: { name: true } }, cashSession: { select: { status: true } },
+    },
+  })
+  return pagos.map((p) => ({
+    id: p.id, fecha: diaLocal(tenant.timezone, p.paidAt), metodo: p.method, monto: num(p.amount), referencia: p.reference, pagadoPor: p.user.name,
+    anulado: p.voidedAt !== null, motivoAnulacion: p.voidReason, anulable: p.voidedAt === null && (p.cashSession === null || p.cashSession.status === 'ABIERTA'),
+  }))
+}

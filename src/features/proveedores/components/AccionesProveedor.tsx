@@ -4,17 +4,25 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState, useTransition } from 'react'
 import { MENSAJE_SIN_RED, useEnLinea } from '@/lib/en-linea'
+import { ModalPago } from '@/features/por-pagar/components/ModalPago'
+import type { CuentaPagable } from '@/features/por-pagar/pago-ui'
 import { darDeBajaProveedor, reactivarProveedor } from '../actions'
 
 /**
  * Botones de la cabecera de la ficha: registrar una compra a este proveedor, darlo de baja o reactivarlo. Cada uno solo aparece con su
  * permiso; el servidor decide igualmente (y rechaza la baja con deuda o con borradores).
  */
-export function AccionesProveedor({ supplierId, nombre, activo, deuda, puedeGestionar, puedeComprar, puedeOperar }: {
+export function AccionesProveedor({ supplierId, nombre, activo, deuda, cuentas, puedePagar, puedeVerDeuda, puedeGestionar, puedeComprar, puedeOperar }: {
   supplierId: string
   nombre: string
   activo: boolean
   deuda: number
+  /** Cuentas abiertas, en el orden en que el servidor las aplicaría. */
+  cuentas: readonly CuentaPagable[]
+  /** `proveedores.pagar`. */
+  puedePagar: boolean
+  /** Ve las cuentas por pagar (descarga el estado de cuenta). */
+  puedeVerDeuda: boolean
   puedeGestionar: boolean
   puedeComprar: boolean
   puedeOperar: boolean
@@ -22,6 +30,7 @@ export function AccionesProveedor({ supplierId, nombre, activo, deuda, puedeGest
   const router = useRouter()
   const enLinea = useEnLinea()
   const [pendiente, startTransition] = useTransition()
+  const [pago, setPago] = useState(false)
   const [baja, setBaja] = useState(false)
   const [motivo, setMotivo] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -52,8 +61,16 @@ export function AccionesProveedor({ supplierId, nombre, activo, deuda, puedeGest
           <Link href={`/compras/nueva?proveedor=${supplierId}`} data-enlace="nueva-compra" aria-disabled={!puedeOperar}
             className={`inline-flex h-touch items-center rounded-xl bg-industrial-600 px-4 font-bold text-white ${puedeOperar ? '' : 'pointer-events-none opacity-40'}`}>Registrar compra</Link>
         )}
+        {puedePagar && deuda > 0 && (
+          <button type="button" data-boton="pagar" onClick={() => setPago(true)} disabled={!puedeOperar}
+            className="h-touch rounded-xl bg-industrial-600 px-4 font-bold text-white disabled:opacity-40">Registrar pago</button>
+        )}
         <Link href={`/compras?proveedor=${supplierId}`} data-enlace="compras-del-proveedor"
           className="inline-flex h-touch items-center rounded-xl border border-hairline px-4 font-semibold text-ink">Ver sus compras</Link>
+        {puedeVerDeuda && (
+          <a href={`/api/proveedores/${supplierId}/estado-cuenta`} data-enlace="estado-cuenta-csv" download
+            className="inline-flex h-touch items-center rounded-xl border border-hairline px-4 font-semibold text-ink">Estado de cuenta (CSV)</a>
+        )}
         {puedeGestionar && activo && (
           <button type="button" data-boton="baja" onClick={() => setBaja((v) => !v)} disabled={!puedeOperar}
             className="h-touch rounded-xl border border-hairline px-4 font-semibold text-ink disabled:opacity-40">Dar de baja</button>
@@ -75,6 +92,7 @@ export function AccionesProveedor({ supplierId, nombre, activo, deuda, puedeGest
           </div>
         </form>
       )}
+      <ModalPago abierto={pago} onCerrar={() => setPago(false)} supplierId={supplierId} nombre={nombre} cuentas={cuentas} deudaTotal={deuda} />
       {error && <p role="alert" data-form="error" className="rounded-xl bg-stock-out-soft px-3 py-2 text-sm font-semibold text-stock-out">{error}</p>}
     </div>
   )

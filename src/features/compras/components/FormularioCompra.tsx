@@ -150,6 +150,7 @@ export function FormularioCompra({ modo, opciones, hoy, inicial, proveedorInicia
           {condicion === 'CREDITO' && (
             <label className="flex flex-col gap-1 text-sm font-semibold text-ink">Vence
               <input type="date" name="vence" value={venceMostrado} onChange={(e) => { setVence(e.target.value); setVenceTocado(true) }} className={campo} />
+              <button type="button" data-boton="vence-hoy" onClick={() => { setVence(hoy); setVenceTocado(true) }} className="self-start text-xs font-semibold text-industrial-600 underline">Vence hoy (se paga al recibir)</button>
               <span className="text-xs font-normal text-ink-muted">{proveedor ? `Sugerido: hoy + ${proveedor.paymentTermDays} días de plazo del proveedor.` : 'Elige el proveedor: a crédito es obligatorio.'}</span>
             </label>
           )}

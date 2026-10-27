@@ -1,6 +1,8 @@
 import Link from 'next/link'
 import { fechaDiaCorta } from '@/lib/fecha-local'
 import type { FilaCompra } from '@/features/compras/service'
+import type { PagoDeProveedor } from '@/features/por-pagar/informes'
+import { PagosDelProveedor } from '@/features/por-pagar/components/PagosDelProveedor'
 import { ETIQUETA_CONDICION, ETIQUETA_ESTADO } from '@/features/compras/borrador-ui'
 import type { FichaProveedor } from '../service'
 import { AccionesProveedor } from './AccionesProveedor'
@@ -13,15 +15,19 @@ export interface PermisosFichaProveedor {
   puedeGestionar: boolean
   /** `compras.registrar`: registrar una compra a este proveedor. */
   puedeComprar: boolean
+  /** `proveedores.pagar`: registrar y anular pagos. */
+  puedePagar: boolean
+  /** Ve las cuentas por pagar (pagos, estado de cuenta). */
+  puedeVerDeuda: boolean
   /** La cuenta del negocio permite escribir (no está en solo lectura). */
   puedeOperar: boolean
 }
 
 /**
  * Ficha del proveedor: cabecera con acciones, lo que se le debe, sus cuentas abiertas, sus últimas compras y sus datos. Compone; cada
- * bloque decide solo según los permisos que recibe (resueltos en el servidor). Pagar llega con las cuentas por pagar.
+ * bloque decide solo según los permisos que recibe (resueltos en el servidor). `pagos` es `null` para quien no ve las cuentas por pagar.
  */
-export function FichaProveedorVista({ ficha, compras, permisos }: { ficha: FichaProveedor; compras: readonly FilaCompra[]; permisos: PermisosFichaProveedor }) {
+export function FichaProveedorVista({ ficha, compras, pagos, permisos }: { ficha: FichaProveedor; compras: readonly FilaCompra[]; pagos: readonly PagoDeProveedor[] | null; permisos: PermisosFichaProveedor }) {
   return (
     <div className="flex flex-col gap-5">
       <header className="flex flex-col gap-3">
@@ -34,6 +40,8 @@ export function FichaProveedorVista({ ficha, compras, permisos }: { ficha: Ficha
         </div>
         <AccionesProveedor
           supplierId={ficha.id} nombre={ficha.name} activo={ficha.activo} deuda={ficha.deuda}
+          cuentas={ficha.cuentasAbiertas.map((c) => ({ id: c.id, compra: c.compra, saldo: c.saldo, vence: c.vence, vencida: c.vencida }))}
+          puedePagar={permisos.puedePagar} puedeVerDeuda={permisos.puedeVerDeuda}
           puedeGestionar={permisos.puedeGestionar} puedeComprar={permisos.puedeComprar} puedeOperar={permisos.puedeOperar}
         />
       </header>
@@ -68,6 +76,8 @@ export function FichaProveedorVista({ ficha, compras, permisos }: { ficha: Ficha
           </ul>
         )}
       </section>
+
+      {pagos && <PagosDelProveedor pagos={pagos} puedePagar={permisos.puedePagar} puedeOperar={permisos.puedeOperar} />}
 
       <section aria-label="Últimas compras" className="flex flex-col gap-2">
         <h2 className="text-lg font-bold text-ink">Últimas compras</h2>

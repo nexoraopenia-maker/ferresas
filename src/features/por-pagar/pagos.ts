@@ -8,6 +8,7 @@ import { bloquearTurno, turnoAbiertoId } from '@/features/branches/queries'
 import { efectivoEsperado, totalesDelTurno } from '@/features/branches/cash-service'
 import { repartirAbono } from '@/features/credito/reglas'
 import { bloquearProveedor } from '@/features/proveedores/service'
+import { MENSAJE_PAGO_SIN_CAJA, MENSAJE_PAGO_SIN_DEUDA, mensajePagoExcede } from './pago-ui'
 import type { AnularPagoInput, PrevisualizarPagoInput, RegistrarPagoInput } from './schemas'
 
 /**
@@ -100,7 +101,7 @@ export async function registrarPagoProveedor(db: TenantPrismaClient, ctx: Tenant
   const previo = await pagoPorClave(db, input.idempotencyKey)
   if (previo) return previo
 
-  const sinCaja = () => invalido('Abre la caja antes de pagar en efectivo: ese dinero sale de un turno. Si pagas por transferencia o Yape no hace falta.')
+  const sinCaja = () => invalido(MENSAJE_PAGO_SIN_CAJA)
   // Aviso rápido, sin bloquear nada; la comprobación de verdad se repite dentro de la transacción, con el turno bloqueado.
   if (input.method === 'EFECTIVO' && !(await turnoAbiertoId(db, branchId))) throw sinCaja()
 
@@ -132,13 +133,11 @@ export async function registrarPagoProveedor(db: TenantPrismaClient, ctx: Tenant
       const destino = await cuentasAbiertas(t, input.supplierId, input.payableIds)
       const saldos = destino.map(saldoDe)
       const deudaElegida = saldos.reduce((a, b) => a + b, 0)
-      if (deudaElegida <= 0) throw invalido('No le debes nada a este proveedor.')
+      if (deudaElegida <= 0) throw invalido(MENSAJE_PAGO_SIN_DEUDA)
       const M = aCentimos(input.amount)
       if (M > deudaElegida) {
         throw invalido(
-          input.payableIds
-            ? `El pago (S/ ${deCentimos(M).toFixed(2)}) supera lo que se debe en las cuentas elegidas (S/ ${deCentimos(deudaElegida).toFixed(2)}).`
-            : `El pago (S/ ${deCentimos(M).toFixed(2)}) supera lo que le debes al proveedor (S/ ${deCentimos(deudaElegida).toFixed(2)}).`,
+          mensajePagoExcede(deCentimos(M), deCentimos(deudaElegida), !!input.payableIds),
           { pago: deCentimos(M), deuda: deCentimos(deudaElegida) },
         )
       }

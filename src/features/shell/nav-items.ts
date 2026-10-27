@@ -1,6 +1,7 @@
 import type { Permiso } from '@/lib/permisos'
 import { PERMISOS_VER_CLIENTES, PERMISOS_VER_COBRANZA } from '@/features/clientes/permisos'
 import { PERMISOS_VER_PROVEEDORES } from '@/features/proveedores/permisos'
+import { PERMISOS_VER_POR_PAGAR } from '@/features/por-pagar/permisos'
 
 /**
  * Elementos de navegación, en UN solo sitio.
@@ -108,6 +109,15 @@ export const NAV_ITEMS: NavItem[] = [
     icon: 'M6 7h12l1 13H5L6 7Zm3 0a3 3 0 0 1 6 0',
     // Las compras se ven con los mismos permisos que los proveedores (quien compra o paga necesita verlas).
     permisos: [...PERMISOS_VER_PROVEEDORES],
+  },
+  {
+    href: '/por-pagar',
+    label: 'Por pagar',
+    short: 'Pagar',
+    // Billete que sale
+    icon: 'M12 3v12m0 0-4-4m4 4 4-4M5 21h14',
+    // Los mismos permisos que la página y el servicio: quien ve proveedores y el contador (revisa la deuda sin poder pagarla).
+    permisos: [...PERMISOS_VER_POR_PAGAR],
   },
   {
     href: '/comprobantes',

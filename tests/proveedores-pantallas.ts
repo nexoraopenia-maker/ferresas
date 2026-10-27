@@ -44,7 +44,7 @@ const ficha = (o: Partial<FichaProveedor> = {}): FichaProveedor => ({
   id: 's1', name: 'Aceros del Sur', taxId: '20123456789', contact: 'Luis', phone: '999', email: 'ventas@aceros.pe', address: 'Av. 1', notes: null, paymentTermDays: 30,
   activo: true, creado: '2026-01-15T10:00:00.000Z', rucEditable: false, deuda: 0, vencido: 0, cuentasVencidas: 0, comprasTotal: 0, ultimaCompra: null, cuentasAbiertas: [], ...o,
 })
-const todos: PermisosFichaProveedor = { puedeGestionar: true, puedeComprar: true, puedeOperar: true }
+const todos: PermisosFichaProveedor = { puedeGestionar: true, puedeComprar: true, puedePagar: true, puedeVerDeuda: true, puedeOperar: true }
 
 async function main() {
   console.log('\nA) Lista de proveedores')
@@ -67,7 +67,7 @@ async function main() {
   check('>>> sin compras, el RUC se puede editar', !deshabilitado(html(createElement(FormularioProveedor, { modo: 'editar', inicial: ficha(), rucEditable: true })), 'name="taxId"'))
 
   console.log('\nC) Acciones de la ficha')
-  const acc = (o: Record<string, unknown> = {}) => html(createElement(AccionesProveedor, { supplierId: 's1', nombre: 'X', activo: true, deuda: 0, puedeGestionar: true, puedeComprar: true, puedeOperar: true, ...o } as never))
+  const acc = (o: Record<string, unknown> = {}) => html(createElement(AccionesProveedor, { supplierId: 's1', nombre: 'X', activo: true, deuda: 0, cuentas: [], puedePagar: true, puedeVerDeuda: true, puedeGestionar: true, puedeComprar: true, puedeOperar: true, ...o } as never))
   check('>>> «Registrar compra» lleva a una compra con el proveedor ya elegido, solo con compras.registrar y si está activo', acc().includes('href="/compras/nueva?proveedor=s1"') && !acc({ puedeComprar: false }).includes('data-enlace="nueva-compra"') && !acc({ activo: false }).includes('data-enlace="nueva-compra"'))
   check('>>> «Ver sus compras» siempre (filtra la lista de compras por el proveedor)', acc({ puedeGestionar: false, puedeComprar: false }).includes('href="/compras?proveedor=s1"'))
   check('>>> «Dar de baja» solo para quien gestiona y si está activo; «Reactivar» solo si está de baja', acc().includes('data-boton="baja"') && !acc({ puedeGestionar: false }).includes('data-boton="baja"') && acc({ activo: false }).includes('data-boton="reactivar"') && !acc().includes('data-boton="reactivar"') && !acc({ activo: false, puedeGestionar: false }).includes('data-boton="reactivar"'))
@@ -76,14 +76,14 @@ async function main() {
   console.log('\nD) La ficha completa')
   const cuentas = [{ id: 'x1', compra: 'C001-00000001', monto: 118, pagado: 18, saldo: 100, vence: '2026-09-01', vencida: true }, { id: 'x2', compra: 'C001-00000002', monto: 50, pagado: 0, saldo: 50, vence: '2027-01-01', vencida: false }]
   const compras: FilaCompra[] = [{ id: 'k1', number: 'C001-00000001', status: 'RECIBIDA', invoiceRef: 'F001-9', supplierName: 'Aceros del Sur', paymentCondition: 'CREDITO', dueDate: '2026-09-01', total: 118, createdAt: new Date('2026-08-01T15:00:00Z') }]
-  const fv = html(createElement(FichaProveedorVista, { ficha: ficha({ deuda: 150, vencido: 100, cuentasVencidas: 1, comprasTotal: 3, cuentasAbiertas: cuentas }), compras, permisos: todos }))
+  const fv = html(createElement(FichaProveedorVista, { pagos: null, ficha: ficha({ deuda: 150, vencido: 100, cuentasVencidas: 1, comprasTotal: 3, cuentasAbiertas: cuentas }), compras, permisos: todos }))
   check('>>> resumen: le debes, vencido, plazo y número de compras', fv.includes('S/ 150.00') && fv.includes('S/ 100.00') && fv.includes('30 días') && />3</.test(fv))
   check('>>> avisa lo vencido con el número de cuentas', fv.includes('data-aviso="vencido"') && fv.includes('en 1 cuenta'))
   check('>>> cuentas por pagar: saldo, de cuánto, y «Venció» / «Vence» con la fecha del negocio (DD/MM/AAAA)', fv.includes('Venció el 01/09/2026') && fv.includes('Vence el 01/01/2027') && fv.includes('de S/ 118.00') && fv.includes('data-cuenta="x1"'))
   check('>>> últimas compras: enlazan a su detalle, con estado, condición y total', fv.includes('href="/compras/k1"') && fv.includes('Recibida · A crédito') && fv.includes('F001-9'))
-  check('>>> sin cuentas ni compras lo dice', html(createElement(FichaProveedorVista, { ficha: ficha(), compras: [], permisos: todos })).includes('No le debes nada') && html(createElement(FichaProveedorVista, { ficha: ficha(), compras: [], permisos: todos })).includes('Todavía no hay compras'))
-  check('>>> quien gestiona ve el formulario de edición; quien no, los datos en solo lectura', fv.includes('data-form="proveedor-editar"') && !html(createElement(FichaProveedorVista, { ficha: ficha(), compras: [], permisos: { ...todos, puedeGestionar: false } })).includes('data-form="proveedor-editar"') && html(createElement(FichaProveedorVista, { ficha: ficha(), compras: [], permisos: { ...todos, puedeGestionar: false } })).includes('ventas@aceros.pe'))
-  check('>>> un proveedor de baja lo avisa y no ofrece editar', html(createElement(FichaProveedorVista, { ficha: ficha({ activo: false }), compras: [], permisos: todos })).includes('data-aviso="de-baja"') && !html(createElement(FichaProveedorVista, { ficha: ficha({ activo: false }), compras: [], permisos: todos })).includes('data-form="proveedor-editar"'))
+  check('>>> sin cuentas ni compras lo dice', html(createElement(FichaProveedorVista, { pagos: null, ficha: ficha(), compras: [], permisos: todos })).includes('No le debes nada') && html(createElement(FichaProveedorVista, { pagos: null, ficha: ficha(), compras: [], permisos: todos })).includes('Todavía no hay compras'))
+  check('>>> quien gestiona ve el formulario de edición; quien no, los datos en solo lectura', fv.includes('data-form="proveedor-editar"') && !html(createElement(FichaProveedorVista, { pagos: null, ficha: ficha(), compras: [], permisos: { ...todos, puedeGestionar: false } })).includes('data-form="proveedor-editar"') && html(createElement(FichaProveedorVista, { pagos: null, ficha: ficha(), compras: [], permisos: { ...todos, puedeGestionar: false } })).includes('ventas@aceros.pe'))
+  check('>>> un proveedor de baja lo avisa y no ofrece editar', html(createElement(FichaProveedorVista, { pagos: null, ficha: ficha({ activo: false }), compras: [], permisos: todos })).includes('data-aviso="de-baja"') && !html(createElement(FichaProveedorVista, { pagos: null, ficha: ficha({ activo: false }), compras: [], permisos: todos })).includes('data-form="proveedor-editar"'))
 
   console.log('\nE) Con datos reales: la pantalla dice lo que dice el servicio')
   const plan = await prisma.plan.findUniqueOrThrow({ where: { code: 'pro' } })
@@ -100,7 +100,7 @@ async function main() {
   await recibirCompra(db, O, recibirCompraSchema.parse({ purchaseId: k.id }))
   const fr = await obtenerFichaProveedor(db, O, sp.id)
   const cr = await listarCompras(db, O, listarComprasSchema.parse({ supplierId: sp.id, limite: 10 }))
-  const fh = html(createElement(FichaProveedorVista, { ficha: fr, compras: cr.filas, permisos: todos }))
+  const fh = html(createElement(FichaProveedorVista, { pagos: null, ficha: fr, compras: cr.filas, permisos: todos }))
   check('>>> la ficha renderizada con datos reales muestra la deuda del servicio (100.00), su cuenta y su compra', fr.deuda === 100 && fh.includes('S/ 100.00') && fh.includes(`data-cuenta="${fr.cuentasAbiertas[0]!.id}"`) && fh.includes(`href="/compras/${k.id}"`))
   check('>>> y el RUC ya no es editable porque tiene compras (lo decide el servicio)', !fr.rucEditable && deshabilitado(fh, 'name="taxId"'))
   const lr = await listarProveedores(db, O, listarProveedoresSchema.parse({}))
