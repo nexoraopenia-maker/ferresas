@@ -232,6 +232,7 @@ async function cuerpo() {
   const kB = await kardexDeProducto(db(AD), AD, kardexSchema.parse({ productId: productos.B!.id, limite: 50 }))
   const filaB = kB.lineas.find((l) => l.documento.tipo === 'CONTEO')!
   check('>>> la fila del kardex es un documento CONTEO con el número de la toma, salida de 2 y saldo 6', !!filaB && filaB.documento.numero === cRow.number && filaB.salida === 2 && filaB.saldo === 6 && filaB.tipo === 'AJUSTE' && filaB.origen === 'CONTEO')
+  check('>>> la fila del kardex enlaza a la pantalla del conteo (con permiso) y el contador, sin permiso de verlo, no tiene enlace', filaB.documento.href === `/inventario/conteos/${c1.id}`)
   check('>>> se nombra «Ajuste por conteo (faltante)» / «(sobrante)»', etiquetaMovimiento(filaB) === 'Ajuste por conteo (faltante)' && etiquetaMovimiento({ tipo: 'AJUSTE', entrada: 1, documento: { tipo: 'CONTEO' } }) === 'Ajuste por conteo (sobrante)')
   check('>>> el libro sigue cuadrando: consistente y el saldo final = Stock.quantity', kB.totales.consistente && kB.totales.cuadraConStock === true && kB.totales.saldoFinal === 6)
   const kBc = await kardexDeProducto(db(AD), AD, kardexSchema.parse({ productId: productos.B!.id }))

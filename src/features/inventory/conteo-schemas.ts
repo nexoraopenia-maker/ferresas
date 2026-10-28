@@ -101,3 +101,13 @@ export const revisionSchema = z.object({
   cursor: id.optional(),
 })
 export type RevisionInput = z.infer<typeof revisionSchema>
+
+// ─── F6.5c: lo que pide la pantalla de contar ─────────────────────────────────────────────────────────────────────────
+
+export const resolverProductoConteoSchema = z.object({ countId: id, code: z.string().trim().min(1, 'Escribe o escanea un código.').max(64, 'El código es demasiado largo.') })
+export type ResolverProductoConteoInput = z.infer<typeof resolverProductoConteoSchema>
+export const buscarProductosConteoSchema = z.object({ countId: id, q: z.string().trim().max(80, 'La búsqueda es demasiado larga.') })
+export type BuscarProductosConteoInput = z.infer<typeof buscarProductosConteoSchema>
+export const misPasadasSchema = z.object({ countId: id })
+export type MisPasadasInput = z.infer<typeof misPasadasSchema>
+export const buscarProductosSeleccionSchema = z.object({ q: z.string().trim().max(80, 'La búsqueda es demasiado larga.') })

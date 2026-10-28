@@ -245,7 +245,7 @@ async function resolverDocumentos(db: TenantPrismaClient, ctx: TenantContext, fi
     if (f.referenceType === 'VENTA') { const v = f.referenceId ? vm.get(f.referenceId) : undefined; doc = { tipo: 'VENTA', numero: v?.number ?? null, href: v ? `/ventas/${v.id}` : null } }
     else if (f.referenceType === 'COMPRA') { const x = f.referenceId ? cm.get(f.referenceId) : undefined; doc = { tipo: 'COMPRA', numero: x?.number ?? null, href: x ? `/compras/${x.id}` : null } }
     else if (f.referenceType === 'DEVOLUCION') { const x = f.referenceId ? dm.get(f.referenceId) : undefined; doc = { tipo: 'DEVOLUCION', numero: x?.number ?? null, href: x ? `/ventas/${x.saleId}` : null } }
-    else if (f.referenceType === 'CONTEO') { const x = f.referenceId ? cn.get(f.referenceId) : undefined; doc = { tipo: 'CONTEO', numero: x?.number ?? null, href: null } }
+    else if (f.referenceType === 'CONTEO') { const x = f.referenceId ? cn.get(f.referenceId) : undefined; doc = { tipo: 'CONTEO', numero: x?.number ?? null, href: x ? `/inventario/conteos/${x.id}` : null } }
     else if (f.type === 'MERMA') doc = { tipo: 'MERMA', numero: null, href: null }
     else if (f.type.startsWith('TRANSFERENCIA')) { const n = REF_TRANSFERENCIA.exec(f.reason ?? '')?.[1]; doc = { tipo: 'TRANSFERENCIA', numero: n && tm.has(n) ? n : null, href: null } }
     else doc = { tipo: 'MANUAL', numero: null, href: null }

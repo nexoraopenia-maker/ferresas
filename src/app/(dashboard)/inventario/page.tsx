@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { requireTenantContext } from '@/lib/session'
 import { puede } from '@/lib/puede'
+import { puedeVerConteos } from '@/features/inventory/conteo-service'
 import { ScanToStockSheet } from '@/features/inventory/components/ScanToStockSheet'
 
 export const dynamic = 'force-dynamic'
@@ -34,6 +35,11 @@ export default async function InventarioPage() {
             Escanea un código para registrar entradas, salidas o ajustes.
           </p>
         </div>
+        {puedeVerConteos(ctx) && (
+          <Link href="/inventario/conteos" className="h-touch-lg shrink-0 inline-flex items-center rounded-xl border border-hairline px-4 text-sm font-semibold text-ink">
+            Toma de inventario
+          </Link>
+        )}
         {verKardex && (
           <Link href="/inventario/kardex" className="h-touch-lg shrink-0 inline-flex items-center rounded-xl border border-hairline px-4 text-sm font-semibold text-ink">
             Kardex

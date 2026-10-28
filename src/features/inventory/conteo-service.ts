@@ -7,6 +7,8 @@ import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { cargarSucursalOperativa, serieDe } from '@/features/branches/queries'
 import { claimNextNumber, ensureCounter } from '@/features/pos/sale-service'
+import { tieneMaxDecimales } from '@/lib/dinero'
+import { decimalesPermitidos } from './conversion'
 import { cargarPresentaciones, resolverMovimiento } from './presentacion-linea'
 import {
   MAX_LINEAS_CONTEO,
@@ -285,7 +287,7 @@ export async function registrarPasada(db: TenantPrismaClient, ctx: TenantContext
       const c = await bloquear(t, input.countId)
       exigirEstado(c, 'EN_CONTEO', 'EN_REVISION')
 
-      let linea = await t.inventoryCountItem.findFirst({ where: { countId: c.id, productId: input.productId, variantId }, select: { id: true, productId: true, status: true } })
+      let linea = await t.inventoryCountItem.findFirst({ where: { countId: c.id, productId: input.productId, variantId }, select: { id: true, productId: true, status: true, unitType: true } })
       // Con el conteo ya cerrado (en revisión) solo se cuenta de nuevo lo que el revisor mandó a recontar (F6.5b).
       if (c.status === 'EN_REVISION' && linea?.status !== 'RECONTAR') throw invalido(`La toma de inventario ${c.number} ya se cerró y está en revisión: solo se cuenta de nuevo lo que se mandó a recontar.`)
       if (!linea) {
@@ -302,8 +304,12 @@ export async function registrarPasada(db: TenantPrismaClient, ctx: TenantContext
             tenantId: ctx.tenantId, countId: c.id, productId: producto.id, variantId, nameSnapshot: unidadNombre(producto, variante), skuSnapshot: variante?.sku ?? producto.sku, unitType: producto.unitType,
             systemQtyAtStart: stock?.quantity ?? 0,
           },
-          select: { id: true, productId: true, status: true },
+          select: { id: true, productId: true, status: true, unitType: true },
         })
+      }
+      // Las piezas, cajas y bolsas se cuentan enteras; lo que se mide (kg, m, l) admite fracciones: la unidad del producto manda.
+      if (!tieneMaxDecimales(input.quantity, decimalesPermitidos(linea.unitType))) {
+        throw invalido(decimalesPermitidos(linea.unitType) === 0 ? `Este producto se cuenta en unidades enteras (${linea.unitType}): ${input.quantity} no es válido.` : `Este producto admite hasta ${decimalesPermitidos(linea.unitType)} decimales (${linea.unitType}): ${input.quantity} no es válido.`)
       }
 
       const ahora = new Date()
