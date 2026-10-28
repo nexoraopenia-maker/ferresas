@@ -91,6 +91,9 @@ async function main() {
    */
   const PERMITIDOS = new Set([
     'src/features/pos/sale-service.ts',
+    // Devolución de una venta (F6.1): copia el costo CON EL QUE SE VENDIÓ la línea al movimiento de reposición, solo como traza. Nunca lo devuelve ni lo
+    // muestra, no recalcula el costo promedio, y la operación exige `ventas.anular` (lo prueba `devoluciones-servicio`).
+    'src/features/devoluciones/service.ts',
     'src/features/inventory/stock-service.ts',
     'src/features/inventory/product-service.ts',
     'src/features/inventory/import-service.ts',

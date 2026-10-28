@@ -277,7 +277,7 @@ async function main() {
     const j = svc.indexOf('\nexport ', i + 10)
     return j > 0 ? svc.slice(i, j) : svc.slice(i)
   }
-  check('>>> abonar, anular abono y anular cuenta BLOQUEAN al cliente antes de leer o escribir cuentas', ['registrarAbono', 'anularAbono', 'anularCuenta'].every((fn) => { const c = cuerpoDe(fn); return c.indexOf('bloquearCliente(') > 0 && c.indexOf('bloquearCliente(') < c.indexOf('receivable.update') }))
+  check('>>> abonar, anular abono y dar de baja una cuenta (el núcleo de anularCuenta, que también usa la devolución de una venta) BLOQUEAN al cliente antes de leer o escribir cuentas, y anularCuenta delega en el núcleo', cuerpoDe('anularCuenta').includes('darDeBajaCuentaEn(') && ['registrarAbono', 'anularAbono', 'darDeBajaCuentaEn'].every((fn) => { const c = cuerpoDe(fn); return c.indexOf('bloquearCliente(') > 0 && c.indexOf('bloquearCliente(') < c.indexOf('receivable.update') }))
   check('el servicio sigue sin SQL crudo', !/\$queryRaw|\$executeRaw/.test(svc))
   const inv = readFileSync('src/features/invoicing/service.ts', 'utf8')
   check('>>> la marca por nota de crédito corre DENTRO de la transacción de la nota (nacen juntas o no nacen)', /claimNextNumber\(t[\s\S]{0,2500}marcarRevisionPorNota\(t, ctx,[\s\S]{0,1200}return \{\s*id: nota\.id/.test(inv))

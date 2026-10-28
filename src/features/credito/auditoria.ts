@@ -154,8 +154,8 @@ export function auditarDatosCredito(d: DatosCredito): InformeCredito {
         hay('MONTO_CUENTA_VENTA', 'cuenta', x.id, v.number, `La cuenta es de ${soles(x.amount)} y la venta fió ${soles(v.fiado)}.`, { esperado: v.fiado, encontrado: x.amount })
       }
       if (v.customerId !== x.customerId) hay('CLIENTE_CUENTA_VENTA', 'cuenta', x.id, v.number, 'La cuenta es de un cliente distinto al de la venta.')
-      if (v.status === 'ANULADA' && x.status === 'ABIERTA') {
-        hay('VENTA_ANULADA_CUENTA_VIVA', 'cuenta', x.id, v.number, `La venta está ANULADA pero su cuenta sigue abierta con saldo ${soles(s(c(x.amount) - c(x.paidAmount)))}.`)
+      if ((v.status === 'ANULADA' || v.status === 'DEVUELTA') && x.status === 'ABIERTA') {
+        hay('VENTA_ANULADA_CUENTA_VIVA', 'cuenta', x.id, v.number, `La venta está ${v.status} pero su cuenta sigue abierta con saldo ${soles(s(c(x.amount) - c(x.paidAmount)))}.`)
       }
     }
   }
@@ -166,8 +166,9 @@ export function auditarDatosCredito(d: DatosCredito): InformeCredito {
     }
   }
 
-  // 6) Un turno CERRADO es inmutable: lo congelado de abonos = lo enlazado a él. El fiado congelado puede diferir si una venta se anuló
-  //    o llegó tras el cierre (decisión documentada del 3.4): por eso es AVISO.
+  // 6) Un turno CERRADO es inmutable: lo congelado de abonos = lo enlazado a él. El fiado del turno se cuenta por lo RECIBIDO: una venta que
+  //    luego se anula o se devuelve (ANULADA/DEVUELTA) sigue contando en el turno donde se hizo; su devolución sale en el turno que esté abierto
+  //    entonces (F6.1). Solo una venta que llegó tras el cierre puede hacerlo diferir: por eso es AVISO.
   for (const t of d.turnosCerrados) {
     const propios = d.abonos.filter((a) => a.cashSessionId === t.id && !a.anulado)
     const ef = propios.filter((a) => a.method === 'EFECTIVO').reduce((a, p) => a + c(p.amount), 0)
@@ -177,9 +178,9 @@ export function auditarDatosCredito(d: DatosCredito): InformeCredito {
         `Congelado: abonos en efectivo ${soles(t.cashReceiptsTotal)} y por otros medios ${soles(t.otherReceiptsTotal)}; enlazados al turno: ${soles(s(ef))} y ${soles(s(ot))}.`,
         { esperado: s(ef) + s(ot), encontrado: t.cashReceiptsTotal + t.otherReceiptsTotal })
     }
-    const fiado = d.ventas.filter((v) => v.cashSessionId === t.id && v.status === 'COMPLETADA').reduce((a, v) => a + c(v.fiado), 0)
+    const fiado = d.ventas.filter((v) => v.cashSessionId === t.id && (v.status === 'COMPLETADA' || v.status === 'ANULADA' || v.status === 'DEVUELTA')).reduce((a, v) => a + c(v.fiado), 0)
     if (c(t.creditSalesTotal) !== fiado) {
-      hay('CIERRE_FIADO', 'turno', t.id, t.id, `El fiado congelado del cierre (${soles(t.creditSalesTotal)}) no coincide con las ventas fiadas vigentes del turno (${soles(s(fiado))}).`,
+      hay('CIERRE_FIADO', 'turno', t.id, t.id, `El fiado congelado del cierre (${soles(t.creditSalesTotal)}) no coincide con las ventas fiadas del turno (las devueltas siguen contando) (${soles(s(fiado))}).`,
         { esperado: s(fiado), encontrado: t.creditSalesTotal })
     }
   }

@@ -84,7 +84,7 @@ async function main() {
   check('el resultado del cierre informa las tres cifras de crédito', cierre.creditSalesTotal === 270 && cierre.cashReceiptsTotal === 80 && cierre.otherReceiptsTotal === 40)
   const s = await sesion(turno.id)
   check('>>> las TRES columnas quedan congeladas en la fila del turno', num(s.creditSalesTotal) === 270 && num(s.cashReceiptsTotal) === 80 && num(s.otherReceiptsTotal) === 40 && num(s.expectedAmount) === 260 && s.status === 'CERRADA')
-  check('el esperado = fondo + efectivo + abonos en efectivo − vueltos, sin contar el fiado (misma función que usa la pantalla)', efectivoEsperado(100, { cashTotal: 90, cashReceiptsTotal: 80, changeTotal: 10, supplierCashPaymentsTotal: 0 }) === 260)
+  check('el esperado = fondo + efectivo + abonos en efectivo − vueltos, sin contar el fiado (misma función que usa la pantalla)', efectivoEsperado(100, { cashTotal: 90, cashReceiptsTotal: 80, changeTotal: 10, supplierCashPaymentsTotal: 0, refundsCashTotal: 0 }) === 260 && efectivoEsperado(100, { cashTotal: 90, cashReceiptsTotal: 80, changeTotal: 10, supplierCashPaymentsTotal: 0, refundsCashTotal: 60 }) === 200)
   const log = await prisma.auditLog.findFirst({ where: { tenantId: E.t.id, action: 'cash.close', entityId: turno.id } })
   check('>>> la auditoría del cierre deja fiado y abonos', JSON.stringify(log?.after).includes('"fiado":270') && JSON.stringify(log?.after).includes('"abonosEfectivo":80'), JSON.stringify(log?.after))
   check('el sobrante y el faltante siguen igual: contar 250 → faltante 10 (en otro turno)', await (async () => { const t2 = await abrir(0); await abonar(C2.id, 10); const r = await cerrar(t2.id, 0); return r.expectedAmount === 10 && r.difference === -10 })())

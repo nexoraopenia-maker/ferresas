@@ -144,7 +144,7 @@ async function cuerpo() {
   check('>>> por defecto es simulacro; borrar exige --ejecutar', src.includes("args.includes('--ejecutar')") && src.includes('if (!ejecutar) {'))
   check('>>> producción exige I_UNDERSTAND_THIS_IS_PRODUCTION=true en la línea de comandos Y escribir el nombre de la base', src.includes("process.env.I_UNDERSTAND_THIS_IS_PRODUCTION !== 'true'") && src.includes('respuesta !== destino'))
   check('>>> borra en UNA transacción y comprueba el número de negocios borrados y que no queden', src.includes('db.$transaction(') && src.includes('r.count !== ids.length') && src.includes('Tras borrar siguen existiendo'))
-  check('>>> solo borra negocios (tenant.deleteMany y comprobantes por tenantId), nunca otra tabla suelta ni SQL crudo', (src.match(/\.deleteMany\(/g) ?? []).length === 2 && !/\$executeRaw|\$queryRaw|\.delete\(/.test(src) && src.includes('tenantId: { in: ids }'))
+  check('>>> solo borra negocios (tenant.deleteMany, y antes sus devoluciones y comprobantes por tenantId, que bloquean con Restrict), nunca otra tabla suelta ni SQL crudo', (src.match(/\.deleteMany\(/g) ?? []).length === 3 && /saleReturn\.deleteMany\(\{ where: \{ tenantId: \{ in: ids \} \} \}\)/.test(src) && !/\$executeRaw|\$queryRaw|\.delete\(/.test(src) && src.includes('tenantId: { in: ids }'))
   check('>>> no imprime credenciales: solo la huella host/base', src.includes('huella(process.env.DATABASE_URL)') && !/console\.\w+\([^)]*DATABASE_URL\)/.test(src.replace(/huella\(process\.env\.DATABASE_URL\)/g, '')))
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)

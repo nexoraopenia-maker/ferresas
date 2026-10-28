@@ -31,6 +31,8 @@ export const PERMISOS_FUERA_DEL_PIN: readonly Permiso[] = [
   // Pagar a un proveedor SACA dinero del negocio y administrar proveedores es administración: un PIN de 4 cifras no lo abre.
   'proveedores.pagar',
   'proveedores.gestionar',
+  // Anular o devolver una venta mueve dinero, stock y comprobantes: un PIN de 4 cifras no lo abre (F6.1).
+  'ventas.anular',
   // El registro de auditoría es de administración: un PIN de 4 cifras no lo abre.
   'auditoria.ver',
 ]

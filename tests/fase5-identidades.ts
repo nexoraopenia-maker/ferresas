@@ -18,6 +18,8 @@ import { informeAbc, informeInventario, informeMargen } from '../src/features/re
 import { informeRegistroCompras, informeRegistroVentas } from '../src/features/registros/registro-service'
 import { parametrosRegistrosSchema } from '../src/features/registros/schemas'
 import { informeConciliacion } from '../src/features/conciliacion/conciliacion-service'
+import { anularOdevolverVenta } from '../src/features/devoluciones/service'
+import { anularOdevolverVentaSchema } from '../src/features/devoluciones/schemas'
 import type { Role } from '../src/generated/prisma/enums'
 import type { TenantContext } from '../src/lib/tenant-context'
 
@@ -92,7 +94,7 @@ async function cuerpo() {
     await prisma.sale.update({ where: { id: ids[i]! }, data: { completedAt: new Date(en[i]!) } })
     await prisma.payment.updateMany({ where: { saleId: ids[i]! }, data: { receivedAt: new Date(en[i]!) } })
   }
-  await prisma.sale.update({ where: { id: ids[8]! }, data: { status: 'ANULADA' } })
+  await prisma.sale.update({ where: { id: ids[8]! }, data: { status: 'ANULADA', voidedAt: new Date(), voidReason: 'Prueba' } })
   const ventas = await prisma.sale.findMany({ where: { tenantId: t.id }, orderBy: { number: 'asc' } })
   check('(preparación) 10 ventas creadas por registerSale', ventas.length === 10)
 
@@ -104,7 +106,7 @@ async function cuerpo() {
     return prisma.taxDocument.create({ data: {
       tenantId: t.id, saleId, documentType: tipo, series: serie, correlativo: c, fullNumber: `${serie}-${String(c).padStart(8, '0')}`, status: (o.estado ?? 'ACEPTADO') as never, isTrial: false,
       subtotal: s.subtotal, taxTotal: s.taxTotal, discountTotal: s.discountTotal, total: s.total, issuedAt: new Date(o.en),
-      receiverDocType: tipo === 'FACTURA' ? 'RUC' : 'SIN_DOCUMENTO', receiverDocNumber: tipo === 'FACTURA' ? ruc() : null, receiverName: 'Cliente',
+      receiverDocType: tipo === 'FACTURA' ? 'RUC' : 'SIN_DOCUMENTO', receiverDocNumber: tipo === 'FACTURA' ? ruc() : null, receiverName: 'Cliente', externalId: `ext-${c}`,
     } })
   }
   const d1 = await doc(ids[0]!, { en: en[0]! }), d2 = await doc(ids[1]!, { en: en[1]! }), d3 = await doc(ids[2]!, { en: en[2]! })
@@ -192,6 +194,25 @@ async function cuerpo() {
   check('>>> sucursal 1: el puente parte del total de ventas de la sucursal y cuadra; compras: conciliación = registro y sin la compra de la sucursal 2', cent(c1.puente.ventasCompletadas.total) === real1.total && c1.puente.diferencia === 0 && cent(c1.cuadreCompras.registro) === cent(r1.totales.total) && c1.cuadreCompras.diferencia === 0 && r1.filas.length === 3)
   const inv1 = await informeInventario(getTenantPrisma(OB1), OB1, AHORA)
   check('el inventario de la sucursal 1 vale menos que el del negocio', inv1.datos.totales.valor < inv.datos.totales.valor && inv1.datos.almacenes.length === 1)
+
+  console.log('\nG) Después de DEVOLVER una venta con comprobante real (F6.1): las identidades se mantienen')
+  const antesDev = await sumas()
+  const dev = await anularOdevolverVenta(db, O1, anularOdevolverVentaSchema.parse({ saleId: ids[2]!, kind: 'DEVOLUCION', reason: 'Devolución de la caja de pintura', idempotencyKey: randomUUID() }))
+  await prisma.taxDocument.update({ where: { id: dev.creditNote!.id }, data: { issuedAt: new Date('2026-11-02T15:00:00Z') } })   // la nota nace «hoy», después del periodo que se concilia
+  const realG = await sumas()
+  const [gp, gv, gm] = [await informeVentasPorPeriodo(db, OALL, PV, AHORA), await informeVentasPorVendedor(db, OALL, PV, AHORA), await informeVentasPorMedio(db, OALL, PV, AHORA)]
+  check('>>> la venta devuelta SALE de las ventas: una menos y exactamente su importe menos, en las tres vistas y en la base', realG.n === antesDev.n - 1 && antesDev.total - realG.total === 79992 && cent(gp.datos.totales.total) === realG.total && cent(gv.datos.totales.total) === realG.total && cent(gm.datos.totalVentas) === realG.total && gp.datos.totales.ventas === realG.n)
+  const mgG = await informeMargen(db, OALL, PC, AHORA)
+  check('>>> la rentabilidad sigue = suma exacta de los subtotales, sin la venta devuelta', cent(mgG.datos.totales.ventaSinIgv) === realG.subtotal)
+  const ccG = (await informeConciliacion(db, OALL, PR, AHORA)).informe
+  const regG = (await informeRegistroVentas(db, OALL, PR, AHORA)).datos
+  const ncs = await prisma.taxDocument.findMany({ where: { tenantId: t.id, documentType: 'NOTA_CREDITO', status: { in: ['ACEPTADO', 'OBSERVADO'] }, issuedAt: { gte: DESDE, lt: HASTA } } })
+  const sumaNc = ncs.reduce((a, x) => a + cent(num(x.total)), 0)
+  const devueltasConDoc = await prisma.taxDocument.findMany({ where: { tenantId: t.id, isTrial: false, documentType: { in: ['BOLETA', 'FACTURA'] }, status: { in: ['ACEPTADO', 'OBSERVADO'] }, issuedAt: { gte: DESDE, lt: HASTA }, sale: { status: { in: ['ANULADA', 'DEVUELTA'] } } } })
+  const sumaDev = devueltasConDoc.reduce((a, x) => a + cent(num(x.total)), 0)
+  check('>>> el puente sigue PARTIENDO del total de ventas y cuadrando (diferencia 0), con una venta completada menos', cent(ccG.puente.ventasCompletadas.total) === cent(gp.datos.totales.total) && ccG.puente.ventasCompletadas.documentos === realG.n && ccG.puente.diferencia === 0 && ccG.puente.devueltas.documentos === 1 && ccG.cuadreVentas.diferencia === 0)
+  check('>>> llega al registro con UNA línea más que explicar: registro = válidos del puente + comprobantes de ventas devueltas − notas de crédito VÁLIDAS (la nota de la devolución se emite HOY, fuera del periodo: restará en el registro de su propio periodo, y mientras SUNAT no la acepte va al control)', cent(regG.totales.total) === cent(ccG.puente.clasificacion.valido.total) + sumaDev - sumaNc && ncs.length === 1 && devueltasConDoc.length === 1 && (await prisma.taxDocument.count({ where: { tenantId: t.id, documentType: 'NOTA_CREDITO', status: 'PENDIENTE' } })) === 1, `${regG.totales.total}`)
+  check('>>> y la conciliación lo EXPLICA sin alarmar: la devuelta con su nota no es un comprobante vivo ni una diferencia de fechas', !ccG.hallazgos.some((h) => h.codigo === 'COMPROBANTE_VIVO_EN_VENTA_CERRADA' && h.items.some((i) => i.detalle.includes(dev.saleNumber))) && ccG.hallazgos.some((h) => h.codigo === 'COMPROBANTES_DE_VENTAS_DEVUELTAS') && !ccG.hallazgos.some((h) => h.codigo === 'DIFERENCIA_DE_FECHAS'))
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
   return fail

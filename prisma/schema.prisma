@@ -482,6 +482,9 @@ model Tenant {
   saleItems          SaleItem[]
   payments           Payment[]
   receivables        Receivable[]
+  saleReturns        SaleReturn[]
+  saleReturnItems    SaleReturnItem[]
+  saleReturnRefunds  SaleReturnRefund[]
   customerPayments   CustomerPayment[]
   paymentAllocations PaymentAllocation[]
   accountPayables    AccountPayable[]
@@ -653,6 +656,7 @@ model User {
   transfersOked   BranchTransfer[]       @relation("TransferApprovedBy")
   transfersGot    BranchTransfer[]       @relation("TransferReceivedBy")
   movements       StockMovement[]
+  saleReturns     SaleReturn[]
   sales           Sale[]
   payments        Payment[]
   customerPaymentsTaken  CustomerPayment[] @relation("CustomerPaymentTakenBy")
@@ -1165,6 +1169,8 @@ model Sale {
   dispatchGuides DispatchGuide[]
   /// Si la venta (o parte) se fió, su cuenta por cobrar. Una por venta.
   receivable     Receivable?
+  /// Devoluciones / anulaciones (F6.1): hoy a lo sumo una completa; F6.2 añade parciales.
+  saleReturns    SaleReturn[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, number])
@@ -1222,6 +1228,9 @@ model SaleItem {
 
   createdAt DateTime @default(now())
 
+  returnItems SaleReturnItem[]
+
+  @@unique([tenantId, id])
   @@index([tenantId, saleId])
   @@index([tenantId, productId])
   @@map("sale_items")
@@ -1915,6 +1924,8 @@ model TaxDocument {
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
   dispatch  FiscalDispatch?
+  /// Devolución que originó esta nota de crédito (F6.1).
+  returns   SaleReturn[]      @relation("DevolucionNota")
 
   @@unique([tenantId, id])
   /// La restricción LEGAL: no puede haber dos comprobantes con el mismo
@@ -2185,6 +2196,12 @@ model CashSession {
   /// Pagos a proveedores por otros medios (transferencia, Yape…) enlazados al turno. NO tocan el cajón.
   supplierOtherPaymentsTotal Decimal @default(0) @db.Decimal(14, 2)
 
+  /// Devoluciones de ventas pagadas HOY desde el cajón (modo CAJA): RESTAN del efectivo esperado. El dinero devuelto de una venta de un turno
+  /// ya cerrado sale en el turno abierto: un turno cerrado no se modifica.
+  refundsCashTotal  Decimal @default(0) @db.Decimal(14, 2)
+  /// Devoluciones por otro medio (Yape, transferencia, tarjeta…) o sin salida de dinero: no tocan el cajón.
+  refundsOtherTotal Decimal @default(0) @db.Decimal(14, 2)
+
   /// Fiado del turno: Σ de lo vendido a crédito (líneas CREDITO de las ventas COMPLETADAS). Informativo: NO entra al cajón.
   creditSalesTotal   Decimal @default(0) @db.Decimal(14, 2)
   /// Abonos de deuda cobrados en EFECTIVO durante el turno (no anulados). SÍ entran al cajón y al esperado.
@@ -2205,6 +2222,7 @@ model CashSession {
   /// Abonos de clientes cobrados en efectivo durante el turno (entran al arqueo).
   customerPayments CustomerPayment[]
   supplierPayments SupplierPayment[]
+  saleReturnRefunds SaleReturnRefund[]
 
   @@unique([tenantId, id])
   @@index([tenantId, branchId, status])
@@ -2621,4 +2639,109 @@ model ProductPresentation {
   @@unique([tenantId, productId, name])
   @@index([tenantId, productId])
   @@map("product_presentations")
+}
+
+/// Qué clase de devolución fue. Las dos reponen el stock; cambian el estado final de la venta y el código de la nota de crédito (01 / 06).
+enum SaleReturnKind {
+  ANULACION
+  DEVOLUCION
+}
+
+/// Dónde fue el dinero devuelto. CAJA = sale del cajón en efectivo; EXTERNO = por otro medio sin tocar el cajón; SIN_SALIDA = no se devuelve dinero (motivo obligatorio).
+enum RefundMode {
+  CAJA
+  EXTERNO
+  SIN_SALIDA
+}
+
+/**
+ * Anulación o devolución de una venta (F6.1). Hoy una por venta y completa (`isFull`); F6.2 añade devoluciones parciales por líneas.
+ * Reglas en la migración: un único `isFull` por venta (índice parcial) y CHECK de importes.
+ */
+model SaleReturn {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  saleId String
+  sale   Sale   @relation(fields: [tenantId, saleId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  kind   SaleReturnKind
+  /// Correlativo interno de la sucursal: «D001-00000007».
+  number String
+  reason String
+  isFull Boolean        @default(true)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  /// Nota de crédito emitida por esta devolución (nula si el comprobante era de ensayo, rechazado o no existía).
+  creditNoteId String?
+  creditNote   TaxDocument? @relation("DevolucionNota", fields: [tenantId, creditNoteId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  saleTotal              Decimal @db.Decimal(14, 2)
+  /// Lo que el cliente pagó de verdad (sin lo fiado y sin el vuelto): la suma de los reembolsos tiene que ser exactamente esto.
+  paidNet                Decimal @db.Decimal(14, 2)
+  /// Deuda del cliente que se canceló al devolver una venta fiada (sin abonos).
+  receivableVoidedAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  idempotencyKey String
+  createdAt      DateTime @default(now())
+
+  items   SaleReturnItem[]
+  refunds SaleReturnRefund[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, number])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, saleId])
+  @@index([tenantId, createdAt])
+  @@map("sale_returns")
+}
+
+model SaleReturnItem {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  returnId   String
+  saleReturn SaleReturn @relation(fields: [tenantId, returnId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  saleItemId String
+  saleItem   SaleItem @relation(fields: [tenantId, saleItemId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  /// En la unidad base del producto: lo que volvió al stock.
+  quantity         Decimal  @db.Decimal(14, 4)
+  /// La presentación con la que se vendió (3 cajas), copiada de la línea, solo para mostrar.
+  enteredQuantity  Decimal? @db.Decimal(14, 4)
+  presentationName String?
+  /// Importe de la línea con IGV.
+  amount           Decimal  @db.Decimal(14, 2)
+
+  @@unique([tenantId, returnId, saleItemId])
+  @@index([tenantId, saleItemId])
+  @@map("sale_return_items")
+}
+
+model SaleReturnRefund {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  returnId   String
+  saleReturn SaleReturn @relation(fields: [tenantId, returnId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  mode      RefundMode
+  /// Medio con el que se devolvió (EFECTIVO si sale del cajón; nulo en SIN_SALIDA).
+  method    PaymentMethod?
+  amount    Decimal        @db.Decimal(14, 2)
+  reference String?
+
+  /// El turno del que salió el efectivo (obligatorio en CAJA). En EXTERNO y SIN_SALIDA se anota el turno abierto, si lo había, solo para el informe del cierre.
+  cashSessionId String?
+  cashSession   CashSession? @relation(fields: [tenantId, cashSessionId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([tenantId, returnId])
+  @@index([tenantId, cashSessionId])
+  @@map("sale_return_refunds")
 }

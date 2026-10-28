@@ -40,7 +40,7 @@ export default async function CajaPage() {
         id: true, openingAmount: true, countedAmount: true, expectedAmount: true,
         difference: true, salesCount: true, salesTotal: true, cashTotal: true,
         changeTotal: true, creditSalesTotal: true, cashReceiptsTotal: true,
-        otherReceiptsTotal: true, supplierCashPaymentsTotal: true, supplierOtherPaymentsTotal: true, closedAt: true,
+        otherReceiptsTotal: true, supplierCashPaymentsTotal: true, supplierOtherPaymentsTotal: true, refundsCashTotal: true, refundsOtherTotal: true, closedAt: true,
         closedBy: { select: { name: true, email: true } },
       },
     }),
@@ -103,6 +103,8 @@ export default async function CajaPage() {
                 otherReceiptsTotal: n(ultimo.otherReceiptsTotal),
                 supplierCashPaymentsTotal: n(ultimo.supplierCashPaymentsTotal),
                 supplierOtherPaymentsTotal: n(ultimo.supplierOtherPaymentsTotal),
+                refundsCashTotal: n(ultimo.refundsCashTotal),
+                refundsOtherTotal: n(ultimo.refundsOtherTotal),
                 closedAt: (ultimo.closedAt ?? new Date()).toISOString(),
                 cerradoPor: ultimo.closedBy?.name ?? ultimo.closedBy?.email ?? undefined,
               }

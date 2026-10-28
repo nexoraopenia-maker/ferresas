@@ -38,6 +38,10 @@ export interface CashCloseResult extends CashSessionResult {
   supplierCashPaymentsTotal: number
   /** Pagos a proveedores por otros medios (transferencia, Yape…): no tocaron el cajón. */
   supplierOtherPaymentsTotal: number
+  /** Devoluciones de ventas pagadas en EFECTIVO desde el cajón este turno: SALIERON del cajón y restan al esperado. */
+  refundsCashTotal: number
+  /** Devoluciones por otro medio o sin salida de dinero: no tocaron el cajón. */
+  refundsOtherTotal: number
   closedAt: string
 }
 
@@ -51,28 +55,35 @@ export interface TotalesTurno {
   otherReceiptsTotal: number
   supplierCashPaymentsTotal: number
   supplierOtherPaymentsTotal: number
+  refundsCashTotal: number
+  refundsOtherTotal: number
 }
 
 /**
  * Lo que debería haber en el cajón: fondo + cobros en efectivo + abonos de deuda en efectivo − vueltos − pagos a proveedores en
- * efectivo. El fiado no entra; las transferencias y el Yape (a clientes o a proveedores) tampoco.
+ * efectivo − devoluciones de ventas pagadas desde el cajón. El fiado no entra; las transferencias y el Yape (a clientes o a proveedores) tampoco.
  */
 export function efectivoEsperado(
   fondo: number,
-  t: Pick<TotalesTurno, 'cashTotal' | 'cashReceiptsTotal' | 'changeTotal' | 'supplierCashPaymentsTotal'>,
+  t: Pick<TotalesTurno, 'cashTotal' | 'cashReceiptsTotal' | 'changeTotal' | 'supplierCashPaymentsTotal' | 'refundsCashTotal'>,
 ): number {
-  return redondearCentimos(fondo + t.cashTotal + t.cashReceiptsTotal - t.changeTotal - t.supplierCashPaymentsTotal)
+  return redondearCentimos(fondo + t.cashTotal + t.cashReceiptsTotal - t.changeTotal - t.supplierCashPaymentsTotal - t.refundsCashTotal)
 }
 
 /**
- * Totales de un turno, calculados desde sus ventas COMPLETADAS y sus abonos NO anulados.
+ * Totales de un turno, calculados desde las ventas que SE COBRARON en él, sus abonos NO anulados, los pagos a proveedores y las devoluciones.
+ *
+ * Las ventas cuentan por lo RECIBIDO, no por su estado de hoy: una venta que luego se anula o se devuelve (`ANULADA`/`DEVUELTA`) sigue
+ * contando en el turno donde entró el dinero, y el dinero devuelto SALE en el turno abierto cuando se devuelve (`refundsCashTotal`). Así
+ * un turno CERRADO no cambia nunca aunque mañana se devuelva una de sus ventas (sus columnas congeladas siguen coincidiendo con este cálculo),
+ * y devolver una venta en el mismo turno en que se hizo deja el efectivo neto en cero.
  *
  * Una sola función para el cierre (que los congela) y para la consulta en vivo (que los recalcula), de modo que lo que el cajero ve
  * mientras trabaja y lo que queda firmado al cerrar salgan de las mismas reglas.
  */
 export async function totalesDelTurno(t: TenantPrismaClient, sessionId: string): Promise<TotalesTurno> {
   const ventas = await t.sale.findMany({
-    where: { cashSessionId: sessionId, status: 'COMPLETADA' },
+    where: { cashSessionId: sessionId, status: { in: ['COMPLETADA', 'ANULADA', 'DEVUELTA'] } },
     select: { total: true, payments: { select: { method: true, amount: true, change: true } } },
   })
   const abonos = await t.customerPayment.findMany({
@@ -85,10 +96,16 @@ export async function totalesDelTurno(t: TenantPrismaClient, sessionId: string):
     select: { method: true, amount: true },
   })
 
+  const devoluciones = await t.saleReturnRefund.findMany({
+    where: { cashSessionId: sessionId },
+    select: { mode: true, amount: true },
+  })
+
   const r: TotalesTurno = {
     salesCount: ventas.length, salesTotal: 0, cashTotal: 0, changeTotal: 0,
     creditSalesTotal: 0, cashReceiptsTotal: 0, otherReceiptsTotal: 0,
     supplierCashPaymentsTotal: 0, supplierOtherPaymentsTotal: 0,
+    refundsCashTotal: 0, refundsOtherTotal: 0,
   }
   for (const v of ventas) {
     r.salesTotal = redondearCentimos(r.salesTotal + num(v.total))
@@ -106,6 +123,10 @@ export async function totalesDelTurno(t: TenantPrismaClient, sessionId: string):
   for (const p of pagosProveedor) {
     if (p.method === 'EFECTIVO') r.supplierCashPaymentsTotal = redondearCentimos(r.supplierCashPaymentsTotal + num(p.amount))
     else r.supplierOtherPaymentsTotal = redondearCentimos(r.supplierOtherPaymentsTotal + num(p.amount))
+  }
+  for (const d of devoluciones) {
+    if (d.mode === 'CAJA') r.refundsCashTotal = redondearCentimos(r.refundsCashTotal + num(d.amount))
+    else r.refundsOtherTotal = redondearCentimos(r.refundsOtherTotal + num(d.amount))
   }
   return r
 }
@@ -231,11 +252,11 @@ export async function closeCashSession(
       throw new BusinessError('INVALID_DOCUMENT', 'Ese turno ya está cerrado.')
     }
 
-    // Ventas COMPLETADAS (las anuladas no cuentan: su dinero salió del cajón o nunca entró) y abonos NO anulados del turno.
+    // Ventas cobradas en el turno (aunque luego se hayan devuelto: su devolución sale en el turno donde se hace), abonos NO anulados y devoluciones.
     const tot = await totalesDelTurno(t, sesion.id)
     const {
       salesCount, salesTotal, cashTotal, changeTotal, creditSalesTotal, cashReceiptsTotal, otherReceiptsTotal,
-      supplierCashPaymentsTotal, supplierOtherPaymentsTotal,
+      supplierCashPaymentsTotal, supplierOtherPaymentsTotal, refundsCashTotal, refundsOtherTotal,
     } = tot
 
     const openingAmount = num(sesion.openingAmount)
@@ -261,6 +282,8 @@ export async function closeCashSession(
         otherReceiptsTotal: new Prisma.Decimal(otherReceiptsTotal.toFixed(2)),
         supplierCashPaymentsTotal: new Prisma.Decimal(supplierCashPaymentsTotal.toFixed(2)),
         supplierOtherPaymentsTotal: new Prisma.Decimal(supplierOtherPaymentsTotal.toFixed(2)),
+        refundsCashTotal: new Prisma.Decimal(refundsCashTotal.toFixed(2)),
+        refundsOtherTotal: new Prisma.Decimal(refundsOtherTotal.toFixed(2)),
         closingNotes: input.notes ?? null,
       },
       select: { id: true, branchId: true, status: true, openedAt: true },
@@ -289,6 +312,8 @@ export async function closeCashSession(
           abonosOtros: otherReceiptsTotal,
           pagosProveedorEfectivo: supplierCashPaymentsTotal,
           pagosProveedorOtros: supplierOtherPaymentsTotal,
+          devolucionesEfectivo: refundsCashTotal,
+          devolucionesOtros: refundsOtherTotal,
           pedidosVencidos,
         },
         reason: input.notes ?? null,
@@ -314,6 +339,8 @@ export async function closeCashSession(
       otherReceiptsTotal,
       supplierCashPaymentsTotal,
       supplierOtherPaymentsTotal,
+      refundsCashTotal,
+      refundsOtherTotal,
       closedAt: cerrado.toISOString(),
     }
   }, { maxWait: 15_000, timeout: 30_000 })

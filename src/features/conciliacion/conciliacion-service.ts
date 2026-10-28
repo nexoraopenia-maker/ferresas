@@ -96,6 +96,12 @@ export async function calcularConciliacion(db: TenantPrismaClient, p: Parametros
   })
   const agregados: AgregadoDoc[] = grupos.map((g) => ({ tipo: g.documentType as TipoDoc, estado: g.status as EstadoDoc, documentos: g._count._all, base: num(g._sum.subtotal), igv: num(g._sum.taxTotal), total: num(g._sum.total) }))
   const indepV = totalDesdeAgregados(agregados)
+  // Comprobantes válidos emitidos en el periodo cuya venta ya se anuló o devolvió (F6.1): se explican aparte, no como diferencia de fechas.
+  const deDevueltas = await db.taxDocument.findMany({
+    where: { isTrial: false, documentType: { in: [...PRINCIPALES] }, status: { in: ['ACEPTADO', 'OBSERVADO'] }, issuedAt: rango, sale: { status: { in: ['ANULADA', 'DEVUELTA'] } } },
+    select: { total: true }, take: 5000,
+  })
+  const lineaDevueltas = { documentos: deDevueltas.length, total: deDevueltas.reduce((a, d) => a + Math.round(num(d.total) * 100), 0) / 100 }
   const brutoEmitido = totalDesdeAgregados(agregados.filter((a) => a.tipo === 'BOLETA' || a.tipo === 'FACTURA')).total
 
   // 4) Lo abierto (pendiente, enviado, rechazado) y los envíos agotados: sin importar la fecha.
@@ -157,7 +163,7 @@ export async function calcularConciliacion(db: TenantPrismaClient, p: Parametros
     hallazgoDeCuadre('REGISTRO_VENTAS_NO_CUADRA', cuadre(registroV.totales.total, indepV.total), modo),
     hallazgoDeCuadre('REGISTRO_COMPRAS_NO_CUADRA', cuadre(registroC.totales.total, indepC), modo),
     ...hallazgosDeCompras(registroC, modo),
-    ...hallazgosInformativos(puente, modo, brutoEmitido),
+    ...hallazgosInformativos(puente, modo, brutoEmitido, lineaDevueltas),
   ].filter((h): h is Hallazgo => h !== null)
 
   const informe = armarInforme({

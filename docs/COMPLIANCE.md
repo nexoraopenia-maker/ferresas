@@ -340,6 +340,10 @@ La serie de una nota empieza por la **misma letra** que la serie del comprobante
 
 Con la facturación electrónica activa (real o en pausa) **ningún estado se declara a mano**: ni Enviado, ni Aceptado, ni Rechazado, ni Observado. Lo fija solo la respuesta del proveedor, por la cola fiscal o por «Consultar» (sincronización explícita). El servicio lo rechaza y la lista no lo ofrece. Solo la demo y el ensayo, que no hablan con un proveedor real, conservan el cambio manual. Una nota de crédito exige además que el original lleve el identificador (`externalId`) que le dio el proveedor.
 
+### ⚠️ Una nota de crédito sobre un comprobante OBSERVADO (decidido el 2026-10-27, pendiente de validar con el contador)
+
+Hasta F5 el sistema trataba un comprobante OBSERVADO como «aún no se decidió si admite notas» y no admitía la nota de crédito. El dueño decidió (F6.1) que **OBSERVADO se trata como ACEPTADO**: es un comprobante válido (aceptado con advertencias), suma en el Registro de Ventas y, si la venta se devuelve o se anula, recibe su **nota de crédito total** (si no, la conciliación quedaría rota). Cambió en tres sitios a la vez: el emisor manual de notas, la devolución de ventas y el envío de la nota al proveedor (`documentoRelacionadoDe`). Si el contador concluye que un observado no admite notas, hay que revertir esos tres puntos y la prueba `nota-credito-total`.
+
 ## 11. Reportes, registros y conciliación (Fase 5) ⚠️
 
 Los registros de ventas y de compras y la conciliación fiscal son **herramientas de trabajo para el contador, no el formato oficial**: no generan PLE y no asignan códigos del catálogo de comprobantes de SUNAT. Las reglas de qué estados suman, el trato de las notas, la fecha de las compras y los umbrales de 24 h / 72 h son criterios de producto aprobados por el dueño y están **pendientes de validar con el contador** (lista completa en `docs/FASE5-CIERRE.md`, sección 4). Los comprobantes de ensayo (`isTrial`) y las notas de venta nunca entran a estos registros.

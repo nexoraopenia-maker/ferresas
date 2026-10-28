@@ -110,6 +110,8 @@ export async function limpiar(db: Db, slugs: readonly string[], opciones: { ejec
   const ids = (await db.tenant.findMany({ where: { slug: { in: presentes.map((i) => i.slug) } }, select: { id: true } })).map((t) => t.id)
   await db.$transaction(async (tx) => {
     // Los comprobantes primero (Restrict sobre la venta). Aquí no hay, pero el orden es el de la limpieza de las pruebas.
+    // Las devoluciones (F6.1) apuntan a la venta y a la nota de crédito con Restrict: primero ellas (sus líneas y reembolsos caen en cascada).
+    await tx.saleReturn.deleteMany({ where: { tenantId: { in: ids } } })
     await tx.taxDocument.deleteMany({ where: { tenantId: { in: ids } } })
     const r = await tx.tenant.deleteMany({ where: { id: { in: ids } } })
     if (r.count !== ids.length) throw new Error(`Se esperaba borrar ${ids.length} negocio(s) y se borraron ${r.count}: se deshace todo.`)

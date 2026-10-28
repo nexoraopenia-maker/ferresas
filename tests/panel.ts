@@ -44,7 +44,7 @@ async function main() {
   let n = 0
   const venta = async (branchId: string, warehouseId: string, cuando: Date, total: number, items: [typeof prodX, number, number][], status: 'COMPLETADA' | 'ANULADA' = 'COMPLETADA') => {
     const s = await prisma.sale.create({
-      data: { tenantId: t.id, branchId, warehouseId, userId: owner.id, number: `V-${++n}`, status, total, completedAt: cuando },
+      data: { tenantId: t.id, branchId, warehouseId, userId: owner.id, number: `V-${++n}`, status, total, completedAt: cuando, ...(status === 'ANULADA' ? { voidedAt: cuando, voidReason: 'Prueba' } : {}) },
     })
     for (const [p, q, lt] of items) {
       await prisma.saleItem.create({

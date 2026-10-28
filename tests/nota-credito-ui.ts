@@ -46,7 +46,7 @@ async function main() {
   check('>>> real, aceptado, con identificador, sin nota → SE PUEDE', razonSinNota(ok, true) === null)
   check('boleta también', razonSinNota({ ...ok, documentType: 'BOLETA', series: 'B007' }, true) === null)
   check('>>> PENDIENTE o ENVIADO → «Disponible cuando SUNAT acepte el comprobante»', ['PENDIENTE', 'ENVIADO'].every((s) => razonSinNota({ ...ok, status: s }, true) === 'Disponible cuando SUNAT acepte el comprobante.'))
-  check('>>> RECHAZADO, OBSERVADO o ANULADO → no admiten notas', ['RECHAZADO', 'OBSERVADO', 'ANULADO'].every((s) => (razonSinNota({ ...ok, status: s }, true) ?? '').includes('no admite notas')))
+  check('>>> OBSERVADO (válido) sí admite la nota; RECHAZADO o ANULADO no', razonSinNota({ ...ok, status: 'OBSERVADO' }, true) === null && ['RECHAZADO', 'ANULADO'].every((s) => (razonSinNota({ ...ok, status: s }, true) ?? '').includes('no admite notas')))
   check('>>> de prueba → no', (razonSinNota({ ...ok, isTrial: true }, false) ?? '').includes('prueba'))
   check('>>> ya tiene la nota → dice cuál', razonSinNota({ ...ok, notaTotal: 'FC01-00000001' }, true) === 'Ya tiene la nota de crédito FC01-00000001.')
   check('>>> serie de sucursal ≥ 100 → explica', (razonSinNota({ ...ok, series: 'F101' }, true) ?? '').includes('1 a 99'))

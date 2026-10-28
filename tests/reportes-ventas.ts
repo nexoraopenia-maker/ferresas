@@ -44,7 +44,7 @@ type N = Awaited<ReturnType<typeof negocio>>
 async function venta(n: N, o: { branch?: 'b1' | 'b2'; userId: string; numero: string; total: number; igv?: number; desc?: number; status?: 'COMPLETADA' | 'ANULADA' | 'BORRADOR' | 'DEVUELTA'; completedAt: string | null; quoteId?: string; customerId?: string; pagos: { metodo: string; monto: number; cambio?: number; userId?: string }[] }) {
   const b = o.branch === 'b2' ? n.b2 : n.b1
   const v = await prisma.sale.create({ data: {
-    tenantId: n.t.id, branchId: b.branch.id, warehouseId: b.warehouse.id, userId: o.userId, number: o.numero, documentType: 'NOTA_VENTA', status: o.status ?? 'COMPLETADA',
+    tenantId: n.t.id, branchId: b.branch.id, warehouseId: b.warehouse.id, userId: o.userId, number: o.numero, documentType: 'NOTA_VENTA', status: o.status ?? 'COMPLETADA', ...((o.status ?? 'COMPLETADA') === 'ANULADA' || o.status === 'DEVUELTA' ? { voidedAt: new Date(), voidReason: 'Prueba' } : {}), 
     subtotal: o.total - (o.igv ?? 0), taxTotal: o.igv ?? 0, discountTotal: o.desc ?? 0, total: o.total, completedAt: o.completedAt ? iso(o.completedAt) : null,
     ...(o.quoteId ? { quoteId: o.quoteId } : {}), ...(o.customerId ? { customerId: o.customerId } : {}),
   } })

@@ -388,32 +388,43 @@ export async function anularAbono(db: TenantPrismaClient, ctx: TenantContext, in
  */
 export async function anularCuenta(db: TenantPrismaClient, ctx: TenantContext, input: AnularCuentaInput): Promise<{ receivableId: string; saldoCastigado: number; deudaDespues: number }> {
   if (!puede(ctx, 'credito.castigar')) throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para dar de baja una deuda.')
-  return db.$transaction(async (tx) => {
-    const t = tx as unknown as TenantPrismaClient
-    const previa = await t.receivable.findFirst({ where: { id: input.receivableId }, select: { customerId: true } })
-    if (!previa) throw noExiste('La cuenta')
-    const cliente = await bloquearCliente(t, previa.customerId)
+  return db.$transaction((tx) => darDeBajaCuentaEn(tx as unknown as TenantPrismaClient, ctx, input), { maxWait: 15_000, timeout: 30_000 })
+}
 
-    const r = await t.receivable.findFirst({ where: { id: input.receivableId }, select: { id: true, amount: true, paidAmount: true, status: true, sale: { select: { number: true } } } })
-    if (!r) throw noExiste('La cuenta')
-    if (r.status === 'ANULADA') throw invalido('Esta cuenta ya está dada de baja.')
-    if (r.status === 'PAGADA') throw invalido('Esta cuenta ya está pagada por completo: no hay saldo que dar de baja.')
-    const saldo = aCentimos(num(r.amount)) - aCentimos(num(r.paidAmount))
+/**
+ * NÚCLEO de `anularCuenta`: da de baja la cuenta DENTRO de la transacción `t` de quien llama, SIN comprobar permisos. Lo usa la devolución de
+ * una venta fiada (F6.1), que ya está autorizada por `ventas.anular`. Empieza por bloquear al cliente (el orden de bloqueos del crédito:
+ * cliente primero, turno después). `contexto` añade datos al registro de auditoría (p. ej. la devolución que la originó).
+ */
+export async function darDeBajaCuentaEn(
+  t: TenantPrismaClient,
+  ctx: TenantContext,
+  input: AnularCuentaInput,
+  contexto: Record<string, unknown> = {},
+): Promise<{ receivableId: string; saldoCastigado: number; deudaDespues: number }> {
+  const previa = await t.receivable.findFirst({ where: { id: input.receivableId }, select: { customerId: true } })
+  if (!previa) throw noExiste('La cuenta')
+  const cliente = await bloquearCliente(t, previa.customerId)
 
-    const ahora = new Date()
-    await t.receivable.update({ where: { id: r.id }, data: { status: 'ANULADA', voidedAt: ahora, closedAt: ahora, voidReason: input.motivo }, select: { id: true } })
-    await t.customer.update({ where: { id: previa.customerId }, data: { creditBalance: { decrement: deCentimos(saldo) } }, select: { id: true } })
-    const deudaDespues = deCentimos(aCentimos(cliente.creditBalance) - saldo)
-    await t.auditLog.create({
-      data: {
-        tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role,
-        action: 'credito.cuenta_anulada', entityType: 'Receivable', entityId: r.id, reason: input.motivo,
-        after: { venta: r.sale.number, cliente: cliente.name, monto: num(r.amount), abonado: num(r.paidAmount), saldoCastigado: deCentimos(saldo), deudaAntes: cliente.creditBalance, deudaDespues },
-        impersonationId: ctx.impersonationId ?? null,
-      },
-    })
-    return { receivableId: r.id, saldoCastigado: deCentimos(saldo), deudaDespues }
-  }, { maxWait: 15_000, timeout: 30_000 })
+  const r = await t.receivable.findFirst({ where: { id: input.receivableId }, select: { id: true, amount: true, paidAmount: true, status: true, sale: { select: { number: true } } } })
+  if (!r) throw noExiste('La cuenta')
+  if (r.status === 'ANULADA') throw invalido('Esta cuenta ya está dada de baja.')
+  if (r.status === 'PAGADA') throw invalido('Esta cuenta ya está pagada por completo: no hay saldo que dar de baja.')
+  const saldo = aCentimos(num(r.amount)) - aCentimos(num(r.paidAmount))
+
+  const ahora = new Date()
+  await t.receivable.update({ where: { id: r.id }, data: { status: 'ANULADA', voidedAt: ahora, closedAt: ahora, voidReason: input.motivo }, select: { id: true } })
+  await t.customer.update({ where: { id: previa.customerId }, data: { creditBalance: { decrement: deCentimos(saldo) } }, select: { id: true } })
+  const deudaDespues = deCentimos(aCentimos(cliente.creditBalance) - saldo)
+  await t.auditLog.create({
+    data: {
+      tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role,
+      action: 'credito.cuenta_anulada', entityType: 'Receivable', entityId: r.id, reason: input.motivo,
+      after: { venta: r.sale.number, cliente: cliente.name, monto: num(r.amount), abonado: num(r.paidAmount), saldoCastigado: deCentimos(saldo), deudaAntes: cliente.creditBalance, deudaDespues, ...contexto },
+      impersonationId: ctx.impersonationId ?? null,
+    },
+  })
+  return { receivableId: r.id, saldoCastigado: deCentimos(saldo), deudaDespues }
 }
 
 /**

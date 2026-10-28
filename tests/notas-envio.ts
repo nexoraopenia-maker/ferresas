@@ -93,7 +93,7 @@ async function main() {
   console.log('\n6) Estado del original')
   check('>>> PENDIENTE y ENVIADO → NotaEsperaOriginal (no es un fallo de la nota)', (await lanza(() => documentoRelacionadoDe(conOriginal({ status: 'PENDIENTE' })))) instanceof NotaEsperaOriginal && (await lanza(() => documentoRelacionadoDe(conOriginal({ status: 'ENVIADO' })))) instanceof NotaEsperaOriginal)
   check('ACEPTADO → pasa', !(await lanza(() => documentoRelacionadoDe(conOriginal({ status: 'ACEPTADO' })))))
-  check('>>> OBSERVADO y RECHAZADO NO se esperan (nunca pasarán a ACEPTADO): error permanente, con mensaje', ['OBSERVADO', 'RECHAZADO'].every((s) => { try { documentoRelacionadoDe(conOriginal({ status: s })); return false } catch (e) { return !(e instanceof NotaEsperaOriginal) && (e as { code?: string }).code === 'INVALID_DOCUMENT' } }))
+  check('>>> OBSERVADO es válido (pasa, como ACEPTADO); RECHAZADO NO se espera (nunca pasará a ACEPTADO): error permanente, con mensaje', !(await lanza(() => documentoRelacionadoDe(conOriginal({ status: 'OBSERVADO' })))) && ['RECHAZADO'].every((s) => { try { documentoRelacionadoDe(conOriginal({ status: s })); return false } catch (e) { return !(e instanceof NotaEsperaOriginal) && (e as { code?: string }).code === 'INVALID_DOCUMENT' } }))
   check('los errores permanentes se dicen ANTES de esperar (una nota inválida no espera en vano)', (await lanza(() => documentoRelacionadoDe(conOriginal({ status: 'PENDIENTE', currency: 'USD' }))))?.code === 'INVALID_DOCUMENT')
 
   console.log('\n7) Con la base: cargarComprobanteFiscal')

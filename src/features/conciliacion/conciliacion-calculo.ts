@@ -26,7 +26,7 @@ export const CODIGOS = [
   'PUENTE_NO_CUADRA', 'REGISTRO_VENTAS_NO_CUADRA', 'REGISTRO_COMPRAS_NO_CUADRA', 'VENTA_SIN_COMPROBANTE', 'COMPROBANTE_DISTINTO_A_VENTA',
   'COMPROBANTE_VIVO_EN_VENTA_CERRADA', 'FACTURA_SIN_RUC', 'COMPROBANTE_PENDIENTE', 'COMPROBANTE_RECHAZADO', 'ENVIO_AGOTADO', 'SERIE_CON_HUECOS',
   'CONTADOR_ATRASADO', 'CONTADOR_ADELANTADO', 'NOTA_EXCEDE_ORIGINAL', 'NOTA_DE_OTRA_VENTA', 'COMPRAS_PROVISIONALES', 'COMPRAS_PROVEEDOR_SIN_RUC',
-  'COMPRAS_SIN_PROVEEDOR', 'DIFERENCIA_DE_FECHAS', 'VENTAS_ANULADAS_O_DEVUELTAS', 'MODO_SIN_VALOR_FISCAL',
+  'COMPRAS_SIN_PROVEEDOR', 'DIFERENCIA_DE_FECHAS', 'COMPROBANTES_DE_VENTAS_DEVUELTAS', 'VENTAS_ANULADAS_O_DEVUELTAS', 'MODO_SIN_VALOR_FISCAL',
 ] as const
 export type CodigoHallazgo = (typeof CODIGOS)[number]
 
@@ -393,13 +393,25 @@ export function hallazgoDePuente(p: PuenteVentas, modo: ModoFiscal): Hallazgo | 
  * diferencia de fechas entre la venta y la emisión de su comprobante.
  * `brutoEmitidoEnPeriodo` = suma de las boletas y facturas válidas EMITIDAS en el periodo (por la fecha de emisión), sin notas.
  */
-export function hallazgosInformativos(p: PuenteVentas, modo: ModoFiscal, brutoEmitidoEnPeriodo: number): Hallazgo[] {
+export function hallazgosInformativos(
+  p: PuenteVentas,
+  modo: ModoFiscal,
+  brutoEmitidoEnPeriodo: number,
+  /** Boletas y facturas válidas EMITIDAS en el periodo cuya venta ya se anuló o devolvió (F6.1): no están en las ventas completadas. */
+  deVentasDevueltas: LineaPuente = { documentos: 0, total: 0 },
+): Hallazgo[] {
   const out: Hallazgo[] = []
   if (sinValorFiscal(modo)) {
     out.push(sinSuma('MODO_SIN_VALOR_FISCAL', 'INFO', modo === 'DEMO' ? 'Cuenta de demostración' : 'Facturación electrónica real sin habilitar',
       'Los comprobantes de este negocio son de prueba y no tienen valor fiscal: no se conciliaron como reales. Cuando habilites la facturación real, esta pantalla los revisará.', 0))
   }
-  const dif = s(c(brutoEmitidoEnPeriodo) - c(p.clasificacion.valido.total))
+  // Una venta devuelta ya no está entre las ventas completadas, pero su comprobante sigue siendo válido en el registro hasta que la nota de
+  // crédito lo compense (en el periodo de la nota). Se explica aparte para que no parezca una diferencia de fechas.
+  if (deVentasDevueltas.documentos > 0) {
+    out.push(sinSuma('COMPROBANTES_DE_VENTAS_DEVUELTAS', 'INFO', 'Comprobantes de ventas anuladas o devueltas',
+      `${deVentasDevueltas.documentos} comprobante${deVentasDevueltas.documentos === 1 ? '' : 's'} válido${deVentasDevueltas.documentos === 1 ? '' : 's'} emitido${deVentasDevueltas.documentos === 1 ? '' : 's'} en el periodo (${deVentasDevueltas.total.toFixed(2)}) cuya venta ya se anuló o devolvió: siguen sumando en el registro y su nota de crédito los compensa. Si alguno no tiene nota, aparece como error aparte.`, deVentasDevueltas.documentos))
+  }
+  const dif = s(c(brutoEmitidoEnPeriodo) - c(p.clasificacion.valido.total) - c(deVentasDevueltas.total))
   if (dif !== 0) out.push(hallazgo('DIFERENCIA_DE_FECHAS', 'INFO', 'Comprobantes emitidos en otro periodo que su venta',
     'Una venta del periodo cuyo comprobante se emitió después (o antes) hace que las ventas y el registro difieran sin ser un error. Se explica la diferencia, no se corrige.',
     [{ referencia: 'Ventas con comprobante válido', detalle: `Por fecha de venta ${p.clasificacion.valido.total.toFixed(2)} · por fecha de emisión ${brutoEmitidoEnPeriodo.toFixed(2)}`, importe: dif, enlace: null }]))

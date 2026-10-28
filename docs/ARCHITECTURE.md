@@ -971,3 +971,19 @@ Lógica pura; **no cambia el comportamiento de la venta**: `registerSale` valida
 
 - **Identidades entre reportes** (`tests/fase5-identidades.ts`) y **revisión de coherencia y seguridad** (`tests/fase5-seguridad.ts`): ver `docs/FASE5-CIERRE.md` (qué se comprueba, ⚠️ para el contador y lista de QA en producción).
 - **Corrección:** la numeración de compras ahora lleva la serie de la sucursal (`P001-00000007`); antes era `P-00000007` y la primera compra de una segunda sucursal chocaba con el índice único (negocio, número). Las compras anteriores conservan su número; sin migración. Regresión en `tests/compras-documento.ts`.
+
+
+## Fase 6, F6.1a: anular y devolver una venta completa (`src/features/devoluciones/`)
+
+Diseño y decisiones: `docs/F6.1-DISENO.md`. Entregada la parte de servicio (las pantallas son F6.1b).
+
+- **Operación:** `anularOdevolverVenta` (una transacción). `ANULACION` y `DEVOLUCION` reponen siempre el stock; cambian el estado final (`ANULADA` / `DEVUELTA`), el motivo de la nota (01 / 06) y la etiqueta. Idempotente por `idempotencyKey`. Permiso **solo `ventas.anular`** (dueño y administrador), **fuera del PIN**.
+- **Migración `20261114100000_devoluciones_venta` (aditiva, `down.sql` ensayado):** tablas `sale_returns`, `sale_return_items`, `sale_return_refunds`; `cash_sessions.refundsCashTotal/refundsOtherTotal`; `sale_items(tenantId, id)` único; índice parcial (una devolución completa por venta); CHECK de importes, de la forma de cada reembolso y de que una venta ANULADA/DEVUELTA lleve fecha y motivo. *Antes de aplicarla en un entorno:* `npx tsx scripts/verificar-ventas-anuladas.ts` (solo lectura; sale 3 si alguna fila rompería el CHECK).
+- **Stock:** `ENTRADA` con `typeOverride DEVOLUCION_CLIENTE` (el mecanismo de las transferencias): no recalcula el costo promedio ni deja «costo pendiente»; guarda el costo de la línea solo como traza y se enlaza a la devolución. Un producto con control de stock dado de baja **bloquea** la devolución, nombrándolo.
+- **Caja:** el dinero devuelto sale del turno **abierto de hoy** (`refundsCashTotal` resta del efectivo esperado); un turno cerrado no cambia nunca. Para eso `totalesDelTurno` cuenta las ventas por lo **recibido** (COMPLETADA, ANULADA y DEVUELTA), no por su estado final. Reembolso por `EXTERNO`/`SIN_SALIDA` no toca el cajón; si hay turno abierto se anota para el informe del cierre.
+- **Crédito:** venta fiada **sin abonos** → la cuenta se cancela y la deuda del cliente baja en la misma transacción (`darDeBajaCuentaEn`, núcleo sin permiso de `anularCuenta`). **Con abonos** → se bloquea (`CREDIT_HAS_PAYMENTS`) nombrando los abonos; se habilita tras F6.3. `auditar-credito` cuenta el fiado del turno por lo recibido y mira también `DEVUELTA`.
+- **Comprobante:** ACEPTADO u OBSERVADO → nota de crédito total en la misma transacción (`emitirNotaCreditoTotalEn`, núcleo sin permiso; el envoltorio manual sigue pidiendo `comprobantes.anular`); PENDIENTE/ENVIADO → **bloquea** («cola fiscal»); RECHAZADO/ANULADO o sin comprobante → sin nota; de ensayo → se marca anulado. Ver `docs/COMPLIANCE.md` §10 (OBSERVADO).
+- **Bloqueos:** venta → cliente → turno → productos (por id). Probado contra doble devolución, cierre de caja, abono y devoluciones cruzadas (sin abrazos mortales).
+- **Fase 5:** la conciliación explica los comprobantes de ventas devueltas (INFO `COMPROBANTES_DE_VENTAS_DEVUELTAS`) en vez de contarlos como diferencia de fechas.
+- **Modelos nuevos** en el cliente aislado: `TENANT_SCOPED` y `BRANCH_SCOPED` (con ruta anidada `saleReturn.sale`).
+- **Pruebas:** `devoluciones-reglas` (33), `devoluciones-esquema` (26), `devoluciones-servicio` (67), `devoluciones-concurrencia` (7); ajustes en caja, crédito, notas, conciliación e identidades de la Fase 5.

@@ -42,7 +42,7 @@ export function razonSinNota(d: DocParaNota, facturacionActiva: boolean): string
   if (d.isTrial) return 'Es un comprobante de prueba, sin valor tributario: no admite notas.'
   if (d.notaTotal) return `Ya tiene la nota de crédito ${d.notaTotal}.`
   if (d.status === 'PENDIENTE' || d.status === 'ENVIADO') return 'Disponible cuando SUNAT acepte el comprobante.'
-  if (d.status !== 'ACEPTADO') return `Un comprobante ${d.status.toLowerCase()} no admite notas.`
+  if (d.status !== 'ACEPTADO' && d.status !== 'OBSERVADO') return `Un comprobante ${d.status.toLowerCase()} no admite notas.`
   if (!/^[FB]0\d{2}$/.test(d.series)) return 'La serie de esta sucursal no permite derivar la de la nota (solo sucursales 1 a 99).'
   if (facturacionActiva && !d.tieneIdProveedor) return 'Falta el identificador del proveedor: usa «Consultar» para sincronizarlo.'
   return null

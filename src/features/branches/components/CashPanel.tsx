@@ -34,6 +34,10 @@ export interface CierreReciente {
   supplierCashPaymentsTotal: number
   /** Pagos a proveedores por otros medios: no tocaron el cajón. */
   supplierOtherPaymentsTotal: number
+  /** Devoluciones de ventas pagadas en efectivo desde el cajón: SALIERON del cajón y restan al esperado. */
+  refundsCashTotal: number
+  /** Devoluciones por otro medio o sin salida de dinero: no tocaron el cajón. */
+  refundsOtherTotal: number
   closedAt: string
   /** Ausente justo tras cerrar: el servicio devuelve el arqueo, no el nombre. */
   cerradoPor?: string
@@ -138,6 +142,9 @@ export function CashPanel({
           )}
           {resultado.supplierCashPaymentsTotal > 0 && (
             <Dato k="Pagos a proveedores en efectivo" v={`- ${money(resultado.supplierCashPaymentsTotal)}`} />
+          )}
+          {resultado.refundsCashTotal > 0 && (
+            <Dato k="Devoluciones pagadas del cajón" v={`- ${money(resultado.refundsCashTotal)}`} />
           )}
           <Dato k="Debía haber" v={money(resultado.expectedAmount)} />
           <Dato k="Contaste" v={money(resultado.countedAmount)} />
@@ -317,6 +324,9 @@ export function CashPanel({
             )}
             {ultimoCierre.supplierCashPaymentsTotal > 0 && (
               <Dato k="Pagos a proveedores en efectivo" v={`- ${money(ultimoCierre.supplierCashPaymentsTotal)}`} />
+            )}
+            {ultimoCierre.refundsCashTotal > 0 && (
+              <Dato k="Devoluciones pagadas del cajón" v={`- ${money(ultimoCierre.refundsCashTotal)}`} />
             )}
           </dl>
         </div>

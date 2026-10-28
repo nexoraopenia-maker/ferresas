@@ -68,10 +68,12 @@ async function main() {
   check('>>> los rechazos no gastaron ningún correlativo', (await prisma.documentCounter.findFirstOrThrow({ where: { tenantId: A.t.id, series: 'FC01' } })).next === 2)
 
   console.log('\n3) El original')
-  for (const st of ['PENDIENTE', 'ENVIADO', 'OBSERVADO', 'RECHAZADO'] as const) {
+  for (const st of ['PENDIENTE', 'ENVIADO', 'RECHAZADO'] as const) {
     const o = await A.original({ status: st })
     check(`>>> original ${st} → bloqueado`, (await lanza(() => emitirNotaCreditoTotal(A.db, ctxA, { saleId: o.saleId, reasonCode: '01', reasonDescription: SUSTENTO })))?.code === 'INVALID_DOCUMENT')
   }
+  const oObs = await A.original({ status: 'OBSERVADO', serie: 'F002' })
+  check('>>> original OBSERVADO (válido, aceptado con advertencias) → SÍ admite la nota total', (await lanza(() => emitirNotaCreditoTotal(A.db, ctxA, { saleId: oObs.saleId, reasonCode: '06', reasonDescription: SUSTENTO }))) === null)
   const oT = await A.original({ trial: true, serie: 'PF001' })
   check('>>> original de PRUEBA → bloqueado', (await lanza(() => emitirNotaCreditoTotal(A.db, ctxA, { saleId: oT.saleId, reasonCode: '01', reasonDescription: SUSTENTO })))?.message.includes('prueba') === true)
   check('venta sin comprobante → NOT_FOUND', (await lanza(() => emitirNotaCreditoTotal(A.db, ctxA, { saleId: randomUUID(), reasonCode: '01', reasonDescription: SUSTENTO })))?.code === 'NOT_FOUND')

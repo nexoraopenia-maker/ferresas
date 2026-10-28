@@ -66,6 +66,9 @@ const TENANT_SCOPED = new Set([
   'DiscountCap',
   'Sale',
   'SaleItem',
+  'SaleReturn',
+  'SaleReturnItem',
+  'SaleReturnRefund',
   'Payment',
   'Quote',
   'QuoteItem',
@@ -121,6 +124,10 @@ const BRANCH_SCOPED: Record<string, AlcanceSucursal> = {
   SaleItem: { columnas: ['branchId'], via: 'sale' },
   Payment: { columnas: ['branchId'], via: 'sale' },
   TaxDocument: { columnas: ['branchId'], via: 'sale' },
+  // F6.1: las devoluciones heredan la sucursal de su venta; las líneas y reembolsos, la de su devolución (ruta con puntos).
+  SaleReturn: { columnas: ['branchId'], via: 'sale' },
+  SaleReturnItem: { columnas: ['branchId'], via: 'saleReturn.sale' },
+  SaleReturnRefund: { columnas: ['branchId'], via: 'saleReturn.sale' },
   QuoteItem: { columnas: ['branchId'], via: 'quote' },
   BranchTransferItem: { columnas: ['fromBranchId', 'toBranchId'], via: 'transfer' },
   DispatchGuide: { columnas: ['branchId'] },
@@ -132,7 +139,8 @@ function condicionDeSucursal(alcance: AlcanceSucursal, ids: readonly string[]): 
   const propia = alcance.columnas.length === 1
     ? { [alcance.columnas[0]!]: { in: lista } }
     : { OR: alcance.columnas.map((c) => ({ [c]: { in: lista } })) }
-  return alcance.via ? { [alcance.via]: propia } : propia
+  // `via` puede ser una ruta con puntos («saleReturn.sale»): se anida de afuera hacia adentro.
+  return alcance.via ? alcance.via.split('.').reduceRight<AnyArgs>((dentro, clave) => ({ [clave]: dentro }), propia) : propia
 }
 
 /** Añade una condición a `where` sin perder las claves únicas del nivel superior. */

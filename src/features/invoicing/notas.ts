@@ -86,12 +86,10 @@ export function documentoRelacionadoDe(n: NotaParaEnviar): NonNullable<Comproban
   if (rel.status === 'PENDIENTE' || rel.status === 'ENVIADO') {
     throw new NotaEsperaOriginal(`El comprobante original está ${rel.status.toLowerCase()}: la nota espera a que SUNAT lo acepte.`)
   }
-  if (rel.status !== 'ACEPTADO') {
-    throw invalida(
-      rel.status === 'OBSERVADO'
-        ? '⚠️ El comprobante original quedó OBSERVADO: aún no se decidió si admite notas (pendiente de validar con un contador).'
-        : `El comprobante original está ${rel.status.toLowerCase()}: no admite notas.`,
-    )
+  // ACEPTADO y OBSERVADO son comprobantes VÁLIDOS (observado = aceptado con advertencias; suma en el Registro de Ventas). Decisión del dueño
+  // (2026-10-27), pendiente de validar con el contador: ⚠️ ver docs/COMPLIANCE.md §10.
+  if (rel.status !== 'ACEPTADO' && rel.status !== 'OBSERVADO') {
+    throw invalida(`El comprobante original está ${rel.status.toLowerCase()}: no admite notas.`)
   }
 
   return {

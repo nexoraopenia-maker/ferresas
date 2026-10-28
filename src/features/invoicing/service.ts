@@ -449,32 +449,40 @@ export interface NotaCreditoEmitida {
 
 const TOPE_SUSTENTO = 250
 
-/**
- * Emite la nota de crédito TOTAL de la venta `saleId` (motivos 01, 02 y 06).
- *
- * ⚠️ Fase 1A.3: solo notas totales. Las parciales y las de débito necesitan líneas propias
- * (`TaxDocumentItem`, fase 1A.3b). Las reglas normativas están en docs/COMPLIANCE.md §10, sin validar.
- *
- * Lo que HACE: crea la nota (serie propia, correlativo sin huecos, importes y partes COPIADOS del original) y,
- * si el negocio es real, la encola en la misma transacción. El envío lo hace la cola, y la nota espera a que
- * su original esté aceptado (ver `NotaEsperaOriginal`).
- *
- * Lo que NO hace (a propósito): no devuelve el stock, no toca la caja, no cambia la venta. Si hay que reponer
- * mercadería o devolver dinero, es una operación aparte que decide una persona.
- *
- *  · SERIE HEREDADA: F001 → FC01, B007 → BC07. Solo hasta la sucursal 99 (la serie de una nota son 4 caracteres).
- *  · UNA SOLA nota total viva por comprobante: lo garantiza un índice único parcial (el chequeo previo solo da
- *    el mensaje claro; la carrera la corta la base). Una nota RECHAZADA no cuenta.
- */
-export async function emitirNotaCreditoTotal(
-  db: TenantPrismaClient,
-  ctx: TenantContext,
-  input: { saleId: string; reasonCode: string; reasonDescription: string },
-): Promise<NotaCreditoEmitida> {
-  if (!puede(ctx, 'comprobantes.anular')) {
-    throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para emitir notas de crédito.')
+/** Lo que hace falta saber, ya comprobado, para crear la nota total de una venta. */
+interface PlanNotaTotal {
+  original: {
+    id: string; fullNumber: string; currency: string; issuerTaxId: string | null; issuerLegalName: string | null
+    receiverDocType: 'DNI' | 'RUC' | 'CE' | 'PASAPORTE' | 'SIN_DOCUMENTO'; receiverDocNumber: string | null; receiverName: string | null; receiverAddress: string | null
+    subtotal: Prisma.Decimal; taxTotal: Prisma.Decimal; discountTotal: Prisma.Decimal; total: Prisma.Decimal
+    sale: { branchId: string }
   }
+  modo: ReturnType<typeof modoFiscal>
+  series: string
+  scope: string
+  sustento: string
+  reasonCode: string
+}
 
+const yaTieneNotaTotal = (db: TenantPrismaClient, originalId: string) => db.taxDocument.findFirst({
+  where: { relatedDocumentId: originalId, documentType: 'NOTA_CREDITO', reasonCode: { in: [...CODIGOS_NOTA_CREDITO_TOTAL] }, status: { not: 'RECHAZADO' } },
+  select: { fullNumber: true },
+})
+const notaYaExiste = (original: string, n: { fullNumber: string }) => new BusinessError(
+  'INVALID_DOCUMENT', `El comprobante ${original} ya tiene una nota de crédito total: ${n.fullNumber}.`, { existente: n.fullNumber },
+)
+
+/**
+ * TODAS las comprobaciones de una nota de crédito total, SIN comprobar permisos ni escribir nada. La comparten el emisor manual
+ * (`emitirNotaCreditoTotal`, que exige `comprobantes.anular`) y la devolución de una venta (`ventas.anular`, F6.1): un poder = un permiso,
+ * así que cada puerta pone el suyo y el resto de las reglas es una sola.
+ *
+ * El original puede estar ACEPTADO u OBSERVADO (observado = aceptado con advertencias: es válido y suma en el Registro de Ventas).
+ */
+export async function planDeNotaCreditoTotal(
+  db: TenantPrismaClient,
+  input: { saleId: string; reasonCode: string; reasonDescription: string },
+): Promise<PlanNotaTotal> {
   if (!CODIGOS_NOTA_CREDITO_TOTAL.includes(input.reasonCode)) {
     throw new BusinessError(
       'INVALID_DOCUMENT',
@@ -507,7 +515,7 @@ export async function emitirNotaCreditoTotal(
   if (original.isTrial) {
     throw new BusinessError('INVALID_DOCUMENT', 'Ese comprobante es de prueba, sin valor tributario: no admite notas.')
   }
-  if (original.status !== 'ACEPTADO') {
+  if (original.status !== 'ACEPTADO' && original.status !== 'OBSERVADO') {
     throw new BusinessError(
       'INVALID_DOCUMENT',
       original.status === 'PENDIENTE' || original.status === 'ENVIADO'
@@ -533,89 +541,137 @@ export async function emitirNotaCreditoTotal(
       `La serie ${original.series} no permite derivar la serie de la nota (solo sucursales 1 a 99).`,
     )
   }
-  const series = `${m[1]}C${m[2]}`
-  const scope = m[1] === 'F' ? 'TAX_NC_FACTURA' : 'TAX_NC_BOLETA'
+  const previa = await yaTieneNotaTotal(db, original.id)
+  if (previa) throw notaYaExiste(original.fullNumber, previa)
 
-  const yaExiste = async () => db.taxDocument.findFirst({
-    where: {
-      relatedDocumentId: original.id, documentType: 'NOTA_CREDITO',
-      reasonCode: { in: [...CODIGOS_NOTA_CREDITO_TOTAL] }, status: { not: 'RECHAZADO' },
+  return {
+    original, modo, sustento, reasonCode: input.reasonCode,
+    series: `${m[1]}C${m[2]}`, scope: m[1] === 'F' ? 'TAX_NC_FACTURA' : 'TAX_NC_BOLETA',
+  }
+}
+
+/** Crea la nota DENTRO de la transacción `t` (el contador de su serie ya existe: `ensureCounter` va antes, fuera de la transacción). */
+async function crearNotaDesdePlan(t: TenantPrismaClient, ctx: TenantContext, saleId: string, plan: PlanNotaTotal): Promise<NotaCreditoEmitida> {
+  const { original, modo, series, scope, sustento } = plan
+  const { correlativo } = await claimNextNumber(t, ctx.tenantId, scope, series)
+  const fullNumber = formatFullNumber(series, correlativo)
+
+  const nota = await t.taxDocument.create({
+    data: {
+      tenantId: ctx.tenantId,
+      saleId,
+      documentType: 'NOTA_CREDITO',
+      series, correlativo, fullNumber,
+      status: 'PENDIENTE',
+      isTrial: false,
+      relatedDocumentId: original.id,
+      reasonCode: plan.reasonCode,
+      reasonDescription: sustento,
+      // Todo se COPIA del original: es una nota total, por el mismo importe y para el mismo receptor.
+      issuerTaxId: original.issuerTaxId,
+      issuerLegalName: original.issuerLegalName,
+      receiverDocType: original.receiverDocType,
+      receiverDocNumber: original.receiverDocNumber,
+      receiverName: original.receiverName,
+      receiverAddress: original.receiverAddress,
+      currency: original.currency,
+      subtotal: original.subtotal,
+      taxTotal: original.taxTotal,
+      discountTotal: original.discountTotal,
+      total: original.total,
     },
-    select: { fullNumber: true },
+    select: { id: true, series: true, correlativo: true, fullNumber: true, status: true, total: true },
   })
-  const bloquear = (n: { fullNumber: string }) => new BusinessError(
-    'INVALID_DOCUMENT',
-    `El comprobante ${original.fullNumber} ya tiene una nota de crédito total: ${n.fullNumber}.`,
-    { existente: n.fullNumber },
-  )
-  const previa = await yaExiste()
-  if (previa) throw bloquear(previa)
 
-  await ensureCounter(db, ctx.tenantId, original.sale.branchId, scope, series, '')
+  if (seEncola({ isTrial: false }, modo)) await encolarComprobante(t, ctx.tenantId, nota.id)
+
+  // Si la venta se fió, su cuenta por cobrar queda «pendiente de revisión» (el dueño decide: anular la deuda o mantenerla).
+  // En la MISMA transacción: la nota y la marca nacen juntas o no nacen.
+  await marcarRevisionPorNota(t, ctx, { saleId, nota: fullNumber, motivo: sustento })
+
+  await t.auditLog.create({
+    data: {
+      tenantId: ctx.tenantId,
+      actorId: ctx.userId,
+      actorRole: ctx.role,
+      action: 'taxdocument.nota_credito',
+      entityType: 'TaxDocument',
+      entityId: nota.id,
+      after: { nota: fullNumber, original: original.fullNumber, motivo: plan.reasonCode, sustento, modo, total: num(original.total) },
+      impersonationId: ctx.impersonationId ?? null,
+    },
+  })
+
+  return {
+    id: nota.id, series: nota.series, correlativo: nota.correlativo, fullNumber: nota.fullNumber,
+    status: nota.status, total: num(nota.total), comprobanteOriginal: original.fullNumber,
+  }
+}
+
+/**
+ * Prepara lo que HAY que hacer fuera de la transacción antes de crear una nota total dentro de otra operación (la devolución de una venta):
+ * comprueba todo y asegura que exista el contador de la serie de la nota (crearlo dentro de la transacción haría chocar a dos cajeros).
+ */
+export async function prepararNotaCreditoTotal(
+  db: TenantPrismaClient,
+  ctx: TenantContext,
+  input: { saleId: string; reasonCode: string; reasonDescription: string },
+): Promise<void> {
+  const plan = await planDeNotaCreditoTotal(db, input)
+  await ensureCounter(db, ctx.tenantId, plan.original.sale.branchId, plan.scope, plan.series, '')
+}
+
+/**
+ * Emite la nota de crédito total dentro de la transacción `t` de OTRA operación, SIN comprobar permisos: quien la llama ya autorizó (F6.1:
+ * `ventas.anular`). Vuelve a comprobar todo con `t` (el estado del comprobante pudo cambiar desde `prepararNotaCreditoTotal`) y exige que
+ * el contador exista. Si algo falla lanza y la operación entera se deshace.
+ */
+export async function emitirNotaCreditoTotalEn(
+  t: TenantPrismaClient,
+  ctx: TenantContext,
+  input: { saleId: string; reasonCode: string; reasonDescription: string },
+): Promise<NotaCreditoEmitida> {
+  const plan = await planDeNotaCreditoTotal(t, input)
+  return crearNotaDesdePlan(t, ctx, input.saleId, plan)
+}
+
+/**
+ * Emite la nota de crédito TOTAL de la venta `saleId` (motivos 01, 02 y 06).
+ *
+ * ⚠️ Fase 1A.3: solo notas totales. Las parciales y las de débito necesitan líneas propias
+ * (`TaxDocumentItem`, fase 1A.3b). Las reglas normativas están en docs/COMPLIANCE.md §10, sin validar.
+ *
+ * Lo que HACE: crea la nota (serie propia, correlativo sin huecos, importes y partes COPIADOS del original) y,
+ * si el negocio es real, la encola en la misma transacción. El envío lo hace la cola, y la nota espera a que
+ * su original esté aceptado (ver `NotaEsperaOriginal`).
+ *
+ * Lo que NO hace (a propósito): no devuelve el stock, no toca la caja, no cambia la venta. Si hay que reponer
+ * mercadería o devolver dinero, es una operación aparte (F6.1: `anularOdevolverVenta`, que reutiliza `emitirNotaCreditoTotalEn`).
+ * Admite originales ACEPTADOS y OBSERVADOS (válidos).
+ *
+ *  · SERIE HEREDADA: F001 → FC01, B007 → BC07. Solo hasta la sucursal 99 (la serie de una nota son 4 caracteres).
+ *  · UNA SOLA nota total viva por comprobante: lo garantiza un índice único parcial (el chequeo previo solo da
+ *    el mensaje claro; la carrera la corta la base). Una nota RECHAZADA no cuenta.
+ */
+export async function emitirNotaCreditoTotal(
+  db: TenantPrismaClient,
+  ctx: TenantContext,
+  input: { saleId: string; reasonCode: string; reasonDescription: string },
+): Promise<NotaCreditoEmitida> {
+  if (!puede(ctx, 'comprobantes.anular')) {
+    throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para emitir notas de crédito.')
+  }
+  const plan = await planDeNotaCreditoTotal(db, input)
+  await ensureCounter(db, ctx.tenantId, plan.original.sale.branchId, plan.scope, plan.series, '')
 
   try {
-    return await db.$transaction(async (tx) => {
-      const t = tx as unknown as TenantPrismaClient
-      const { correlativo } = await claimNextNumber(t, ctx.tenantId, scope, series)
-      const fullNumber = formatFullNumber(series, correlativo)
-
-      const nota = await t.taxDocument.create({
-        data: {
-          tenantId: ctx.tenantId,
-          saleId: input.saleId,
-          documentType: 'NOTA_CREDITO',
-          series, correlativo, fullNumber,
-          status: 'PENDIENTE',
-          isTrial: false,
-          relatedDocumentId: original.id,
-          reasonCode: input.reasonCode,
-          reasonDescription: sustento,
-          // Todo se COPIA del original: es una nota total, por el mismo importe y para el mismo receptor.
-          issuerTaxId: original.issuerTaxId,
-          issuerLegalName: original.issuerLegalName,
-          receiverDocType: original.receiverDocType,
-          receiverDocNumber: original.receiverDocNumber,
-          receiverName: original.receiverName,
-          receiverAddress: original.receiverAddress,
-          currency: original.currency,
-          subtotal: original.subtotal,
-          taxTotal: original.taxTotal,
-          discountTotal: original.discountTotal,
-          total: original.total,
-        },
-        select: { id: true, series: true, correlativo: true, fullNumber: true, status: true, total: true },
-      })
-
-      if (seEncola({ isTrial: false }, modo)) await encolarComprobante(t, ctx.tenantId, nota.id)
-
-      // Si la venta se fió, su cuenta por cobrar queda «pendiente de revisión» (el dueño decide: anular la deuda o mantenerla).
-      // En la MISMA transacción: la nota y la marca nacen juntas o no nacen.
-      await marcarRevisionPorNota(t, ctx, { saleId: input.saleId, nota: fullNumber, motivo: sustento })
-
-      await t.auditLog.create({
-        data: {
-          tenantId: ctx.tenantId,
-          actorId: ctx.userId,
-          actorRole: ctx.role,
-          action: 'taxdocument.nota_credito',
-          entityType: 'TaxDocument',
-          entityId: nota.id,
-          after: { nota: fullNumber, original: original.fullNumber, motivo: input.reasonCode, sustento, modo, total: num(original.total) },
-          impersonationId: ctx.impersonationId ?? null,
-        },
-      })
-
-      return {
-        id: nota.id, series: nota.series, correlativo: nota.correlativo, fullNumber: nota.fullNumber,
-        status: nota.status, total: num(nota.total), comprobanteOriginal: original.fullNumber,
-      }
-    }, { maxWait: 15_000, timeout: 30_000 })
+    return await db.$transaction(async (tx) => crearNotaDesdePlan(tx as unknown as TenantPrismaClient, ctx, input.saleId, plan), { maxWait: 15_000, timeout: 30_000 })
   } catch (e) {
     // Carrera: dos personas emitiendo la nota del mismo comprobante a la vez. El índice único parcial corta a la
     // segunda; su transacción se deshace entera (el correlativo reservado se devuelve: no queda quemado).
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === P2002_UNIQUE) {
-      const ganadora = await yaExiste()
-      if (ganadora) throw bloquear(ganadora)
+      const ganadora = await yaTieneNotaTotal(db, plan.original.id)
+      if (ganadora) throw notaYaExiste(plan.original.fullNumber, ganadora)
     }
     throw e
   }

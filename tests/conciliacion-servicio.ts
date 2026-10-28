@@ -54,7 +54,7 @@ interface OpDoc { tipo?: 'BOLETA' | 'FACTURA'; serie?: string; correlativo?: num
 async function venta(n: N, o: { pide?: 'NOTA_VENTA' | 'BOLETA' | 'FACTURA'; status?: 'COMPLETADA' | 'ANULADA' | 'DEVUELTA'; total?: number; en: Date; branch?: 'b1' | 'b2'; doc?: OpDoc | null }) {
   const b = o.branch === 'b2' ? n.b2 : n.b1
   const total = o.total ?? 118, base = Math.round((total / 1.18) * 100) / 100, igv = Math.round((total - base) * 100) / 100
-  const sale = await prisma.sale.create({ data: { tenantId: n.t.id, branchId: b.branch.id, warehouseId: b.warehouse.id, userId: n.owner.userId, number: `V-${++seq}-${randomUUID().slice(0, 4)}`, documentType: o.pide ?? 'BOLETA', status: o.status ?? 'COMPLETADA', subtotal: base, taxTotal: igv, total, completedAt: o.en } })
+  const sale = await prisma.sale.create({ data: { tenantId: n.t.id, branchId: b.branch.id, warehouseId: b.warehouse.id, userId: n.owner.userId, number: `V-${++seq}-${randomUUID().slice(0, 4)}`, documentType: o.pide ?? 'BOLETA', status: o.status ?? 'COMPLETADA', ...((o.status ?? 'COMPLETADA') === 'ANULADA' || o.status === 'DEVUELTA' ? { voidedAt: new Date(), voidReason: 'Prueba' } : {}),  subtotal: base, taxTotal: igv, total, completedAt: o.en } })
   let doc = null
   if (o.doc) doc = await documento(n, sale.id, { total, ...o.doc, emitido: o.doc.emitido ?? o.en }, o.pide === 'FACTURA' ? 'FACTURA' : 'BOLETA')
   return { sale, doc }

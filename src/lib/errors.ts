@@ -32,6 +32,10 @@ export type BusinessErrorCode =
   | 'CREDIT_BLOCKED'
   /** El fiado exige un cliente identificado (DNI/RUC válido): no hay fiado a «público general». */
   | 'CREDIT_CUSTOMER'
+  /** La venta fiada ya tiene abonos: no se devuelve hasta anularlos (F6.1). */
+  | 'CREDIT_HAS_PAYMENTS'
+  /** Hace falta un turno de caja abierto (devolver dinero en efectivo desde el cajón). */
+  | 'CASH_REQUIRED'
 
 export class BusinessError extends Error {
   readonly code: BusinessErrorCode

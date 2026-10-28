@@ -137,6 +137,10 @@ check('>>> provisionales, proveedor sin RUC y sin proveedor → advertencias, ca
 check('>>> informativos: ensayo avisa que no se concilió como real; devueltas y anuladas se explican', (() => { const h = hallazgosInformativos({ ...p1 }, 'ENSAYO', p1.clasificacion.valido.total); return niveles(h) === 'MODO_SIN_VALOR_FISCAL:INFO,VENTAS_ANULADAS_O_DEVUELTAS:INFO' })())
 check('>>> diferencia de fechas: se EXPLICA como información cuando el bruto por emisión difiere del de la venta; si coinciden, nada', niveles(hallazgosInformativos(p1, 'REAL', p1.clasificacion.valido.total + 118)).includes('DIFERENCIA_DE_FECHAS:INFO') && !niveles(hallazgosInformativos(p1, 'REAL', p1.clasificacion.valido.total)).includes('DIFERENCIA_DE_FECHAS'))
 
+check('>>> comprobantes válidos de ventas ya devueltas (F6.1): se explican aparte (INFO) y NO se confunden con una diferencia de fechas', (() => { const h = hallazgosInformativos(p1, 'REAL', p1.clasificacion.valido.total + 118, { documentos: 1, total: 118 }); return niveles(h).includes('COMPROBANTES_DE_VENTAS_DEVUELTAS:INFO') && !niveles(h).includes('DIFERENCIA_DE_FECHAS') && h.find((x) => x.codigo === 'COMPROBANTES_DE_VENTAS_DEVUELTAS')!.cantidad === 1 })())
+check('>>> y si ADEMÁS hay una diferencia de fechas real (50.00 más), esa se sigue explicando por separado', (() => { const h = hallazgosInformativos(p1, 'REAL', p1.clasificacion.valido.total + 118 + 50, { documentos: 1, total: 118 }); return h.find((x) => x.codigo === 'DIFERENCIA_DE_FECHAS')?.importe === 50 })())
+check('sin ventas devueltas el aviso no aparece (comportamiento de siempre)', !niveles(hallazgosInformativos(p1, 'REAL', p1.clasificacion.valido.total)).includes('COMPROBANTES_DE_VENTAS_DEVUELTAS'))
+
 console.log('\nJ) Estado general')
 const base = { modo: 'REAL' as ModoFiscal, puente: puenteVentas([], cero, cero), cuadreVentas: cuadre(0, 0), cuadreCompras: cuadre(0, 0), comprobantesReales: 0, registroVentas: registroVentas([]), comprasEnRegistro: 0 }
 const hall = (nivel: Hallazgo['nivel']): Hallazgo => ({ codigo: 'FACTURA_SIN_RUC', nivel, titulo: 't', explicacion: 'e', cantidad: 1, importe: 1, items: [] })

@@ -49,7 +49,7 @@ async function venta(n: N, o: { branch?: 'b1' | 'b2'; numero: string; status?: '
   const neto = o.lineas.reduce((a, l) => a + ventaSinIgvDeLinea(l.total, l.tasa ?? 0.18), 0)
   const total = o.lineas.reduce((a, l) => a + l.total, 0)
   const v = await prisma.sale.create({ data: {
-    tenantId: n.t.id, branchId: b.branch.id, warehouseId: b.warehouse.id, userId: n.u.owner!.id, number: o.numero, documentType: 'NOTA_VENTA', status: o.status ?? 'COMPLETADA',
+    tenantId: n.t.id, branchId: b.branch.id, warehouseId: b.warehouse.id, userId: n.u.owner!.id, number: o.numero, documentType: 'NOTA_VENTA', status: o.status ?? 'COMPLETADA', ...((o.status ?? 'COMPLETADA') === 'ANULADA' || o.status === 'DEVUELTA' ? { voidedAt: new Date(), voidReason: 'Prueba' } : {}), 
     subtotal: r2(neto), taxTotal: r2(total - neto), total, completedAt: o.completedAt ? new Date(o.completedAt) : null,
   } })
   await prisma.saleItem.createMany({ data: o.lineas.map((l) => ({

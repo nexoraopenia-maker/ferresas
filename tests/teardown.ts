@@ -81,6 +81,8 @@ export async function limpiarResiduo(): Promise<ResultadoTeardown> {
      * que la cascada del tenant no puede borrar una venta que tenga
      * comprobante emitido.
      */
+    // Las devoluciones (F6.1) apuntan a la venta y a la nota de crédito con Restrict: van antes que los comprobantes (sus líneas y reembolsos caen en cascada).
+    await prisma.saleReturn.deleteMany({ where: { tenantId: { in: ids } } })
     await prisma.taxDocument.deleteMany({ where: { tenantId: { in: ids } } })
     await prisma.tenant.deleteMany({ where: { id: { in: ids } } })
   }
