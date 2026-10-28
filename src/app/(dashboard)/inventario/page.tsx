@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { requireTenantContext } from '@/lib/session'
+import { puede } from '@/lib/puede'
 import { ScanToStockSheet } from '@/features/inventory/components/ScanToStockSheet'
 
 export const dynamic = 'force-dynamic'
@@ -21,7 +22,8 @@ export const dynamic = 'force-dynamic'
  * salta — y fue esa prueba la que detectó que aquí faltaba.
  */
 export default async function InventarioPage() {
-  await requireTenantContext()
+  const ctx = await requireTenantContext()
+  const verKardex = puede(ctx, 'kardex.ver')
 
   return (
     <main className="mx-auto flex max-w-lg flex-col gap-6 p-4">
@@ -32,6 +34,11 @@ export default async function InventarioPage() {
             Escanea un código para registrar entradas, salidas o ajustes.
           </p>
         </div>
+        {verKardex && (
+          <Link href="/inventario/kardex" className="h-touch-lg shrink-0 inline-flex items-center rounded-xl border border-hairline px-4 text-sm font-semibold text-ink">
+            Kardex
+          </Link>
+        )}
         <Link
           href="/inventario/importar"
           className="h-touch-lg shrink-0 inline-flex items-center rounded-xl border border-hairline px-4 text-sm font-semibold text-ink"
@@ -39,7 +46,7 @@ export default async function InventarioPage() {
           Importar catálogo
         </Link>
       </header>
-      <ScanToStockSheet />
+      <ScanToStockSheet verKardex={verKardex} />
     </main>
   )
 }

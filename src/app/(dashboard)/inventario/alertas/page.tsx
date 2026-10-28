@@ -6,6 +6,7 @@ import { formatQuantity, unitLabel } from '@/lib/quantity'
 import { filtroAlmacen } from '@/features/branches/queries'
 import { alertasDeStock } from '@/features/dashboard/service'
 import { AlertasStockWidget } from '@/features/dashboard/components/Widgets'
+import { enlaceKardex } from '@/features/inventory/kardex-enlaces'
 import { ReposicionRapida } from '@/features/dashboard/components/ReposicionRapida'
 
 export const dynamic = 'force-dynamic'
@@ -26,6 +27,7 @@ export default async function AlertasPage() {
   const puedeEntrada = puede(ctx, 'stock.entrada') && !!almacen &&
     (ctx.access === 'FULL' || ctx.access === 'WARN')
   const puedePedir = puede(ctx, 'stock.transferir_solicitar')
+  const verKardex = puede(ctx, 'kardex.ver')
 
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-4 p-4">
@@ -52,6 +54,7 @@ export default async function AlertasPage() {
                 <div className="min-w-0">
                   <p className="truncate font-semibold text-ink">{a.nombre}</p>
                   <p className="font-mono text-xs text-ink-muted">{a.sku}</p>
+                  {verKardex && <a data-producto="kardex" href={enlaceKardex({ producto: a.productId })} className="text-xs font-semibold text-industrial-700 underline dark:text-industrial-300">Ver kardex</a>}
                 </div>
                 <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold ${
                   a.estado === 'OUT' ? 'bg-stock-out-soft text-stock-out' : 'bg-stock-low-soft text-stock-low'

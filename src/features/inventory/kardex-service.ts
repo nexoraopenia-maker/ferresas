@@ -251,6 +251,23 @@ async function resolverDocumentos(db: TenantPrismaClient, ctx: TenantContext, fi
   return out
 }
 
+// ─── Búsqueda de producto ──────────────────────────────────────────────────────────────────────────────────────────
+
+export interface ProductoKardex { id: string; nombre: string; sku: string; codigo: string | null; unidad: string }
+const MAX_CANDIDATOS = 20
+
+/** Los productos que coinciden con lo tecleado (nombre, SKU o código de barras), para elegir de quién ver el kardex. Solo los que llevan control de stock. */
+export async function buscarProductosKardex(db: TenantPrismaClient, ctx: TenantContext, texto: string): Promise<ProductoKardex[]> {
+  exigir(ctx, 'kardex.ver')
+  const q = texto.trim().slice(0, 80)
+  if (q.length < 2) return []
+  const filas = await db.product.findMany({
+    where: { trackStock: true, deletedAt: null, OR: [{ name: { contains: q, mode: 'insensitive' } }, { sku: { contains: q, mode: 'insensitive' } }, { barcode: { contains: q } }] },
+    select: { id: true, name: true, sku: true, barcode: true, unitType: true }, orderBy: [{ name: 'asc' }, { id: 'asc' }], take: MAX_CANDIDATOS,
+  })
+  return filas.map((p) => ({ id: p.id, nombre: p.name, sku: p.sku, codigo: p.barcode, unidad: p.unitType }))
+}
+
 // ─── Lectura ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
 function selectLineas(conCostos: boolean) {

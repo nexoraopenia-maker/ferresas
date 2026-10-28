@@ -68,6 +68,14 @@ export const NAV_ITEMS: NavItem[] = [
     permisos: ['stock.entrada', 'stock.ajustar', 'stock.merma_solicitar', 'productos.crear'],
   },
   {
+    href: '/inventario/kardex',
+    label: 'Kardex',
+    short: 'Kardex',
+    // Libro con renglones
+    icon: 'M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5Zm4 4h8M8 13h8M8 17h5',
+    permisos: ['kardex.ver'],
+  },
+  {
     href: '/cotizaciones',
     label: 'Cotizaciones',
     short: 'Cotiz.',
@@ -250,8 +258,12 @@ export function visibleItems(permisos: readonly string[]): NavItem[] {
  * ¿Está activo este enlace?
  *
  * Coincidencia por prefijo para que `/inventario/algo` siga marcando
- * «Inventario», pero exacta en la raíz para no encender todo a la vez.
+ * «Inventario», pero exacta en la raíz para no encender todo a la vez. Si otro
+ * enlace del menú es MÁS específico y también coincide (`/inventario/kardex`
+ * dentro de `/inventario`), gana ese: nunca se encienden dos a la vez.
  */
 export function isActive(href: string, pathname: string): boolean {
-  return pathname === href || pathname.startsWith(`${href}/`)
+  const coincide = (h: string) => pathname === h || pathname.startsWith(`${h}/`)
+  if (!coincide(href)) return false
+  return !NAV_ITEMS.some((i) => i.href.length > href.length && i.href.startsWith(`${href}/`) && coincide(i.href))
 }

@@ -5,6 +5,7 @@ import { InventoryScannerModal, type ResultadoLectura } from '@/components/inven
 import { QuantityInput } from '@/components/ui/quantity-input'
 import { getStockStatusView } from '@/lib/stock-status'
 import { MENSAJE_SIN_RED, useEnLinea } from '@/lib/en-linea'
+import { enlaceKardex } from '../kardex-enlaces'
 import { formatQuantity, redondear, stepsFor, unitLabel } from '@/lib/quantity'
 import {
   createProductExpress,
@@ -38,7 +39,7 @@ const TIPOS: { value: MovementType; label: string; verb: string }[] = [
 ]
 
 
-export function ScanToStockSheet() {
+export function ScanToStockSheet({ verKardex = false }: { /** Quien tiene `kardex.ver`: la hoja del producto ofrece ir a su kardex. */ verKardex?: boolean }) {
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
   const [type, setType] = useState<MovementType>('ENTRADA')
   const [qty, setQty] = useState(1)
@@ -240,6 +241,7 @@ export function ScanToStockSheet() {
           verb={activo.verb}
           onConfirm={confirmar}
           onCancel={reset}
+          verKardex={verKardex}
         />
       )}
     </div>
@@ -259,6 +261,7 @@ function ProductSheet({
   verb,
   onConfirm,
   onCancel,
+  verKardex,
 }: {
   product: ScannedProduct
   type: MovementType
@@ -272,6 +275,7 @@ function ProductSheet({
   verb: string
   onConfirm: () => void
   onCancel: () => void
+  verKardex: boolean
 }) {
   const enLinea = useEnLinea()
   const actual = getStockStatusView(product.quantity, product.minStock)
@@ -299,6 +303,11 @@ function ProductSheet({
         <p className="text-sm text-ink-muted">
           {product.sku} · {product.warehouseName}
         </p>
+        {verKardex && (
+          <a data-producto="kardex" href={enlaceKardex({ producto: product.productId, almacen: product.warehouseId })} className="mt-1 inline-block text-sm font-semibold text-industrial-700 underline dark:text-industrial-300">
+            Ver kardex de este producto
+          </a>
+        )}
       </header>
 
       <div className={`mt-3 flex items-center gap-2 rounded-xl border px-3 py-2 ${actual.className}`}>
