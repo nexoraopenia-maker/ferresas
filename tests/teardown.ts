@@ -82,6 +82,7 @@ export async function limpiarResiduo(): Promise<ResultadoTeardown> {
      * comprobante emitido.
      */
     // Las devoluciones (F6.1) apuntan a la venta y a la nota de crédito con Restrict: van antes que los comprobantes (sus líneas y reembolsos caen en cascada).
+    await prisma.cashMovement.deleteMany({ where: { tenantId: { in: ids } } })
     await prisma.saleReturn.deleteMany({ where: { tenantId: { in: ids } } })
     await prisma.taxDocument.deleteMany({ where: { tenantId: { in: ids } } })
     await prisma.tenant.deleteMany({ where: { id: { in: ids } } })

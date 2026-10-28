@@ -42,6 +42,10 @@ export interface CashCloseResult extends CashSessionResult {
   refundsCashTotal: number
   /** Devoluciones por otro medio o sin salida de dinero: no tocaron el cajón. */
   refundsOtherTotal: number
+  /** Ingresos manuales de efectivo (F6.3): SUMAN al esperado. */
+  manualInTotal: number
+  /** Egresos manuales de efectivo (F6.3): RESTAN al esperado. */
+  manualOutTotal: number
   closedAt: string
 }
 
@@ -57,17 +61,19 @@ export interface TotalesTurno {
   supplierOtherPaymentsTotal: number
   refundsCashTotal: number
   refundsOtherTotal: number
+  manualInTotal: number
+  manualOutTotal: number
 }
 
 /**
- * Lo que debería haber en el cajón: fondo + cobros en efectivo + abonos de deuda en efectivo − vueltos − pagos a proveedores en
- * efectivo − devoluciones de ventas pagadas desde el cajón. El fiado no entra; las transferencias y el Yape (a clientes o a proveedores) tampoco.
+ * Lo que debería haber en el cajón: fondo + cobros en efectivo + abonos de deuda en efectivo + ingresos manuales − vueltos − pagos a proveedores en
+ * efectivo − devoluciones de ventas pagadas desde el cajón − egresos manuales. El fiado no entra; las transferencias y el Yape (a clientes o a proveedores) tampoco.
  */
 export function efectivoEsperado(
   fondo: number,
-  t: Pick<TotalesTurno, 'cashTotal' | 'cashReceiptsTotal' | 'changeTotal' | 'supplierCashPaymentsTotal' | 'refundsCashTotal'>,
+  t: Pick<TotalesTurno, 'cashTotal' | 'cashReceiptsTotal' | 'changeTotal' | 'supplierCashPaymentsTotal' | 'refundsCashTotal' | 'manualInTotal' | 'manualOutTotal'>,
 ): number {
-  return redondearCentimos(fondo + t.cashTotal + t.cashReceiptsTotal - t.changeTotal - t.supplierCashPaymentsTotal - t.refundsCashTotal)
+  return redondearCentimos(fondo + t.cashTotal + t.cashReceiptsTotal + t.manualInTotal - t.changeTotal - t.supplierCashPaymentsTotal - t.refundsCashTotal - t.manualOutTotal)
 }
 
 /**
@@ -101,11 +107,17 @@ export async function totalesDelTurno(t: TenantPrismaClient, sessionId: string):
     select: { mode: true, amount: true },
   })
 
+  // Movimientos manuales de efectivo del turno que NO se anularon (F6.3). Los anulados quedan en el registro pero no cuentan.
+  const movimientos = await t.cashMovement.findMany({
+    where: { cashSessionId: sessionId, voidedAt: null },
+    select: { kind: true, amount: true },
+  })
+
   const r: TotalesTurno = {
     salesCount: ventas.length, salesTotal: 0, cashTotal: 0, changeTotal: 0,
     creditSalesTotal: 0, cashReceiptsTotal: 0, otherReceiptsTotal: 0,
     supplierCashPaymentsTotal: 0, supplierOtherPaymentsTotal: 0,
-    refundsCashTotal: 0, refundsOtherTotal: 0,
+    refundsCashTotal: 0, refundsOtherTotal: 0, manualInTotal: 0, manualOutTotal: 0,
   }
   for (const v of ventas) {
     r.salesTotal = redondearCentimos(r.salesTotal + num(v.total))
@@ -123,6 +135,10 @@ export async function totalesDelTurno(t: TenantPrismaClient, sessionId: string):
   for (const p of pagosProveedor) {
     if (p.method === 'EFECTIVO') r.supplierCashPaymentsTotal = redondearCentimos(r.supplierCashPaymentsTotal + num(p.amount))
     else r.supplierOtherPaymentsTotal = redondearCentimos(r.supplierOtherPaymentsTotal + num(p.amount))
+  }
+  for (const m of movimientos) {
+    if (m.kind === 'INGRESO') r.manualInTotal = redondearCentimos(r.manualInTotal + num(m.amount))
+    else r.manualOutTotal = redondearCentimos(r.manualOutTotal + num(m.amount))
   }
   for (const d of devoluciones) {
     if (d.mode === 'CAJA') r.refundsCashTotal = redondearCentimos(r.refundsCashTotal + num(d.amount))
@@ -256,7 +272,7 @@ export async function closeCashSession(
     const tot = await totalesDelTurno(t, sesion.id)
     const {
       salesCount, salesTotal, cashTotal, changeTotal, creditSalesTotal, cashReceiptsTotal, otherReceiptsTotal,
-      supplierCashPaymentsTotal, supplierOtherPaymentsTotal, refundsCashTotal, refundsOtherTotal,
+      supplierCashPaymentsTotal, supplierOtherPaymentsTotal, refundsCashTotal, refundsOtherTotal, manualInTotal, manualOutTotal,
     } = tot
 
     const openingAmount = num(sesion.openingAmount)
@@ -284,6 +300,8 @@ export async function closeCashSession(
         supplierOtherPaymentsTotal: new Prisma.Decimal(supplierOtherPaymentsTotal.toFixed(2)),
         refundsCashTotal: new Prisma.Decimal(refundsCashTotal.toFixed(2)),
         refundsOtherTotal: new Prisma.Decimal(refundsOtherTotal.toFixed(2)),
+        manualInTotal: new Prisma.Decimal(manualInTotal.toFixed(2)),
+        manualOutTotal: new Prisma.Decimal(manualOutTotal.toFixed(2)),
         closingNotes: input.notes ?? null,
       },
       select: { id: true, branchId: true, status: true, openedAt: true },
@@ -314,6 +332,8 @@ export async function closeCashSession(
           pagosProveedorOtros: supplierOtherPaymentsTotal,
           devolucionesEfectivo: refundsCashTotal,
           devolucionesOtros: refundsOtherTotal,
+          ingresosManuales: manualInTotal,
+          egresosManuales: manualOutTotal,
           pedidosVencidos,
         },
         reason: input.notes ?? null,
@@ -341,6 +361,8 @@ export async function closeCashSession(
       supplierOtherPaymentsTotal,
       refundsCashTotal,
       refundsOtherTotal,
+      manualInTotal,
+      manualOutTotal,
       closedAt: cerrado.toISOString(),
     }
   }, { maxWait: 15_000, timeout: 30_000 })
@@ -355,7 +377,7 @@ export async function closeCashSession(
 export async function currentCashSession(
   db: TenantPrismaClient,
   ctx: TenantContext,
-): Promise<(CashSessionResult & { expectedAmount: number; salesCount: number; refundsCashTotal: number; refundsOtherTotal: number }) | null> {
+): Promise<(CashSessionResult & { expectedAmount: number; salesCount: number; refundsCashTotal: number; refundsOtherTotal: number; manualInTotal: number; manualOutTotal: number }) | null> {
   const branchId = requireBranch(ctx)
 
   const s = await db.cashSession.findFirst({
@@ -375,6 +397,8 @@ export async function currentCashSession(
     salesCount: tot.salesCount,
     refundsCashTotal: tot.refundsCashTotal,
     refundsOtherTotal: tot.refundsOtherTotal,
+    manualInTotal: tot.manualInTotal,
+    manualOutTotal: tot.manualOutTotal,
   }
 }
 

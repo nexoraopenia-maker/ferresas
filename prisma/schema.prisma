@@ -460,6 +460,7 @@ model Tenant {
   branches           Branch[]
   userBranches       UserBranch[]
   cashSessions       CashSession[]
+  cashMovements      CashMovement[]
   mermas             Merma[]
   transfers          BranchTransfer[]
   transferItems      BranchTransferItem[]
@@ -653,6 +654,8 @@ model User {
   guiasCreadas    DispatchGuide[]        @relation("GuideCreatedBy")
   cashOpened      CashSession[]          @relation("CashOpenedBy")
   cashClosed      CashSession[]          @relation("CashClosedBy")
+  cashMovementsMade   CashMovement[]     @relation("CashMovementBy")
+  cashMovementsVoided CashMovement[]     @relation("CashMovementVoidedBy")
   transfersAsked  BranchTransfer[]       @relation("TransferRequestedBy")
   transfersOked   BranchTransfer[]       @relation("TransferApprovedBy")
   transfersGot    BranchTransfer[]       @relation("TransferReceivedBy")
@@ -1356,6 +1359,8 @@ model CustomerPayment {
   voidReason String?
 
   allocations PaymentAllocation[]
+  /// Movimientos manuales de caja que compensan este abono (F6.3b).
+  compensations CashMovement[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, idempotencyKey])
@@ -2120,6 +2125,7 @@ model Branch {
   sales          Sale[]
   quotes         Quote[]
   cashSessions   CashSession[]
+  cashMovements  CashMovement[]
   customerPayments CustomerPayment[]
   supplierPayments SupplierPayment[]
   transfersOut   BranchTransfer[]  @relation("TransferFrom")
@@ -2211,6 +2217,10 @@ model CashSession {
   /// Devoluciones por otro medio (Yape, transferencia, tarjeta…) o sin salida de dinero: no tocan el cajón.
   refundsOtherTotal Decimal @default(0) @db.Decimal(14, 2)
 
+  /// Movimientos manuales de EFECTIVO del turno (F6.3), no anulados: los ingresos SUMAN al efectivo esperado y los egresos RESTAN.
+  manualInTotal  Decimal @default(0) @db.Decimal(14, 2)
+  manualOutTotal Decimal @default(0) @db.Decimal(14, 2)
+
   /// Fiado del turno: Σ de lo vendido a crédito (líneas CREDITO de las ventas COMPLETADAS). Informativo: NO entra al cajón.
   creditSalesTotal   Decimal @default(0) @db.Decimal(14, 2)
   /// Abonos de deuda cobrados en EFECTIVO durante el turno (no anulados). SÍ entran al cajón y al esperado.
@@ -2232,11 +2242,81 @@ model CashSession {
   customerPayments CustomerPayment[]
   supplierPayments SupplierPayment[]
   saleReturnRefunds SaleReturnRefund[]
+  movements         CashMovement[]       @relation("CashMovementSession")
+  corrections       CashMovement[]       @relation("CashMovementRelatedSession")
 
   @@unique([tenantId, id])
   @@index([tenantId, branchId, status])
   @@index([tenantId, branchId, openedAt])
   @@map("cash_sessions")
+}
+
+/// Un movimiento manual del cajón es un INGRESO o un EGRESO de efectivo.
+enum CashMovementKind {
+  INGRESO
+  EGRESO
+}
+
+/// Por qué se movió dinero a mano. GASTO_MENOR y OTRO (hasta un tope) los puede registrar quien tiene `caja.movimientos`; el resto exige `caja.ajuste`.
+enum CashMovementCategory {
+  GASTO_MENOR
+  RETIRO_DUENO
+  REPOSICION_FONDO
+  CORRECCION_ARQUEO
+  OTRO
+}
+
+/**
+ * Movimiento manual de efectivo del cajón (F6.3): un gasto menor, un retiro del dueño, una reposición del fondo, la corrección de un arqueo.
+ * Siempre vive en el turno ABIERTO donde se registra; un turno cerrado no se modifica nunca: un error descubierto después del cierre se corrige
+ * con un movimiento de HOY que apunta (`relatedSessionId` / `relatedPaymentId`) a lo que corrige. Solo efectivo: lo que no toca el cajón no es un movimiento.
+ * Nunca se borra: se anula (con quién, cuándo y por qué) mientras su turno siga abierto.
+ */
+model CashMovement {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  branchId String
+  branch   Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  cashSessionId String
+  cashSession   CashSession @relation("CashMovementSession", fields: [tenantId, cashSessionId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  kind     CashMovementKind
+  category CashMovementCategory
+  amount   Decimal @db.Decimal(14, 2)
+
+  description String
+  /// N.º del comprobante o referencia del gasto (obligatoria en egresos grandes: lo comprueba el servicio).
+  reference   String?
+
+  /// El egreso superó el efectivo que el sistema esperaba y se confirmó expresamente: queda marcado para la auditoría.
+  exceededExpected Boolean @default(false)
+
+  /// Lo que corrige, si corrige algo de un turno ya cerrado o un abono (F6.3b).
+  relatedSessionId String?
+  relatedSession   CashSession?     @relation("CashMovementRelatedSession", fields: [tenantId, relatedSessionId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+  relatedPaymentId String?
+  relatedPayment   CustomerPayment? @relation(fields: [tenantId, relatedPaymentId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  userId String
+  user   User   @relation("CashMovementBy", fields: [userId], references: [id], onDelete: Restrict)
+
+  idempotencyKey String
+
+  voidedAt   DateTime?
+  voidedById String?
+  voidedBy   User?     @relation("CashMovementVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  voidReason String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, cashSessionId])
+  @@index([tenantId, branchId, createdAt])
+  @@map("cash_movements")
 }
 
 /**

@@ -18,6 +18,8 @@ export const ACCIONES: Readonly<Record<string, { categoria: Categoria; etiqueta:
   'sale.below_stock': { categoria: V, etiqueta: 'Venta con stock insuficiente' },
   'sale.discount': { categoria: V, etiqueta: 'Descuento aplicado' },
   'cash.open': { categoria: V, etiqueta: 'Caja abierta' },
+  'caja.movimiento': { categoria: V, etiqueta: 'Movimiento manual de caja' },
+  'caja.movimiento_anulado': { categoria: V, etiqueta: 'Movimiento manual de caja anulado' },
   'venta.anulada': { categoria: V, etiqueta: 'Venta anulada' },
   'venta.devuelta': { categoria: V, etiqueta: 'Venta devuelta' },
   'venta.devuelta_parcial': { categoria: V, etiqueta: 'Devolución parcial de una venta' },

@@ -36,6 +36,8 @@ export type BusinessErrorCode =
   | 'CREDIT_HAS_PAYMENTS'
   /** Hace falta un turno de caja abierto (devolver dinero en efectivo desde el cajón). */
   | 'CASH_REQUIRED'
+  /** Un egreso de caja supera el efectivo que el sistema espera en el cajón: se pide confirmación explícita (F6.3). */
+  | 'CASH_EXCEEDS_EXPECTED'
 
 export class BusinessError extends Error {
   readonly code: BusinessErrorCode

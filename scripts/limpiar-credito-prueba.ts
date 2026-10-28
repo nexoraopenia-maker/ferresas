@@ -111,6 +111,7 @@ export async function limpiar(db: Db, slugs: readonly string[], opciones: { ejec
   await db.$transaction(async (tx) => {
     // Los comprobantes primero (Restrict sobre la venta). Aquí no hay, pero el orden es el de la limpieza de las pruebas.
     // Las devoluciones (F6.1) apuntan a la venta y a la nota de crédito con Restrict: primero ellas (sus líneas y reembolsos caen en cascada).
+    await tx.cashMovement.deleteMany({ where: { tenantId: { in: ids } } })
     await tx.saleReturn.deleteMany({ where: { tenantId: { in: ids } } })
     await tx.taxDocument.deleteMany({ where: { tenantId: { in: ids } } })
     const r = await tx.tenant.deleteMany({ where: { id: { in: ids } } })
