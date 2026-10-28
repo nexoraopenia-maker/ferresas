@@ -2264,6 +2264,8 @@ enum CashMovementCategory {
   REPOSICION_FONDO
   CORRECCION_ARQUEO
   OTRO
+  /// Nace SOLO al anular un abono de un turno ya cerrado (F6.3b): lo compensa en el turno abierto de hoy. Nadie la registra a mano.
+  COMPENSACION_ABONO
 }
 
 /**
@@ -2285,6 +2287,8 @@ model CashMovement {
 
   kind     CashMovementKind
   category CashMovementCategory
+  /// EFECTIVO mueve el cajón. Otro medio solo existe en una COMPENSACION_ABONO de un abono que no fue en efectivo: se registra, pero no toca el efectivo esperado.
+  method   PaymentMethod @default(EFECTIVO)
   amount   Decimal @db.Decimal(14, 2)
 
   description String

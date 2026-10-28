@@ -4,6 +4,7 @@ import { P2002_UNIQUE } from '@/lib/prisma-errors'
 import { puede } from '@/lib/puede'
 import { requireBranch, type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
+import { compensarAbonoEn, type CompensacionDeAbono } from '@/features/branches/cash-movement-service'
 import { bloquearTurno, turnoAbiertoId } from '@/features/branches/queries'
 import type { AnularAbonoInput, AnularCuentaInput, ConfigurarCreditoInput, DescartarRevisionInput, RegistrarAbonoInput } from './schemas'
 
@@ -323,10 +324,11 @@ export async function registrarAbono(db: TenantPrismaClient, ctx: TenantContext,
  * Anula un abono: devuelve lo repartido a sus cuentas (una cuenta PAGADA vuelve a ABIERTA) y restituye la deuda del cliente
  * (`credito.castigar`, con motivo). Nunca borra: el abono queda marcado con quién, cuándo y por qué.
  *
- * UN TURNO CERRADO ES INMUTABLE: si el abono está enlazado a un turno ya cerrado no se anula; el arqueo congelado no se reescribe.
- * Un error descubierto después del cierre se corrige con un ingreso o egreso manual justificado por la administración.
+ * UN TURNO CERRADO ES INMUTABLE: si el abono es de un turno ya cerrado se anula igual (F6.3b), pero ese turno NO se reescribe: el dinero se compensa con
+ * un egreso `COMPENSACION_ABONO` en el turno ABIERTO de hoy de la sucursal del abono (sale del cajón si fue en efectivo; solo se registra si fue por otro
+ * medio). Sin turno abierto se niega con `CASH_REQUIRED`. Basta `credito.castigar` (con motivo): la compensación es consecuencia de esta anulación.
  */
-export async function anularAbono(db: TenantPrismaClient, ctx: TenantContext, input: AnularAbonoInput): Promise<{ paymentId: string; deudaDespues: number }> {
+export async function anularAbono(db: TenantPrismaClient, ctx: TenantContext, input: AnularAbonoInput): Promise<{ paymentId: string; deudaDespues: number; compensacion: CompensacionDeAbono | null }> {
   if (!puede(ctx, 'credito.castigar')) throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para anular abonos.')
   return db.$transaction(async (tx) => {
     const t = tx as unknown as TenantPrismaClient
@@ -337,16 +339,19 @@ export async function anularAbono(db: TenantPrismaClient, ctx: TenantContext, in
     const pago = await t.customerPayment.findFirst({
       where: { id: input.paymentId },
       select: {
-        id: true, amount: true, voidedAt: true, cashSessionId: true,
+        id: true, amount: true, voidedAt: true, cashSessionId: true, branchId: true, method: true,
         allocations: { select: { receivableId: true, amount: true } },
       },
     })
     if (!pago) throw noExiste('El abono')
     if (pago.voidedAt) throw invalido('Este abono ya está anulado.')
     // Se bloquea el turno antes de decidir: si su cierre está en marcha, esperamos y lo vemos cerrado.
-    const turnoDelAbono = pago.cashSessionId ? await bloquearTurno(t, pago.cashSessionId) : null
-    if (turnoDelAbono && turnoDelAbono.status !== 'ABIERTA') {
-      throw invalido('El turno de caja de este abono ya cerró y un turno cerrado no se modifica: haz el ajuste como ingreso o egreso manual justificado por la administración.')
+    // CERRADA es un estado FINAL (un turno cerrado nunca se reabre): si ya figura cerrado no hace falta bloquearlo, y así esta anulación no escribe ni una
+    // marca en un turno cerrado. Solo si aún figura abierto se bloquea, para esperar a un cierre en marcha y verlo ya cerrado.
+    let turnoCerrado = false
+    if (pago.cashSessionId) {
+      const ya = await t.cashSession.findFirst({ where: { id: pago.cashSessionId }, select: { status: true } })
+      turnoCerrado = ya?.status === 'CERRADA' || (await bloquearTurno(t, pago.cashSessionId)).status !== 'ABIERTA'
     }
     if (cliente.deletedAt) throw new BusinessError('CREDIT_BLOCKED', 'El cliente está dado de baja: no se puede reabrir su deuda.')
 
@@ -364,6 +369,10 @@ export async function anularAbono(db: TenantPrismaClient, ctx: TenantContext, in
     if (restituido > 0) {
       await t.customer.update({ where: { id: previo.customerId }, data: { creditBalance: { increment: deCentimos(restituido) } }, select: { id: true } })
     }
+    // Un abono de un turno ya cerrado: el turno no se toca; su dinero se compensa en la caja abierta de hoy (si no hay, esto falla y no se anula nada).
+    const compensacion = turnoCerrado
+      ? await compensarAbonoEn(t, ctx, { paymentId: pago.id, branchId: pago.branchId, method: pago.method, amount: num(pago.amount), turnoCerradoId: pago.cashSessionId!, motivo: input.motivo })
+      : null
     await t.customerPayment.update({
       where: { id: pago.id },
       data: { voidedAt: new Date(), voidedById: ctx.userId, voidReason: input.motivo },
@@ -374,11 +383,11 @@ export async function anularAbono(db: TenantPrismaClient, ctx: TenantContext, in
       data: {
         tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role,
         action: 'credito.abono_anulado', entityType: 'CustomerPayment', entityId: pago.id, reason: input.motivo,
-        after: { cliente: cliente.name, monto: num(pago.amount), restituido: deCentimos(restituido), deudaAntes: cliente.creditBalance, deudaDespues },
+        after: { cliente: cliente.name, monto: num(pago.amount), restituido: deCentimos(restituido), deudaAntes: cliente.creditBalance, deudaDespues, ...(compensacion ? { turnoCerrado: pago.cashSessionId, compensacion: compensacion.movementId, salioDelCajon: compensacion.efectivo } : {}) },
         impersonationId: ctx.impersonationId ?? null,
       },
     })
-    return { paymentId: pago.id, deudaDespues }
+    return { paymentId: pago.id, deudaDespues, compensacion }
   }, { maxWait: 15_000, timeout: 30_000 })
 }
 

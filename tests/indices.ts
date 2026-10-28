@@ -20,6 +20,8 @@ const ESPERADOS = [
   { nombre: 'products_barcode_lookup', unico: false, donde: /"?barcode"? IS NOT NULL/ },
   { nombre: 'products_qrcode_lookup', unico: false, donde: /"qrCode" IS NOT NULL/ },
   { nombre: 'cash_sessions_una_abierta_por_sucursal', unico: true, donde: /status.*ABIERTA/ },
+  // F6.3b: un abono se anula una sola vez, así que tiene a lo sumo UNA compensación en caja.
+  { nombre: 'cash_movements_una_compensacion_por_abono', unico: true, donde: /"relatedPaymentId" IS NOT NULL/ },
 ]
 
 async function main() {

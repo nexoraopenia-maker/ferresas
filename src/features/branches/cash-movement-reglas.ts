@@ -19,6 +19,9 @@ export const TIPOS = ['INGRESO', 'EGRESO'] as const
 export type TipoMovimiento = (typeof TIPOS)[number]
 export const CATEGORIAS_MOVIMIENTO = ['GASTO_MENOR', 'RETIRO_DUENO', 'REPOSICION_FONDO', 'CORRECCION_ARQUEO', 'OTRO'] as const
 export type CategoriaMovimiento = (typeof CATEGORIAS_MOVIMIENTO)[number]
+/** Lo que se registra a mano son las 5 categorías de arriba; `COMPENSACION_ABONO` nace SOLO al anular un abono de un turno cerrado (F6.3b) y nadie la elige. */
+export const CATEGORIA_COMPENSACION = 'COMPENSACION_ABONO' as const
+export type CategoriaDeMovimiento = CategoriaMovimiento | typeof CATEGORIA_COMPENSACION
 
 /** Un INGRESO no puede ser un gasto ni un retiro; un EGRESO no puede ser una reposición del fondo. La base lo repite con un CHECK. */
 export const CATEGORIAS_POR_TIPO: Record<TipoMovimiento, readonly CategoriaMovimiento[]> = {
@@ -27,17 +30,18 @@ export const CATEGORIAS_POR_TIPO: Record<TipoMovimiento, readonly CategoriaMovim
 }
 export const categoriaValida = (tipo: TipoMovimiento, cat: CategoriaMovimiento): boolean => CATEGORIAS_POR_TIPO[tipo].includes(cat)
 
-export const ETIQUETA_CATEGORIA: Record<CategoriaMovimiento, string> = {
+export const ETIQUETA_CATEGORIA: Record<CategoriaDeMovimiento, string> = {
   GASTO_MENOR: 'Gasto menor', RETIRO_DUENO: 'Retiro del dueño', REPOSICION_FONDO: 'Reposición del fondo', CORRECCION_ARQUEO: 'Corrección de arqueo', OTRO: 'Otro',
+  COMPENSACION_ABONO: 'Compensación de un abono anulado',
 }
 export const ETIQUETA_TIPO: Record<TipoMovimiento, string> = { INGRESO: 'Ingreso', EGRESO: 'Egreso' }
 
-const CATEGORIAS_DEL_CAJERO: readonly CategoriaMovimiento[] = ['GASTO_MENOR', 'OTRO']
+const CATEGORIAS_DEL_CAJERO: readonly CategoriaDeMovimiento[] = ['GASTO_MENOR', 'OTRO']
 
 export type PermisoMovimiento = 'caja.movimientos' | 'caja.ajuste'
 
 /** El permiso MÍNIMO que hace falta para registrar este movimiento. Lo que pasa del tope, o no es gasto menor/otro, es de `caja.ajuste`. */
-export function permisoRequerido(cat: CategoriaMovimiento, montoCent: number): PermisoMovimiento {
+export function permisoRequerido(cat: CategoriaDeMovimiento, montoCent: number): PermisoMovimiento {
   return CATEGORIAS_DEL_CAJERO.includes(cat) && montoCent <= TOPE_MOVIMIENTO_SIN_AJUSTE * 100 ? 'caja.movimientos' : 'caja.ajuste'
 }
 
@@ -46,7 +50,7 @@ export function alcanza(tiene: { movimientos: boolean; ajuste: boolean }, requer
   return tiene.ajuste || (requerido === 'caja.movimientos' && tiene.movimientos)
 }
 
-export function mensajeSinPermiso(cat: CategoriaMovimiento, montoCent: number, tiene: { movimientos: boolean; ajuste: boolean }): string {
+export function mensajeSinPermiso(cat: CategoriaDeMovimiento, montoCent: number, tiene: { movimientos: boolean; ajuste: boolean }): string {
   const tope = `S/ ${TOPE_MOVIMIENTO_SIN_AJUSTE.toFixed(2)}`
   if (!tiene.movimientos) return 'No tienes permiso para registrar movimientos de caja. Pídele a quien administra la caja (dueño o administrador).'
   if (!CATEGORIAS_DEL_CAJERO.includes(cat)) return `${ETIQUETA_CATEGORIA[cat]} solo lo registra quien administra la caja (dueño o administrador). Tú puedes registrar gastos menores y otros movimientos de hasta ${tope}.`
@@ -65,7 +69,7 @@ export const excedeEfectivo = (tipo: TipoMovimiento, montoCent: number, esperado
  * ¿Quién puede anular un movimiento (mientras su turno siga abierto)? Quien tiene `caja.ajuste`; o su propio autor, si por sí solo habría podido
  * registrarlo (tiene `caja.movimientos` y el movimiento era de ese alcance). Nadie anula el movimiento de otro con solo `caja.movimientos`.
  */
-export function puedeAnular(e: { tiene: { movimientos: boolean; ajuste: boolean }; esAutor: boolean; categoria: CategoriaMovimiento; montoCent: number }): boolean {
+export function puedeAnular(e: { tiene: { movimientos: boolean; ajuste: boolean }; esAutor: boolean; categoria: CategoriaDeMovimiento; montoCent: number }): boolean {
   if (e.tiene.ajuste) return true
   return e.esAutor && e.tiene.movimientos && permisoRequerido(e.categoria, e.montoCent) === 'caja.movimientos'
 }

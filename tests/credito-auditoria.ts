@@ -104,11 +104,29 @@ async function main() {
   check('>>> una venta anulada con su cuenta ANULADA y el turno intacto → limpio (el caso normal tras una devolución de F6.1)', con((d) => { d.ventas[0]!.status = 'DEVUELTA'; d.cuentas[0]!.status = 'ANULADA'; d.clientes[0]!.creditBalance = 0 }).hallazgos.length === 0)
   check('>>> y si el fiado del turno cerrado se calculara SIN las devueltas, se detectaría (CIERRE_FIADO)', codigos(con((d) => { d.ventas[0]!.status = 'DEVUELTA'; d.cuentas[0]!.status = 'ANULADA'; d.clientes[0]!.creditBalance = 0; d.turnosCerrados[0]!.creditSalesTotal = 0 })) === 'CIERRE_FIADO')
   check('cuenta marcada por nota de crédito sin resolver → REVISION_PENDIENTE (AVISO); una ANULADA ya no', codigos(con((d) => { d.cuentas[0]!.enRevision = true })) === 'REVISION_PENDIENTE' && con((d) => { d.cuentas[0]!.enRevision = true; d.cuentas[0]!.status = 'ANULADA'; d.clientes[0]!.creditBalance = 0 }).hallazgos.length === 0)
+  {
+    // F6.3b · Un abono anulado DESPUÉS del cierre de su turno sigue contando en lo congelado de ese turno y exige su compensación en caja.
+    const mini = (o: Partial<DatosCredito> & { anuladoMs?: number | null; congelado?: number } = {}): DatosCredito => ({
+      clientes: [{ id: 'c1', name: 'Ana', creditBalance: 100 }],
+      cuentas: [{ id: 'r1', customerId: 'c1', saleId: 'v1', amount: 100, paidAmount: 0, status: 'ABIERTA', enRevision: false }],
+      abonos: [{ id: 'a1', customerId: 'c1', amount: 30, method: 'EFECTIVO', anulado: true, cashSessionId: 't1', anuladoMs: o.anuladoMs === undefined ? 2000 : o.anuladoMs }],
+      repartos: [{ paymentId: 'a1', receivableId: 'r1', amount: 30 }],
+      ventas: [{ id: 'v1', number: 'V-1', status: 'COMPLETADA', customerId: 'c1', cashSessionId: 't1', fiado: 100 }],
+      turnosCerrados: [{ id: 't1', cashReceiptsTotal: o.congelado ?? 30, otherReceiptsTotal: 0, creditSalesTotal: 100, cerradoMs: 1000 }],
+      ...(o.compensaciones !== undefined ? { compensaciones: o.compensaciones } : {}),
+    })
+    check('>>> abono anulado DESPUÉS del cierre, con su compensación: limpio (lo congelado de 30 sigue cuadrando con el abono aunque esté anulado)', auditarDatosCredito(mini({ compensaciones: ['a1'] })).hallazgos.length === 0)
+    const sinComp = auditarDatosCredito(mini({ compensaciones: [] }))
+    check('>>> el mismo abono SIN compensación → ERROR `ABONO_CERRADO_SIN_COMPENSACION` (y solo ese)', sinComp.hallazgos.length === 1 && sinComp.hallazgos[0]!.codigo === 'ABONO_CERRADO_SIN_COMPENSACION' && sinComp.errores === 1)
+    check('sin la lista de compensaciones (datos anteriores a F6.3b) no se exige', auditarDatosCredito(mini()).hallazgos.length === 0)
+    check('>>> anulado ANTES del cierre: ya no está en lo congelado (0) y no pide compensación; si el cierre lo congeló igual → CIERRE_ABONOS', auditarDatosCredito(mini({ anuladoMs: 500, congelado: 0, compensaciones: [] })).hallazgos.length === 0 && auditarDatosCredito(mini({ anuladoMs: 500, congelado: 30, compensaciones: [] })).hallazgos.map((h) => h.codigo).join() === 'CIERRE_ABONOS')
+    check('>>> anulado después del cierre pero con lo congelado en 0 (alguien reescribió el turno) → CIERRE_ABONOS', auditarDatosCredito(mini({ congelado: 0, compensaciones: ['a1'] })).hallazgos.map((h) => h.codigo).join() === 'CIERRE_ABONOS')
+  }
   check('>>> se compara en céntimos: 0.1 + 0.2 = 0.3 NO es un descuadre', auditarDatosCredito({ ...base,
     clientes: [{ id: 'c1', name: 'Ana', creditBalance: 0.3 }, base.clientes[1]!],
     cuentas: [{ id: 'r1', customerId: 'c1', saleId: 'v1', amount: 0.3, paidAmount: 0, status: 'ABIERTA', enRevision: false }],
     abonos: [], repartos: [], ventas: [{ id: 'v1', number: 'V', status: 'COMPLETADA', customerId: 'c1', cashSessionId: null, fiado: 0.1 + 0.2 }], turnosCerrados: [] }).hallazgos.length === 0)
-  check('todos los códigos tienen gravedad definida y los de dinero que no cuadra son ERROR', Object.keys(GRAVEDAD).length === 12 && GRAVEDAD.DEUDA_CLIENTE === 'ERROR' && GRAVEDAD.CIERRE_ABONOS === 'ERROR' && GRAVEDAD.REVISION_PENDIENTE === 'AVISO')
+  check('todos los códigos tienen gravedad definida y los de dinero que no cuadra son ERROR', Object.keys(GRAVEDAD).length === 13 && GRAVEDAD.ABONO_CERRADO_SIN_COMPENSACION === 'ERROR' && GRAVEDAD.DEUDA_CLIENTE === 'ERROR' && GRAVEDAD.CIERRE_ABONOS === 'ERROR' && GRAVEDAD.REVISION_PENDIENTE === 'AVISO')
 
   console.log('\nB) Contra la base de datos: un negocio sano pasa limpio')
   const E = await negocio('a')

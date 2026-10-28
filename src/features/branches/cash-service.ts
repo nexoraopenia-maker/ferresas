@@ -109,7 +109,8 @@ export async function totalesDelTurno(t: TenantPrismaClient, sessionId: string):
 
   // Movimientos manuales de efectivo del turno que NO se anularon (F6.3). Los anulados quedan en el registro pero no cuentan.
   const movimientos = await t.cashMovement.findMany({
-    where: { cashSessionId: sessionId, voidedAt: null },
+    // Solo el EFECTIVO mueve el cajón: la compensación de un abono que no fue en efectivo (F6.3b) queda registrada pero no cuenta aquí.
+    where: { cashSessionId: sessionId, voidedAt: null, method: 'EFECTIVO' },
     select: { kind: true, amount: true },
   })
 

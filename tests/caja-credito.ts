@@ -92,9 +92,19 @@ async function main() {
   console.log('\nB) Un turno cerrado es inmutable')
   const fotoAntes = JSON.stringify(await sesion(turno.id))
   const pagos = await prisma.customerPayment.findMany({ where: { cashSessionId: turno.id, voidedAt: null, method: 'EFECTIVO' } })
-  check('>>> el abono en efectivo de un turno cerrado NO se anula (ajuste manual de la administración)', await code(anularAbono(db, O, anularAbonoSchema.parse({ paymentId: pagos[0]!.id, motivo: 'intento tardío' }))) === 'INVALID_DOCUMENT')
+  const congelado = (x: Awaited<ReturnType<typeof sesion>>) => JSON.stringify({ ...x, updatedAt: null })   // lo congelado del arqueo (sin la marca de modificación)
+  const sinCajaHoy = await code(anularAbono(db, O, anularAbonoSchema.parse({ paymentId: pagos[0]!.id, motivo: 'intento tardío' })))
+  check('>>> el abono en efectivo de un turno cerrado, SIN caja abierta hoy: CASH_REQUIRED (la compensación necesita un cajón) y el abono sigue vigente', sinCajaHoy === 'CASH_REQUIRED' && (await prisma.customerPayment.findUniqueOrThrow({ where: { id: pagos[0]!.id } })).voidedAt === null)
+  const hoy = await abrir(0)
+  const efe = await anularAbono(db, O, anularAbonoSchema.parse({ paymentId: pagos[0]!.id, motivo: 'error de cliente' }))
+  const movE = await prisma.cashMovement.findFirstOrThrow({ where: { relatedPaymentId: pagos[0]!.id } })
+  check('>>> con caja abierta SÍ se anula (F6.3b): nace un EGRESO de compensación en el turno de HOY, ligado al abono y al turno cerrado', efe.compensacion?.efectivo === true && movE.cashSessionId === hoy.id && movE.kind === 'EGRESO' && movE.category === 'COMPENSACION_ABONO' && movE.method === 'EFECTIVO' && movE.relatedSessionId === turno.id && num(movE.amount) === num(pagos[0]!.amount))
   const otroPago = await prisma.customerPayment.findFirstOrThrow({ where: { cashSessionId: turno.id, method: 'YAPE' } })
-  check('el abono por Yape enlazado a un turno cerrado tampoco (el arqueo congelado no se reescribe)', await code(anularAbono(db, O, anularAbonoSchema.parse({ paymentId: otroPago.id, motivo: 'intento tardío' }))) === 'INVALID_DOCUMENT')
+  const yap = await anularAbono(db, O, anularAbonoSchema.parse({ paymentId: otroPago.id, motivo: 'error de cliente' }))
+  const movY = await prisma.cashMovement.findFirstOrThrow({ where: { relatedPaymentId: otroPago.id } })
+  check('>>> el abono por Yape se compensa con su medio y NO mueve el efectivo de hoy (solo el abono en efectivo salió del cajón)', yap.compensacion?.efectivo === false && movY.method === 'YAPE' && (await totalesDelTurno(db, hoy.id)).manualOutTotal === num(pagos[0]!.amount))
+  check('>>> el turno CERRADO no cambió ni una columna del arqueo (ni siquiera una marca de modificación)', congelado(await sesion(turno.id)) === congelado(JSON.parse(fotoAntes)) && JSON.stringify(await sesion(turno.id)) === fotoAntes)
+  await cerrar(hoy.id, 0)   // el resto de la prueba sigue sin caja abierta
   await anularCuenta(db, O, anularCuentaSchema.parse({ receivableId: (await prisma.receivable.findFirstOrThrow({ where: { saleId: f1.saleId } })).id, motivo: 'castigo de prueba' }))
   check('>>> castigar una deuda o abonar después NO mueve lo congelado del turno cerrado', JSON.stringify(await sesion(turno.id)) === fotoAntes)
   check('un abono nuevo sin turno abierto en efectivo → rechazado; con otro medio se registra sin turno', await code(abonar(C2.id, 5)) === 'INVALID_DOCUMENT' && (await abonar(C2.id, 5, 'YAPE')).replayed === false)
@@ -126,7 +136,7 @@ async function main() {
   await esperar(400)
   const anulacionTardia = await code(anularAbono(db, O, anularAbonoSchema.parse({ paymentId: ab.paymentId, motivo: 'a destiempo' })))
   await cerrando2
-  check('>>> anular un abono mientras su turno se cierra espera y se RECHAZA: el abono sigue vigente y la deuda no se reabre', anulacionTardia === 'INVALID_DOCUMENT' && (await prisma.customerPayment.findUniqueOrThrow({ where: { id: ab.paymentId } })).voidedAt === null && num((await prisma.customer.findUniqueOrThrow({ where: { id: D.id } })).creditBalance) === 260)
+  check('>>> anular un abono mientras su turno se cierra espera, lo ve cerrado y, sin caja abierta para compensar, se RECHAZA (CASH_REQUIRED): el abono sigue vigente y la deuda no se reabre', anulacionTardia === 'CASH_REQUIRED' && (await prisma.customerPayment.findUniqueOrThrow({ where: { id: ab.paymentId } })).voidedAt === null && num((await prisma.customer.findUniqueOrThrow({ where: { id: D.id } })).creditBalance) === 260)
 
   console.log('\nD) Cierres y abonos simultáneos: la cuenta siempre cuadra')
   let huerfanos = 0, rondas = 0

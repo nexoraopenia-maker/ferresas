@@ -141,7 +141,7 @@ export function planDeCredito(cuenta: CuentaDeVenta | null, abonos: readonly Abo
     const lista = abonos.length > 0 ? abonos.map((a) => `${a.fecha}: S/ ${a.monto.toFixed(2)} (${a.metodo.toLowerCase()})`).join('; ') : `S/ ${cuenta.paidAmount.toFixed(2)} abonados`
     return {
       accion: 'BLOQUEAR',
-      mensaje: `Esta venta fiada ya tiene abonos (${lista}). Primero anula esos abonos desde la ficha del cliente —la devolución de abonos de turnos cerrados llegará con los movimientos manuales de caja— y luego vuelve a devolver la venta.`,
+      mensaje: `Esta venta fiada ya tiene abonos (${lista}). Primero anula esos abonos desde la ficha del cliente (quien tiene permiso para dar de baja deudas): si son de un turno de caja que ya cerró, el sistema registra su compensación en la caja abierta de hoy. Después vuelve a devolver la venta.`,
     }
   }
   if (cuenta.status === 'ANULADA') return { accion: 'NINGUNA' }

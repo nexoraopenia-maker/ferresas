@@ -27,6 +27,7 @@ export type CodigoHallazgoCredito =
   | 'MONTO_CUENTA_VENTA'
   | 'CLIENTE_CUENTA_VENTA'
   | 'CIERRE_ABONOS'
+  | 'ABONO_CERRADO_SIN_COMPENSACION'
   | 'CIERRE_FIADO'
   | 'VENTA_ANULADA_CUENTA_VIVA'
   | 'REVISION_PENDIENTE'
@@ -41,6 +42,7 @@ export const GRAVEDAD: Record<CodigoHallazgoCredito, GravedadCredito> = {
   MONTO_CUENTA_VENTA: 'ERROR',
   CLIENTE_CUENTA_VENTA: 'ERROR',
   CIERRE_ABONOS: 'ERROR',
+  ABONO_CERRADO_SIN_COMPENSACION: 'ERROR',
   CIERRE_FIADO: 'AVISO',
   VENTA_ANULADA_CUENTA_VIVA: 'AVISO',
   REVISION_PENDIENTE: 'AVISO',
@@ -67,11 +69,15 @@ export interface DatosCredito {
     id: string; customerId: string; saleId: string; amount: number; paidAmount: number
     status: 'ABIERTA' | 'PAGADA' | 'ANULADA'; enRevision: boolean
   }[]
-  abonos: { id: string; customerId: string; amount: number; method: string; anulado: boolean; cashSessionId: string | null }[]
+  /** `anuladoMs`: cuándo se anuló (si se anuló). Un abono anulado DESPUÉS del cierre de su turno sigue contando en lo congelado de ese turno (F6.3b). */
+  abonos: { id: string; customerId: string; amount: number; method: string; anulado: boolean; cashSessionId: string | null; anuladoMs?: number | null }[]
   repartos: { paymentId: string; receivableId: string; amount: number }[]
   /** Ventas con alguna línea CREDITO, o que tienen cuenta. `fiado` = Σ de sus líneas CREDITO; `reducido` = Σ de lo que sus devoluciones (F6.2) bajaron de la cuenta. */
   ventas: { id: string; number: string; status: string; customerId: string | null; cashSessionId: string | null; fiado: number; reducido?: number }[]
-  turnosCerrados: { id: string; cashReceiptsTotal: number; otherReceiptsTotal: number; creditSalesTotal: number }[]
+  /** `cerradoMs`: cuándo se cerró (para saber si un abono se anuló antes o después). */
+  turnosCerrados: { id: string; cashReceiptsTotal: number; otherReceiptsTotal: number; creditSalesTotal: number; cerradoMs?: number }[]
+  /** Ids de los abonos que tienen su compensación en caja (movimiento vigente). `undefined` = no se comprueba (datos de antes de F6.3b). */
+  compensaciones?: readonly string[]
 }
 
 export interface InformeCredito {
@@ -176,8 +182,17 @@ export function auditarDatosCredito(d: DatosCredito): InformeCredito {
   // 6) Un turno CERRADO es inmutable: lo congelado de abonos = lo enlazado a él. El fiado del turno se cuenta por lo RECIBIDO: una venta que
   //    luego se anula o se devuelve (ANULADA/DEVUELTA) sigue contando en el turno donde se hizo; su devolución sale en el turno que esté abierto
   //    entonces (F6.1). Solo una venta que llegó tras el cierre puede hacerlo diferir: por eso es AVISO.
+  // Un abono anulado ANTES del cierre ya no está en lo congelado; uno anulado DESPUÉS sigue estándolo (el turno cerrado no se reescribe) y su anulación
+  // se compensó con un egreso en la caja abierta de ese día.
+  const anuladoDespues = (a: DatosCredito['abonos'][number], t: DatosCredito['turnosCerrados'][number]) => a.anulado && a.anuladoMs != null && t.cerradoMs != null && a.anuladoMs > t.cerradoMs
+  const compensados = d.compensaciones ? new Set(d.compensaciones) : null
   for (const t of d.turnosCerrados) {
-    const propios = d.abonos.filter((a) => a.cashSessionId === t.id && !a.anulado)
+    const propios = d.abonos.filter((a) => a.cashSessionId === t.id && (!a.anulado || anuladoDespues(a, t)))
+    if (compensados) {
+      for (const a of propios.filter((x) => x.anulado && !compensados.has(x.id))) {
+        hay('ABONO_CERRADO_SIN_COMPENSACION', 'abono', a.id, a.id, `El abono de ${soles(a.amount)} (${a.method.toLowerCase()}) se anuló después de cerrar su turno y no tiene su egreso de compensación en caja.`, { esperado: a.amount, encontrado: 0 })
+      }
+    }
     const ef = propios.filter((a) => a.method === 'EFECTIVO').reduce((a, p) => a + c(p.amount), 0)
     const ot = propios.filter((a) => a.method !== 'EFECTIVO').reduce((a, p) => a + c(p.amount), 0)
     if (c(t.cashReceiptsTotal) !== ef || c(t.otherReceiptsTotal) !== ot) {
@@ -203,7 +218,7 @@ const num = (v: unknown): number => Number(v ?? 0)
 
 /** Lee TODO el crédito del negocio del cliente Prisma recibido (aislado por negocio) y lo audita. No escribe. */
 export async function auditarCoherenciaCredito(db: TenantPrismaClient): Promise<InformeCredito> {
-  const [clientes, cuentas, abonos, repartos, ventas, turnos] = await Promise.all([
+  const [clientes, cuentas, abonos, repartos, ventas, turnos, compensaciones] = await Promise.all([
     db.customer.findMany({ select: { id: true, name: true, creditBalance: true } }),
     db.receivable.findMany({ select: { id: true, customerId: true, saleId: true, amount: true, paidAmount: true, status: true, reviewRequestedAt: true } }),
     db.customerPayment.findMany({ select: { id: true, customerId: true, amount: true, method: true, voidedAt: true, cashSessionId: true } }),
@@ -212,7 +227,8 @@ export async function auditarCoherenciaCredito(db: TenantPrismaClient): Promise<
       where: { OR: [{ payments: { some: { method: 'CREDITO' } } }, { receivable: { isNot: null } }] },
       select: { id: true, number: true, status: true, customerId: true, cashSessionId: true, payments: { where: { method: 'CREDITO' }, select: { amount: true } }, saleReturns: { select: { receivableVoidedAmount: true } } },
     }),
-    db.cashSession.findMany({ where: { status: 'CERRADA' }, select: { id: true, cashReceiptsTotal: true, otherReceiptsTotal: true, creditSalesTotal: true } }),
+    db.cashSession.findMany({ where: { status: 'CERRADA' }, select: { id: true, cashReceiptsTotal: true, otherReceiptsTotal: true, creditSalesTotal: true, closedAt: true } }),
+    db.cashMovement.findMany({ where: { relatedPaymentId: { not: null }, voidedAt: null }, select: { relatedPaymentId: true } }),
   ])
   return auditarDatosCredito({
     clientes: clientes.map((x) => ({ id: x.id, name: x.name, creditBalance: num(x.creditBalance) })),
@@ -220,7 +236,7 @@ export async function auditarCoherenciaCredito(db: TenantPrismaClient): Promise<
       id: x.id, customerId: x.customerId, saleId: x.saleId, amount: num(x.amount), paidAmount: num(x.paidAmount),
       status: x.status, enRevision: x.reviewRequestedAt !== null,
     })),
-    abonos: abonos.map((a) => ({ id: a.id, customerId: a.customerId, amount: num(a.amount), method: a.method, anulado: a.voidedAt !== null, cashSessionId: a.cashSessionId })),
+    abonos: abonos.map((a) => ({ id: a.id, customerId: a.customerId, amount: num(a.amount), method: a.method, anulado: a.voidedAt !== null, cashSessionId: a.cashSessionId, anuladoMs: a.voidedAt ? a.voidedAt.getTime() : null })),
     repartos: repartos.map((r) => ({ paymentId: r.customerPaymentId, receivableId: r.receivableId, amount: num(r.amount) })),
     ventas: ventas.map((v) => ({
       id: v.id, number: v.number, status: v.status, customerId: v.customerId, cashSessionId: v.cashSessionId,
@@ -229,7 +245,9 @@ export async function auditarCoherenciaCredito(db: TenantPrismaClient): Promise<
     })),
     turnosCerrados: turnos.map((t) => ({
       id: t.id, cashReceiptsTotal: num(t.cashReceiptsTotal), otherReceiptsTotal: num(t.otherReceiptsTotal), creditSalesTotal: num(t.creditSalesTotal),
+      cerradoMs: t.closedAt ? t.closedAt.getTime() : undefined,
     })),
+    compensaciones: compensaciones.flatMap((m) => (m.relatedPaymentId ? [m.relatedPaymentId] : [])),
   })
 }
 

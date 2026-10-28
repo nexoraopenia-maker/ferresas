@@ -195,7 +195,11 @@ async function main() {
   await closeCashSession(dbOf(O2), O2, closeCashSchema.parse({ sessionId: caja2.id, countedAmount: 130 }))
   const antes = await foto()
   const cerrado = await anularAbono(dbOf(O2), O2, anularAbonoSchema.parse({ paymentId: mAb2.paymentId, motivo: 'Ya cerré caja' })).then(() => null, (e) => e)
-  check('>>> con el turno CERRADO no se anula: mensaje que manda al ajuste manual de la administración, y no se escribe nada', cerrado?.code === 'INVALID_DOCUMENT' && /turno de caja/.test(cerrado.message) && /manual/.test(cerrado.message) && JSON.stringify(antes) === JSON.stringify(await foto()))
+  check('>>> con el turno CERRADO y SIN caja abierta hoy no se anula: CASH_REQUIRED que dice que la compensación sale de la caja abierta, y no se escribe nada', cerrado?.code === 'CASH_REQUIRED' && /caja abierta/.test(cerrado.message) && JSON.stringify(antes) === JSON.stringify(await foto()))
+  const caja3 = await openCashSession(dbOf(O2), O2, openCashSchema.parse({ openingAmount: 20 }))
+  const okTarde = await anularAbono(dbOf(O2), O2, anularAbonoSchema.parse({ paymentId: mAb2.paymentId, motivo: 'Ya cerré caja' }))
+  check('>>> con caja abierta SÍ se anula: la deuda vuelve (120 → 200) y el dinero sale de la caja de hoy como compensación', okTarde.deudaDespues === 200 && okTarde.compensacion?.cashSessionId === caja3.id && okTarde.compensacion.efectivo)
+  await closeCashSession(dbOf(O2), O2, closeCashSchema.parse({ sessionId: caja3.id, countedAmount: 0 }))   // el resto de la prueba sigue sin caja abierta
   void mV
 
   console.log('\nJ) Dar de baja una cuenta (castigo)')

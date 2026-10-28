@@ -8,7 +8,7 @@ import { redondearCentimos } from '@/lib/dinero'
 import { efectivoEsperado, totalesDelTurno } from './cash-service'
 import {
   ETIQUETA_CATEGORIA, REFERENCIA_OBLIGATORIA_DESDE, alcanza, excedeEfectivo, exigeReferencia, mensajeSinPermiso, permisoRequerido, puedeAnular, referenciaSuficiente,
-  type CategoriaMovimiento, type TipoMovimiento,
+  CATEGORIA_COMPENSACION, type CategoriaDeMovimiento, type TipoMovimiento,
 } from './cash-movement-reglas'
 import type { AnularMovimientoCajaInput, RegistrarMovimientoCajaInput } from './cash-movement-schemas'
 import { bloquearTurno } from './queries'
@@ -33,7 +33,9 @@ export interface MovimientoCaja {
   id: string
   cashSessionId: string
   kind: TipoMovimiento
-  category: CategoriaMovimiento
+  category: CategoriaDeMovimiento
+  /** EFECTIVO salvo en la compensación de un abono que no fue en efectivo. */
+  method: string
   amount: number
   description: string
   reference: string | null
@@ -44,12 +46,12 @@ export interface MovimientoCaja {
 }
 
 const seleccion = {
-  id: true, cashSessionId: true, kind: true, category: true, amount: true, description: true, reference: true, exceededExpected: true, createdAt: true, idempotencyKey: true,
+  id: true, cashSessionId: true, kind: true, category: true, method: true, amount: true, description: true, reference: true, exceededExpected: true, createdAt: true, idempotencyKey: true,
 } as const
 
-function deFila(m: { id: string; cashSessionId: string; kind: TipoMovimiento; category: CategoriaMovimiento; amount: Prisma.Decimal; description: string; reference: string | null; exceededExpected: boolean; createdAt: Date }, replayed: boolean): MovimientoCaja {
+function deFila(m: { id: string; cashSessionId: string; kind: TipoMovimiento; category: CategoriaDeMovimiento; method: string; amount: Prisma.Decimal; description: string; reference: string | null; exceededExpected: boolean; createdAt: Date }, replayed: boolean): MovimientoCaja {
   return {
-    id: m.id, cashSessionId: m.cashSessionId, kind: m.kind, category: m.category, amount: num(m.amount), description: m.description, reference: m.reference,
+    id: m.id, cashSessionId: m.cashSessionId, kind: m.kind, category: m.category, method: m.method, amount: num(m.amount), description: m.description, reference: m.reference,
     exceededExpected: m.exceededExpected, createdAt: m.createdAt.toISOString(), replayed,
   }
 }
@@ -137,6 +139,7 @@ export async function anularMovimientoCaja(db: TenantPrismaClient, ctx: TenantCo
     const m = await t.cashMovement.findFirst({ where: { id: input.movementId }, select: { id: true, kind: true, category: true, amount: true, userId: true, voidedAt: true } })
     if (!m) throw new BusinessError('NOT_FOUND', 'El movimiento no existe.')
     if (m.voidedAt) throw invalido('Este movimiento ya está anulado.')
+    if (m.category === CATEGORIA_COMPENSACION) throw invalido('Esta compensación nació de anular un abono: no se anula a mano. El abono ya está anulado y su dinero salió de la caja.')
     if (!puedeAnular({ tiene, esAutor: m.userId === ctx.userId, categoria: m.category, montoCent: cent(m.amount) })) {
       throw new BusinessError('FORBIDDEN_ROLE', 'Solo quien registró el movimiento (si era de su alcance) o quien administra la caja puede anularlo.')
     }
@@ -151,4 +154,60 @@ export async function anularMovimientoCaja(db: TenantPrismaClient, ctx: TenantCo
     })
     return { id: m.id, voidedAt: ahora.toISOString() }
   }, OPCIONES_TX)
+}
+
+export interface CompensacionDeAbono {
+  movementId: string
+  /** El turno ABIERTO donde quedó registrada. */
+  cashSessionId: string
+  /** Salió del cajón (el abono fue en efectivo) o solo se registró (otro medio). */
+  efectivo: boolean
+}
+
+/**
+ * Compensa en caja la anulación de un abono de un turno YA CERRADO (F6.3b), dentro de la transacción `t` de `anularAbono`, SIN comprobar permisos:
+ * quien lo llama ya exigió `credito.castigar`. El turno cerrado NO se toca: se registra un EGRESO `COMPENSACION_ABONO` en el turno abierto de la
+ * sucursal del abono, ligado al abono y al turno que corrige.
+ *  · Abono en efectivo → el egreso sale del cajón de hoy (baja el efectivo esperado). Si deja el esperado en negativo NO se bloquea la anulación: se
+ *    marca `exceededExpected` y queda en la auditoría.
+ *  · Abono por otro medio (Yape, transferencia…) → se registra con ese medio y NO mueve el efectivo.
+ * Sin turno abierto en esa sucursal se niega (`CASH_REQUIRED`): la compensación tiene que quedar en algún cajón.
+ */
+export async function compensarAbonoEn(
+  t: TenantPrismaClient,
+  ctx: TenantContext,
+  p: { paymentId: string; branchId: string; method: string; amount: number; turnoCerradoId: string; motivo: string },
+): Promise<CompensacionDeAbono> {
+  const abierto = await t.cashSession.findFirst({ where: { branchId: p.branchId, status: 'ABIERTA' }, select: { id: true, openingAmount: true } })
+  if (!abierto) {
+    throw new BusinessError('CASH_REQUIRED', 'Este abono es de un turno de caja que ya cerró: su anulación se compensa con un egreso en la caja abierta de hoy y no hay ninguna abierta en la sucursal del abono. Abre la caja y vuelve a intentarlo.')
+  }
+  if ((await bloquearTurno(t, abierto.id)).status !== 'ABIERTA') {
+    throw new BusinessError('CASH_REQUIRED', 'La caja de hoy se cerró mientras tanto: abre una nueva y vuelve a intentarlo.')
+  }
+  const efectivo = p.method === 'EFECTIVO'
+  const montoCent = Math.round(p.amount * 100)
+  const excede = efectivo && excedeEfectivo('EGRESO', montoCent, Math.round(efectivoEsperado(num(abierto.openingAmount), await totalesDelTurno(t, abierto.id)) * 100))
+  const m = await t.cashMovement.create({
+    data: {
+      tenantId: ctx.tenantId, branchId: p.branchId, cashSessionId: abierto.id, kind: 'EGRESO', category: CATEGORIA_COMPENSACION, method: p.method as never,
+      amount: new Prisma.Decimal((montoCent / 100).toFixed(2)),
+      description: `Compensación del abono anulado: ${p.motivo}`.slice(0, 200),
+      exceededExpected: excede, relatedSessionId: p.turnoCerradoId, relatedPaymentId: p.paymentId, userId: ctx.userId,
+      // Un abono se anula una sola vez: la clave derivada de él es única y estable.
+      idempotencyKey: `compensacion-abono:${p.paymentId}`,
+    },
+    select: { id: true },
+  })
+  await t.auditLog.create({
+    data: {
+      tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role, action: 'caja.movimiento', entityType: 'CashMovement', entityId: m.id, reason: p.motivo,
+      after: {
+        tipo: 'EGRESO', categoria: ETIQUETA_CATEGORIA[CATEGORIA_COMPENSACION], monto: montoCent / 100, medio: p.method, abono: p.paymentId, turnoCorregido: p.turnoCerradoId, turno: abierto.id,
+        permiso: 'credito.castigar', salioDelCajon: efectivo, superoElEfectivoEsperado: excede,
+      },
+      impersonationId: ctx.impersonationId ?? null,
+    },
+  })
+  return { movementId: m.id, cashSessionId: abierto.id, efectivo }
 }

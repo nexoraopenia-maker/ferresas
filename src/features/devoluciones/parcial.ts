@@ -176,7 +176,7 @@ export function repartirDeudaYDinero(totalCent: number, cuenta: EstadoCuenta | n
     const tope = saldo + contadoRestanteCent
     const abonos = cuenta && cuenta.paidCent > 0
     return abonos
-      ? { ok: false, code: 'CREDIT_HAS_PAYMENTS', topeCent: tope, mensaje: `Esta venta fiada ya tiene abonos cobrados: se puede devolver hasta S/ ${(tope / 100).toFixed(2)} (el saldo pendiente más lo pagado al contado). Devolver más obligaría a reembolsar un abono, algo que llegará con los movimientos manuales de caja.` }
+      ? { ok: false, code: 'CREDIT_HAS_PAYMENTS', topeCent: tope, mensaje: `Esta venta fiada ya tiene abonos cobrados: se puede devolver hasta S/ ${(tope / 100).toFixed(2)} (el saldo pendiente más lo pagado al contado). Devolver más obligaría a reembolsar un abono: anula primero ese abono desde la ficha del cliente (si es de un turno ya cerrado, su compensación sale de la caja abierta de hoy) y vuelve a intentarlo.` }
       : { ok: false, code: 'INVALID_DOCUMENT', topeCent: tope, mensaje: `Lo devuelto (S/ ${(totalCent / 100).toFixed(2)}) supera lo que se puede devolver de esta venta (S/ ${(tope / 100).toFixed(2)}).` }
   }
   if (deuda === 0) return { ok: true, deudaCent: 0, dineroCent: dinero, accion: 'NINGUNA' }
