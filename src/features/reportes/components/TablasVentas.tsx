@@ -52,6 +52,11 @@ export function TablaPorPeriodo({ r }: { r: VentasPorPeriodo }) {
   return (
     <div className="flex flex-col gap-4">
       <Tarjetas items={[{ k: 'Vendido', v: money(t.total), fuerte: true }, { k: 'Ventas', v: String(t.ventas) }, { k: 'Ticket promedio', v: money(t.ticketPromedio) }, { k: 'IGV', v: money(t.igv) }]} />
+      {t.devuelto > 0 && (
+        <p data-reporte="devoluciones-parciales" role="note" className="rounded-xl bg-surface-sunken px-3 py-2 text-sm text-ink-muted">
+          Devoluciones parciales descontadas: <b className="text-ink">{money(t.devuelto)}</b>. Lo vendido ya viene neto de lo que los clientes devolvieron de estas ventas (se resta en el periodo de la venta).
+        </p>
+      )}
       {t.ventas === 0 ? <Vacio texto="No hay ventas completadas en este periodo." /> : (
         <div className="overflow-x-auto rounded-2xl border border-hairline bg-surface">
           <table data-reporte="periodo" className="w-full min-w-[34rem] text-sm">

@@ -10,8 +10,13 @@ export const ESTILO_ESTADO_VENTA: Record<EstadoVenta | 'BORRADOR', string> = {
   COMPLETADA: 'bg-stock-ok-soft text-stock-ok', ANULADA: 'bg-stock-out-soft text-stock-out', DEVUELTA: 'bg-stock-low-soft text-stock-low', BORRADOR: 'bg-surface-sunken text-ink-muted',
 }
 
-function Estado({ e }: { e: EstadoVenta }) {
-  return <span data-estado={e} className={`rounded-full px-2 py-0.5 text-xs font-semibold ${ESTILO_ESTADO_VENTA[e]}`}>{ETIQUETA_ESTADO_VENTA[e]}</span>
+function Estado({ e, parcial }: { e: EstadoVenta; parcial?: boolean }) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      <span data-estado={e} className={`rounded-full px-2 py-0.5 text-xs font-semibold ${ESTILO_ESTADO_VENTA[e]}`}>{ETIQUETA_ESTADO_VENTA[e]}</span>
+      {parcial && <span data-estado="PARCIAL" className="rounded-full bg-stock-low-soft px-2 py-0.5 text-xs font-semibold text-stock-low">Devolución parcial</span>}
+    </span>
+  )
 }
 
 /** El historial de ventas. Sin costos, utilidad ni margen: solo lo que vio el cliente. */
@@ -38,7 +43,7 @@ export function TablaVentas({ pagina, params }: { pagina: PaginaVentas; params: 
                 <td className="px-3 py-2">{f.cliente ?? <span className="text-ink-muted">Sin cliente</span>}</td>
                 <td className="px-3 py-2">{f.comprobante ? <>{f.comprobante.numero}{f.comprobante.esEnsayo && <span className="ml-1 rounded-full bg-surface-sunken px-1.5 text-xs text-ink-muted">ensayo</span>}</> : <span className="text-ink-muted">Nota de venta</span>}</td>
                 <td className="px-3 py-2 text-right font-bold tabular-nums">{money(f.total)}</td>
-                <td className="px-3 py-2"><Estado e={f.estado} /></td>
+                <td className="px-3 py-2"><Estado e={f.estado} parcial={f.conDevolucionParcial} /></td>
               </tr>
             ))}
           </tbody>

@@ -3,11 +3,13 @@ import { requireTenantContext } from '@/lib/session'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { puede } from '@/lib/puede'
 import { isBusinessError } from '@/lib/errors'
+import { diagnosticarDevolucionParcial } from '@/features/devoluciones/parcial-service'
 import { diagnosticarDevolucion } from '@/features/devoluciones/service'
 import { puedeVerVentas } from '@/features/ventas/permisos'
 import { obtenerVenta } from '@/features/ventas/service'
 import { DetalleVenta } from '@/features/ventas/components/DetalleVenta'
 import { FormularioDevolucion } from '@/features/ventas/components/FormularioDevolucion'
+import { FormularioDevolucionParcial } from '@/features/ventas/components/FormularioDevolucionParcial'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,22 +33,33 @@ export default async function DetalleVentaPage({ params }: { params: Promise<{ i
   let accion = null
   if (venta.estado === 'COMPLETADA') {
     if (puede(ctx, 'ventas.anular')) {
-      const d = await diagnosticarDevolucion(db, ctx, venta.id)
-      accion = d.bloqueo
-        ? (
-          <section aria-label="Anular o devolver" data-devolucion="bloqueo" data-codigo={d.bloqueo.code} role="alert" className="flex flex-col gap-1 rounded-2xl border-2 border-stock-low bg-stock-low-soft p-4 text-sm text-ink">
-            <h2 className="text-base font-bold text-stock-low">Esta venta no se puede anular ni devolver todavía</h2>
-            <p>{d.bloqueo.mensaje}</p>
-          </section>
-        )
-        : (
-          <FormularioDevolucion
-            saleId={venta.id} numero={venta.numero} total={venta.total} pagadoNeto={d.pagadoNeto} hayTurnoAbierto={d.hayTurnoAbierto}
-            reembolsosIniciales={d.reembolsos.map((r) => ({ mode: r.mode, method: r.method, amount: r.amount, reference: r.reference }))}
-            comprobante={d.nota?.comprobante ?? null} deEnsayo={d.comprobanteDeEnsayo} cuentaACancelar={d.cuentaACancelar}
-            puedeOperar={ctx.access === 'FULL' || ctx.access === 'WARN'}
-          />
-        )
+      const puedeOperar = ctx.access === 'FULL' || ctx.access === 'WARN'
+      const dp = await diagnosticarDevolucionParcial(db, ctx, venta.id)
+      // «Anular / devolver todo» (F6.1) solo mientras la venta no tenga ninguna devolución parcial: después, lo que falta se devuelve por líneas.
+      const d = venta.parcial ? null : await diagnosticarDevolucion(db, ctx, venta.id)
+      const aviso = (marca: string, titulo: string, texto: string, codigo?: string) => (
+        <section aria-label={titulo} data-devolucion={marca} data-codigo={codigo} role="alert" className="flex flex-col gap-1 rounded-2xl border-2 border-stock-low bg-stock-low-soft p-4 text-sm text-ink">
+          <h2 className="text-base font-bold text-stock-low">{titulo}</h2>
+          <p>{texto}</p>
+        </section>
+      )
+      accion = (
+        <>
+          {dp.bloqueo
+            ? aviso('bloqueo', 'No se pueden devolver productos de esta venta todavía', dp.bloqueo.mensaje, dp.bloqueo.code)
+            : <FormularioDevolucionParcial saleId={venta.id} numero={venta.numero} diagnostico={dp} puedeOperar={puedeOperar} />}
+          {d && (d.bloqueo
+            ? aviso('bloqueo-total', 'Esta venta no se puede anular ni devolver entera todavía', d.bloqueo.mensaje, d.bloqueo.code)
+            : (
+              <FormularioDevolucion
+                saleId={venta.id} numero={venta.numero} total={venta.total} pagadoNeto={d.pagadoNeto} hayTurnoAbierto={d.hayTurnoAbierto}
+                reembolsosIniciales={d.reembolsos.map((r) => ({ mode: r.mode, method: r.method, amount: r.amount, reference: r.reference }))}
+                comprobante={d.nota?.comprobante ?? null} deEnsayo={d.comprobanteDeEnsayo} cuentaACancelar={d.cuentaACancelar}
+                puedeOperar={puedeOperar}
+              />
+            ))}
+        </>
+      )
     } else {
       accion = (
         <p data-devolucion="sin-permiso" className="rounded-xl bg-surface-sunken px-3 py-2 text-sm text-ink-muted">

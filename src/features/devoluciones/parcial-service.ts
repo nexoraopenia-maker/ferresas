@@ -371,6 +371,8 @@ export interface LineaDevolvible {
   importePendiente: number
   controlaStock: boolean
   presentacion: { nombre: string; factor: number } | null
+  /** Los datos exactos con que la pantalla calcula EN VIVO el importe de lo que pide (la misma función que el servidor): sin costos. */
+  calculo: { totalCent: number; vendidaM: number; tasa: number; yaDevueltaM: number; yaDevueltoImporteCent: number }
 }
 
 export interface DiagnosticoParcial {
@@ -381,6 +383,9 @@ export interface DiagnosticoParcial {
   topeDevolvible: number
   saldoDeuda: number
   contadoSinDevolver: { method: string; amount: number }[]
+  /** La cuenta por cobrar de la venta y lo pagado al contado que sigue sin devolverse, en céntimos, para repartir deuda y dinero en pantalla. */
+  cuenta: EstadoCuenta | null
+  contadoPorMedioCent: { method: string; cent: number }[]
   hayTurnoAbierto: boolean
   /** Si la venta ya tiene alguna devolución: «Anular/Devolver todo» deja de ofrecerse. */
   tieneDevoluciones: boolean
@@ -402,6 +407,7 @@ export async function diagnosticarDevolucionParcial(db: TenantPrismaClient, ctx:
       saleItemId: i.id, nombre: i.nameSnapshot, sku: i.skuSnapshot, vendida: deDiezmilesimas(v.vendidaM), devuelta: deDiezmilesimas(v.yaDevueltaM), pendiente: deDiezmilesimas(pend),
       importePendiente: (v.totalCent - v.yaDevueltoImporteCent) / 100, controlaStock: i.product.trackStock,
       presentacion: i.presentationName && i.presentationFactor !== null ? { nombre: i.presentationName, factor: num(i.presentationFactor) } : null,
+      calculo: { totalCent: v.totalCent, vendidaM: v.vendidaM, tasa: v.tasa, yaDevueltaM: v.yaDevueltaM, yaDevueltoImporteCent: v.yaDevueltoImporteCent },
     }
   })
   let bloqueo: DiagnosticoParcial['bloqueo'] = null
@@ -415,6 +421,7 @@ export async function diagnosticarDevolucionParcial(db: TenantPrismaClient, ctx:
     puede: bloqueo === null, bloqueo, lineas, topeDevolvible: topeDevolvibleCent(cuenta, restante.totalCent) / 100,
     saldoDeuda: cuenta && cuenta.status === 'ABIERTA' ? (cuenta.amountCent - cuenta.paidCent) / 100 : 0,
     contadoSinDevolver: restante.porMedio.map((m) => ({ method: m.method, amount: m.cent / 100 })),
+    cuenta, contadoPorMedioCent: restante.porMedio.map((m) => ({ method: m.method, cent: m.cent })),
     hayTurnoAbierto: !!turno, tieneDevoluciones: venta.saleReturns.length > 0,
     comprobante: doc ? { numero: doc.fullNumber, estado: doc.status, esEnsayo: doc.isTrial } : null,
     antiguedad: avisoAntiguedad(diaLocal(zona, venta.completedAt ?? new Date()), diaLocal(zona, new Date())),

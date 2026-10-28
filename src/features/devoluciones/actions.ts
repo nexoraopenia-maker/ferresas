@@ -7,7 +7,8 @@ import { requireTenantContext } from '@/lib/session'
 import { isBusinessError, type ActionResult } from '@/lib/errors'
 import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
-import { anularOdevolverVentaSchema } from './schemas'
+import { anularOdevolverVentaSchema, devolverProductosSchema } from './schemas'
+import { devolverProductosVenta as runDevolverProductos, type ResultadoDevolucionParcial } from './parcial-service'
 import { anularOdevolverVenta as runAnular, type ResultadoDevolucion } from './service'
 
 /**
@@ -43,6 +44,29 @@ export async function anularOdevolverVenta(raw: unknown): Promise<ActionResult<R
     revalidatePath('/reportes', 'layout')
     revalidatePath('/comprobantes')
     revalidatePath('/cobranza')
+  }
+  return r
+}
+
+/**
+ * Server Action de DEVOLVER PRODUCTOS (parte de las líneas de una venta, F6.2). Mismo trato que la anulación: sesión en el servidor, Zod antes de
+ * la base (cantidades positivas, motivo, clave de idempotencia) y el permiso lo decide el servicio (`ventas.anular`, que NO existe en una sesión de
+ * PIN de operador). Los errores del servicio llegan con su mensaje en español, incluido el tope exacto cuando lo devuelto excedería el saldo de un fiado
+ * con abonos o lo que queda de una línea.
+ */
+export async function devolverProductos(raw: unknown): Promise<ActionResult<ResultadoDevolucionParcial>> {
+  const p = devolverProductosSchema.safeParse(raw)
+  if (!p.success) return invalida(p.error)
+  const r = await conTenant('devolverProductos', (db, ctx) => runDevolverProductos(db, ctx, p.data))
+  if (r.ok) {
+    revalidatePath('/ventas')
+    revalidatePath(`/ventas/${p.data.saleId}`)
+    revalidatePath('/caja')
+    revalidatePath('/inventario')
+    revalidatePath('/reportes', 'layout')
+    revalidatePath('/comprobantes')
+    revalidatePath('/cobranza')
+    revalidatePath('/dashboard')
   }
   return r
 }

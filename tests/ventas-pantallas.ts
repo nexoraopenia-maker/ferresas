@@ -24,7 +24,7 @@ const src = (p: string) => (existsSync(p) ? readFileSync(p, 'utf8') : '')
 /** Código sin comentarios: los comentarios SÍ pueden decir «sin costo ni margen». */
 const codigo = (p: string) => src(p).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-const fila = (o: Partial<PaginaVentas['filas'][number]> = {}): PaginaVentas['filas'][number] => ({ id: 'venta0001abc', numero: 'B001-00000007', cuando: '2026-10-26T20:15:00.000Z', sucursal: 'Central', cliente: 'Constructora SAC', total: 118, estado: 'COMPLETADA', cobro: 'Rosa', comprobante: { numero: 'B001-00000012', estado: 'ACEPTADO', esEnsayo: false }, ...o })
+const fila = (o: Partial<PaginaVentas['filas'][number]> = {}): PaginaVentas['filas'][number] => ({ id: 'venta0001abc', numero: 'B001-00000007', cuando: '2026-10-26T20:15:00.000Z', sucursal: 'Central', cliente: 'Constructora SAC', total: 118, estado: 'COMPLETADA', cobro: 'Rosa', comprobante: { numero: 'B001-00000012', estado: 'ACEPTADO', esEnsayo: false }, conDevolucionParcial: false, ...o })
 const pagina = (filas: PaginaVentas['filas'], siguiente: string | null = null): PaginaVentas => ({ filas, siguiente, textoPeriodo: '20/10/2026 – 26/10/2026', zona: 'America/Lima', sucursales: [{ id: 'sucursal0001', nombre: 'Central' }] })
 const params = parametrosVentasListaSchema.parse({})
 
@@ -42,11 +42,11 @@ console.log('\nB) Detalle de la venta')
 const base: Detalle = {
   id: 'venta0001abc', numero: 'B001-00000007', estado: 'COMPLETADA', cuando: '2026-10-26T20:15:00.000Z', sucursal: { id: 's1', nombre: 'Central' }, cobro: 'Rosa',
   cliente: { nombre: 'Constructora SAC', documento: 'RUC 20123456789' }, notas: null, subtotal: 100, igv: 18, descuento: 0, total: 118,
-  lineas: [{ nombre: 'Cemento Sol', sku: 'CEM-1', unidad: 'UNIDAD', cantidad: 10, presentacion: { nombre: 'Caja x 10', ingresada: 1, factor: 10 }, precio: 11.8, descuento: 0, total: 118 }],
+  lineas: [{ id: 'li1', devuelta: 0, importeDevuelto: 0, pendiente: 10, nombre: 'Cemento Sol', sku: 'CEM-1', unidad: 'UNIDAD', cantidad: 10, presentacion: { nombre: 'Caja x 10', ingresada: 1, factor: 10 }, precio: 11.8, descuento: 0, total: 118 }],
   pagos: [{ metodo: 'EFECTIVO', monto: 120, vuelto: 2, referencia: null }],
   cuenta: { estado: 'PENDIENTE', monto: 118, abonado: 0, saldo: 118, vence: '2026-11-25', enRevision: false },
   comprobantes: [{ id: 'd1', tipo: 'BOLETA', numero: 'B001-00000012', estado: 'ACEPTADO', esEnsayo: false, emitidoEn: '2026-10-26T20:16:00.000Z', relacionado: null, anuladoEn: null }],
-  guias: [], devoluciones: [], zona: 'America/Lima',
+  guias: [], devoluciones: [], parcial: false, zona: 'America/Lima',
 }
 const d0 = html(createElement(DetalleVenta, { venta: base }))
 check('>>> muestra cabecera, sucursal, quien cobró, cliente con documento, líneas con presentación y factor, pagos con vuelto', d0.includes('B001-00000007') && d0.includes('Central') && d0.includes('Rosa') && d0.includes('Constructora SAC') && d0.includes('RUC 20123456789') && d0.includes('Caja x 10') && d0.includes('Cemento Sol') && d0.includes('data-pago="EFECTIVO"') && d0.includes('S/ 118.00'))
@@ -58,7 +58,7 @@ const conGuia = html(createElement(DetalleVenta, { venta: { ...base, guias: ['T0
 check('>>> con Guía de Remisión: aviso visible con el número de la guía', conGuia.includes('data-aviso="guia"') && conGuia.includes('T001-00000003'))
 const dev: Detalle = { ...base, estado: 'DEVUELTA', devoluciones: [{
   id: 'r1', numero: 'D001-00000001', tipo: 'DEVOLUCION', cuando: '2026-10-27T15:00:00.000Z', autorizo: 'Dueño', motivo: 'Cliente se arrepintió', pagadoNeto: 118, deudaCancelada: 0, notaDeCredito: 'BC01-00000002',
-  turno: { id: 'turno0001', abiertoEn: '2026-10-27T13:00:00.000Z' }, lineas: 1,
+  turno: { id: 'turno0001', abiertoEn: '2026-10-27T13:00:00.000Z' }, lineas: 1, esTotal: true, detalle: [{ nombre: 'Cemento Sol', cantidad: 10, importe: 118, destino: 'STOCK' }], notaLineas: [],
   reembolsos: [{ modo: 'CAJA', medio: 'EFECTIVO', monto: 100, referencia: null }, { modo: 'EXTERNO', medio: 'YAPE', monto: 18, referencia: 'OP-9' }],
 }] }
 const d1 = html(createElement(DetalleVenta, { venta: dev }))

@@ -23,19 +23,32 @@ function Trazabilidad({ d, zona }: { d: DevolucionVenta; zona: string }) {
   return (
     <article data-devolucion={d.numero} className="flex flex-col gap-2 rounded-2xl border-2 border-stock-low/40 bg-stock-low-soft p-4 text-sm text-ink">
       <p className="flex flex-wrap items-center justify-between gap-2">
-        <b className="text-base">{d.tipo === 'ANULACION' ? 'Anulación' : 'Devolución'} <span className="font-mono">{d.numero}</span></b>
+        <b className="text-base">{d.tipo === 'ANULACION' ? 'Anulación' : d.esTotal ? 'Devolución total' : 'Devolución parcial'} <span className="font-mono" data-devolucion-numero>{d.numero}</span></b>
         <time dateTime={d.cuando} className="text-xs tabular-nums text-ink-muted">{formatearFechaLocal(d.cuando, zona)}</time>
       </p>
       <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
         <div><dt className="inline text-ink-muted">Autorizó: </dt><dd data-devolucion-campo="autorizo" className="inline font-semibold">{d.autorizo}</dd></div>
         <div className="sm:col-span-2"><dt className="inline text-ink-muted">Motivo: </dt><dd data-devolucion-campo="motivo" className="inline">{d.motivo}</dd></div>
         <div><dt className="inline text-ink-muted">Nota de crédito: </dt><dd data-devolucion-campo="nota" className="inline font-semibold">{d.notaDeCredito ?? 'No hizo falta (sin comprobante vivo)'}</dd></div>
-        {d.deudaCancelada > 0 && <div><dt className="inline text-ink-muted">Deuda del cliente cancelada: </dt><dd className="inline font-semibold">{money(d.deudaCancelada)}</dd></div>}
-        <div><dt className="inline text-ink-muted">Productos repuestos: </dt><dd className="inline">{d.lineas} {d.lineas === 1 ? 'línea' : 'líneas'}</dd></div>
+        {d.deudaCancelada > 0 && <div><dt className="inline text-ink-muted">{d.esTotal ? 'Deuda del cliente cancelada' : 'Deuda del cliente reducida'}: </dt><dd data-devolucion-campo="deuda" className="inline font-semibold">{money(d.deudaCancelada)}</dd></div>}
+        <div><dt className="inline text-ink-muted">Productos devueltos: </dt><dd className="inline">{d.lineas} {d.lineas === 1 ? 'línea' : 'líneas'}</dd></div>
         {d.turno && <div><dt className="inline text-ink-muted">Turno de caja: </dt><dd data-devolucion-campo="turno" className="inline">abierto el {formatearFechaLocal(d.turno.abiertoEn, zona)}</dd></div>}
       </dl>
+      {d.detalle.length > 0 && (
+        <ul aria-label="Líneas devueltas" data-devolucion-lineas className="flex flex-col gap-1">
+          {d.detalle.map((x, k) => (
+            <li key={k} data-linea-devuelta={x.destino} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface px-3 py-1.5">
+              <span>{x.nombre} · {cant(x.cantidad)} u. <span className="text-xs text-ink-muted">· {x.destino === 'MERMA' ? 'dañado, pasó a merma' : x.destino === 'STOCK' ? 'reingresó a stock' : 'servicio (sin stock)'}</span></span>
+              <b className="tabular-nums">{money(x.importe)}</b>
+            </li>
+          ))}
+        </ul>
+      )}
+      {d.notaLineas.length > 0 && (
+        <p data-devolucion-nota-lineas className="text-xs text-ink-muted">Líneas de la nota de crédito {d.notaDeCredito}: {d.notaLineas.map((x) => `${x.descripcion} × ${cant(x.cantidad)} = ${money(x.total)}`).join(' · ')}. <Link href="/comprobantes" className="font-semibold text-industrial-600 underline">Ver comprobantes</Link></p>
+      )}
       {d.reembolsos.length === 0
-        ? <p className="text-xs text-ink-muted">Venta sin dinero pagado (todo fue fiado): no hubo reembolso.</p>
+        ? <p className="text-xs text-ink-muted">{d.deudaCancelada > 0 ? 'Todo se descontó de la deuda del cliente: no hubo reembolso.' : 'Venta sin dinero pagado (todo fue fiado): no hubo reembolso.'}</p>
         : (
           <ul aria-label="Reembolsos" className="flex flex-col gap-1">
             {d.reembolsos.map((r, k) => (
@@ -56,11 +69,13 @@ function Trazabilidad({ d, zona }: { d: DevolucionVenta; zona: string }) {
  */
 export function DetalleVenta({ venta: v, accion }: { venta: Detalle; accion?: ReactNode }) {
   const cerrada = v.estado === 'ANULADA' || v.estado === 'DEVUELTA'
+  const conDevoluciones = v.devoluciones.length > 0
   return (
     <div className="flex flex-col gap-5">
       <header className="flex flex-col gap-1">
         <p className="flex flex-wrap items-center gap-2">
           <span data-insignia={`estado-${v.estado}`} className={`rounded-full px-2 py-0.5 text-xs font-semibold ${ESTILO_ESTADO_VENTA[v.estado]}`}>{v.estado === 'BORRADOR' ? 'Borrador' : ETIQUETA_ESTADO_VENTA[v.estado]}</span>
+          {v.parcial && <span data-insignia="devolucion-parcial" className="rounded-full bg-stock-low-soft px-2 py-0.5 text-xs font-semibold text-stock-low">Devolución parcial</span>}
         </p>
         <h1 className="text-2xl font-bold text-ink">Venta <span className="font-mono">{v.numero}</span></h1>
         <p className="text-sm text-ink-muted">
@@ -74,7 +89,7 @@ export function DetalleVenta({ venta: v, accion }: { venta: Detalle; accion?: Re
         <p role="status" data-aviso="sin-registro" className="rounded-xl bg-surface-sunken px-3 py-2 text-sm text-ink-muted">Esta venta figura como {ETIQUETA_ESTADO_VENTA[v.estado as 'ANULADA' | 'DEVUELTA'].toLowerCase()} pero no tiene registro de devolución (es anterior a este módulo).</p>
       )}
       {v.devoluciones.length > 0 && (
-        <Seccion titulo={v.estado === 'ANULADA' ? 'Venta anulada' : 'Venta devuelta'} marca="trazabilidad">
+        <Seccion titulo={v.estado === 'ANULADA' ? 'Venta anulada' : v.estado === 'DEVUELTA' ? 'Venta devuelta' : 'Devoluciones de esta venta'} marca="trazabilidad">
           {v.devoluciones.map((d) => <Trazabilidad key={d.id} d={d} zona={v.zona} />)}
         </Seccion>
       )}
@@ -85,7 +100,9 @@ export function DetalleVenta({ venta: v, accion }: { venta: Detalle; accion?: Re
         <div className="overflow-x-auto rounded-2xl border border-hairline bg-surface">
           <table data-venta="lineas" className="w-full min-w-[34rem] text-sm">
             <thead><tr className="border-b border-hairline text-xs uppercase tracking-wide text-ink-muted">
-              <th scope="col" className="px-3 py-2 text-left">Producto</th><th scope="col" className="px-3 py-2 text-right">Cantidad</th><th scope="col" className="px-3 py-2 text-right">Precio</th>
+              <th scope="col" className="px-3 py-2 text-left">Producto</th><th scope="col" className="px-3 py-2 text-right">Cantidad</th>
+              {conDevoluciones && <><th scope="col" className="px-3 py-2 text-right">Devuelto</th><th scope="col" className="px-3 py-2 text-right">Por devolver</th></>}
+              <th scope="col" className="px-3 py-2 text-right">Precio</th>
               <th scope="col" className="px-3 py-2 text-right">Desc.</th><th scope="col" className="px-3 py-2 text-right">Total</th>
             </tr></thead>
             <tbody>
@@ -95,6 +112,12 @@ export function DetalleVenta({ venta: v, accion }: { venta: Detalle; accion?: Re
                   <td className="px-3 py-2 text-right tabular-nums">
                     {l.presentacion ? <>{cant(l.presentacion.ingresada)} × {l.presentacion.nombre}<span className="block text-xs text-ink-muted">= {cant(l.cantidad)} u. (factor {cant(l.presentacion.factor)})</span></> : <>{cant(l.cantidad)} <span className="text-xs text-ink-muted">{l.unidad.toLowerCase()}</span></>}
                   </td>
+                  {conDevoluciones && (
+                    <>
+                      <td data-linea-devuelto className="px-3 py-2 text-right tabular-nums">{l.devuelta > 0 ? <>{cant(l.devuelta)}<span className="block text-xs text-ink-muted">{money(l.importeDevuelto)}</span></> : '—'}</td>
+                      <td data-linea-pendiente className="px-3 py-2 text-right tabular-nums">{l.pendiente > 0 ? cant(l.pendiente) : <span className="text-xs text-ink-muted">nada</span>}</td>
+                    </>
+                  )}
                   <td className="px-3 py-2 text-right tabular-nums">{money(l.precio)}</td><td className="px-3 py-2 text-right tabular-nums">{l.descuento > 0 ? money(l.descuento) : '—'}</td>
                   <td className="px-3 py-2 text-right font-bold tabular-nums">{money(l.total)}</td>
                 </tr>

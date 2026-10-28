@@ -7,7 +7,7 @@ import { puede } from '@/lib/puede'
 import { PseConfig } from '@/features/invoicing/components/PseConfig'
 import { estadoConfigPse } from '@/features/invoicing/pse-config'
 import { modoFiscal } from '@/features/invoicing/modo-fiscal'
-import { CODIGOS_NOTA_CREDITO_TOTAL } from '@/features/invoicing/notas'
+import { CODIGOS_NOTA_CREDITO_PARCIAL, CODIGOS_NOTA_CREDITO_TOTAL } from '@/features/invoicing/notas'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,9 +33,10 @@ export default async function ComprobantesPage() {
         issuedAt: true,
         saleId: true, isTrial: true, externalId: true, reasonCode: true,
         relatedDocument: { select: { fullNumber: true } },
-        // La nota de crédito total VIVA de este comprobante (una rechazada no cuenta): el índice único parcial la garantiza.
+        // Una nota de crédito VIVA de este comprobante (una rechazada no cuenta): la total (única, por índice) o, desde F6.2, una parcial por devolución.
+        // Con cualquiera de las dos no se ofrece emitir otra nota total (contaría dos veces lo devuelto).
         notes: {
-          where: { documentType: 'NOTA_CREDITO', reasonCode: { in: [...CODIGOS_NOTA_CREDITO_TOTAL] }, status: { not: 'RECHAZADO' } },
+          where: { documentType: 'NOTA_CREDITO', reasonCode: { in: [...CODIGOS_NOTA_CREDITO_TOTAL, ...CODIGOS_NOTA_CREDITO_PARCIAL] }, status: { not: 'RECHAZADO' } },
           take: 1, select: { fullNumber: true },
         },
         dispatch: { select: { status: true, attempts: true, nextAttemptAt: true, lastError: true } },
