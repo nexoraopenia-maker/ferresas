@@ -428,6 +428,55 @@ export async function darDeBajaCuentaEn(
 }
 
 /**
+ * Reduce la deuda de una cuenta por cobrar en `montoCent` porque se devolvió mercadería de esa venta (F6.2), DENTRO de la transacción `t` de la
+ * devolución y SIN comprobar permisos (la autoriza `ventas.anular`). Bloquea al cliente primero (orden del crédito). No toca los abonos ni sus
+ * repartos: solo baja el monto de la cuenta y la deuda del cliente.
+ *  · menos que el saldo → baja `amount`, la cuenta sigue ABIERTA;
+ *  · todo el saldo y con abonos → `amount = paidAmount` y la cuenta queda PAGADA (cerrada);
+ *  · todo el saldo y sin abonos → la cuenta queda ANULADA (como dar de baja), con la devolución como motivo.
+ */
+export async function reducirCuentaEn(
+  t: TenantPrismaClient,
+  ctx: TenantContext,
+  input: { receivableId: string; montoCent: number; motivo: string },
+  contexto: Record<string, unknown> = {},
+): Promise<{ receivableId: string; reducido: number; saldoDespues: number; deudaDespues: number; estado: 'ABIERTA' | 'PAGADA' | 'ANULADA' }> {
+  const previa = await t.receivable.findFirst({ where: { id: input.receivableId }, select: { customerId: true } })
+  if (!previa) throw noExiste('La cuenta')
+  const cliente = await bloquearCliente(t, previa.customerId)
+
+  const r = await t.receivable.findFirst({ where: { id: input.receivableId }, select: { id: true, amount: true, paidAmount: true, status: true, sale: { select: { number: true } } } })
+  if (!r) throw noExiste('La cuenta')
+  if (r.status !== 'ABIERTA') throw invalido('Esta cuenta ya no tiene saldo pendiente.')
+  const monto = aCentimos(num(r.amount)), pagado = aCentimos(num(r.paidAmount)), saldo = monto - pagado
+  if (!Number.isInteger(input.montoCent) || input.montoCent <= 0 || input.montoCent > saldo) {
+    throw invalido(`La deuda a reducir (S/ ${(input.montoCent / 100).toFixed(2)}) debe ser positiva y no superar el saldo (S/ ${(saldo / 100).toFixed(2)}).`)
+  }
+  const ahora = new Date()
+  let estado: 'ABIERTA' | 'PAGADA' | 'ANULADA' = 'ABIERTA'
+  if (input.montoCent < saldo) {
+    await t.receivable.update({ where: { id: r.id }, data: { amount: deCentimos(monto - input.montoCent) }, select: { id: true } })
+  } else if (pagado > 0) {
+    estado = 'PAGADA'
+    await t.receivable.update({ where: { id: r.id }, data: { amount: deCentimos(pagado), status: 'PAGADA', closedAt: ahora }, select: { id: true } })
+  } else {
+    estado = 'ANULADA'
+    await t.receivable.update({ where: { id: r.id }, data: { status: 'ANULADA', voidedAt: ahora, closedAt: ahora, voidReason: input.motivo }, select: { id: true } })
+  }
+  await t.customer.update({ where: { id: previa.customerId }, data: { creditBalance: { decrement: deCentimos(input.montoCent) } }, select: { id: true } })
+  const deudaDespues = deCentimos(aCentimos(cliente.creditBalance) - input.montoCent)
+  await t.auditLog.create({
+    data: {
+      tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role,
+      action: 'credito.cuenta_reducida', entityType: 'Receivable', entityId: r.id, reason: input.motivo,
+      after: { venta: r.sale.number, cliente: cliente.name, reducido: deCentimos(input.montoCent), saldoAntes: deCentimos(saldo), saldoDespues: deCentimos(saldo - input.montoCent), estado, deudaAntes: cliente.creditBalance, deudaDespues, ...contexto },
+      impersonationId: ctx.impersonationId ?? null,
+    },
+  })
+  return { receivableId: r.id, reducido: deCentimos(input.montoCent), saldoDespues: deCentimos(saldo - input.montoCent), deudaDespues, estado }
+}
+
+/**
  * Marca la cuenta de una venta como «pendiente de revisión» porque se le emitió una nota de crédito. NO la anula ni toca la deuda:
  * decidir si se perdona o se mantiene es del dueño (`anularCuenta` o `descartarRevision`). Se llama DENTRO de la transacción que
  * emite la nota (por eso recibe el cliente transaccional), de modo que la nota y la marca nacen juntas o no nacen.

@@ -16,7 +16,9 @@ import {
   type UpdateTaxStatusInput,
 } from './schemas'
 import { puede } from '@/lib/puede'
-import { CODIGOS_NOTA_CREDITO_TOTAL } from './notas'
+import type { UnitType } from '@/generated/prisma/enums'
+import { CODIGOS_NOTA_CREDITO_PARCIAL, CODIGOS_NOTA_CREDITO_TOTAL } from './notas'
+import { CODIGO_NOTA_PARCIAL } from '@/features/devoluciones/parcial'
 
 const P2002_UNIQUE = 'P2002'
 
@@ -449,8 +451,8 @@ export interface NotaCreditoEmitida {
 
 const TOPE_SUSTENTO = 250
 
-/** Lo que hace falta saber, ya comprobado, para crear la nota total de una venta. */
-interface PlanNotaTotal {
+/** Lo que hace falta saber, ya comprobado, para crear una nota sobre un comprobante (total o parcial). */
+interface PlanNotaBase {
   original: {
     id: string; fullNumber: string; currency: string; issuerTaxId: string | null; issuerLegalName: string | null
     receiverDocType: 'DNI' | 'RUC' | 'CE' | 'PASAPORTE' | 'SIN_DOCUMENTO'; receiverDocNumber: string | null; receiverName: string | null; receiverAddress: string | null
@@ -460,6 +462,8 @@ interface PlanNotaTotal {
   modo: ReturnType<typeof modoFiscal>
   series: string
   scope: string
+}
+interface PlanNotaTotal extends PlanNotaBase {
   sustento: string
   reasonCode: string
 }
@@ -489,18 +493,40 @@ export async function planDeNotaCreditoTotal(
       `El motivo ${input.reasonCode} no está disponible: por ahora solo notas de crédito totales (${CODIGOS_NOTA_CREDITO_TOTAL.join(', ')}).`,
     )
   }
-  const sustento = input.reasonDescription.trim()
+  const sustento = validarSustento(input.reasonDescription)
+  const base = await cargarOriginalParaNota(db, input.saleId)
+  const previa = await yaTieneNotaTotal(db, base.original.id)
+  if (previa) throw notaYaExiste(base.original.fullNumber, previa)
+  // Una nota total sobre un comprobante que ya tiene notas PARCIALES contaría dos veces lo devuelto (F6.2).
+  const parcial = await tieneNotaParcialViva(db, base.original.id)
+  if (parcial) {
+    throw new BusinessError('INVALID_DOCUMENT', `El comprobante ${base.original.fullNumber} ya tiene la nota de crédito parcial ${parcial.fullNumber}: una nota total contaría dos veces lo devuelto.`, { existente: parcial.fullNumber })
+  }
+  return { ...base, sustento, reasonCode: input.reasonCode }
+}
+
+function validarSustento(texto: string): string {
+  const sustento = texto.trim()
   if (sustento.length < 3 || sustento.length > TOPE_SUSTENTO) {
     throw new BusinessError('INVALID_DOCUMENT', `El sustento debe tener entre 3 y ${TOPE_SUSTENTO} caracteres.`)
   }
+  return sustento
+}
 
+const tieneNotaParcialViva = (db: TenantPrismaClient, originalId: string) => db.taxDocument.findFirst({
+  where: { relatedDocumentId: originalId, documentType: 'NOTA_CREDITO', reasonCode: { in: [...CODIGOS_NOTA_CREDITO_PARCIAL] }, status: { not: 'RECHAZADO' } },
+  select: { fullNumber: true },
+})
+
+/** Lo común a toda nota sobre una venta: el comprobante original (real, aceptado u observado, con su identificador en modo real) y la serie derivada. */
+async function cargarOriginalParaNota(db: TenantPrismaClient, saleId: string): Promise<PlanNotaBase> {
   const estado = await db.tenant.findFirstOrThrow({
     select: { isDemo: true, realBillingEnabledAt: true, realBillingPausedAt: true },
   })
   const modo = modoFiscal(estado)
 
   const original = await db.taxDocument.findFirst({
-    where: { saleId: input.saleId, documentType: { in: ['BOLETA', 'FACTURA'] } },
+    where: { saleId, documentType: { in: ['BOLETA', 'FACTURA'] } },
     select: {
       id: true, documentType: true, series: true, fullNumber: true, status: true, isTrial: true, currency: true,
       externalId: true,
@@ -541,13 +567,7 @@ export async function planDeNotaCreditoTotal(
       `La serie ${original.series} no permite derivar la serie de la nota (solo sucursales 1 a 99).`,
     )
   }
-  const previa = await yaTieneNotaTotal(db, original.id)
-  if (previa) throw notaYaExiste(original.fullNumber, previa)
-
-  return {
-    original, modo, sustento, reasonCode: input.reasonCode,
-    series: `${m[1]}C${m[2]}`, scope: m[1] === 'F' ? 'TAX_NC_FACTURA' : 'TAX_NC_BOLETA',
-  }
+  return { original, modo, series: `${m[1]}C${m[2]}`, scope: m[1] === 'F' ? 'TAX_NC_FACTURA' : 'TAX_NC_BOLETA' }
 }
 
 /** Crea la nota DENTRO de la transacción `t` (el contador de su serie ya existe: `ensureCounter` va antes, fuera de la transacción). */
@@ -675,4 +695,103 @@ export async function emitirNotaCreditoTotal(
     }
     throw e
   }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  NOTA DE CRÉDITO PARCIAL (F6.2)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Una línea de la nota parcial: lo devuelto de una línea de la venta, con base e IGV ya repartidos (céntimos). */
+export interface LineaNotaParcial {
+  saleItemId: string
+  descripcion: string
+  sku: string
+  unitType: UnitType
+  /** Unidades base devueltas. */
+  cantidad: number
+  tasa: number
+  baseCent: number
+  igvCent: number
+}
+interface InputNotaParcial { saleId: string; reasonDescription: string; lineas: readonly LineaNotaParcial[] }
+
+const totalLineasCent = (ls: readonly LineaNotaParcial[]) => ls.reduce((a, l) => a + l.baseCent + l.igvCent, 0)
+
+/**
+ * Las comprobaciones de una nota PARCIAL (sin escribir ni comprobar permisos): las del original (real, aceptado u observado) más: que no tenga una
+ * nota total viva, y que la suma de las notas parciales vivas MÁS ésta no supere el comprobante. Lo comparte la devolución parcial (`ventas.anular`).
+ */
+export async function planDeNotaCreditoParcial(db: TenantPrismaClient, input: InputNotaParcial): Promise<PlanNotaBase & { sustento: string; totalCent: number }> {
+  const sustento = validarSustento(input.reasonDescription)
+  if (input.lineas.length === 0) throw new BusinessError('INVALID_DOCUMENT', 'Una nota parcial necesita al menos una línea.')
+  const totalCent = totalLineasCent(input.lineas)
+  if (totalCent <= 0) throw new BusinessError('INVALID_DOCUMENT', 'Una nota parcial debe ser por un importe mayor que cero.')
+  const base = await cargarOriginalParaNota(db, input.saleId)
+  const total = await yaTieneNotaTotal(db, base.original.id)
+  if (total) {
+    throw new BusinessError('INVALID_DOCUMENT', `El comprobante ${base.original.fullNumber} ya tiene la nota de crédito total ${total.fullNumber}: no admite notas parciales.`, { existente: total.fullNumber })
+  }
+  const previas = await db.taxDocument.findMany({
+    where: { relatedDocumentId: base.original.id, documentType: 'NOTA_CREDITO', reasonCode: { in: [...CODIGOS_NOTA_CREDITO_PARCIAL] }, status: { not: 'RECHAZADO' } },
+    select: { total: true },
+  })
+  const yaCent = previas.reduce((a, n) => a + Math.round(num(n.total) * 100), 0)
+  const originalCent = Math.round(num(base.original.total) * 100)
+  if (yaCent + totalCent > originalCent) {
+    throw new BusinessError('INVALID_DOCUMENT', `Las notas de crédito de ${base.original.fullNumber} no pueden superar su importe (S/ ${(originalCent / 100).toFixed(2)}): ya hay S/ ${(yaCent / 100).toFixed(2)} y esta es por S/ ${(totalCent / 100).toFixed(2)}.`)
+  }
+  return { ...base, sustento, totalCent }
+}
+
+/** Antes de la transacción: comprueba todo y asegura el contador de la serie de la nota (crearlo dentro haría chocar a dos cajeros). */
+export async function prepararNotaCreditoParcial(db: TenantPrismaClient, ctx: TenantContext, input: InputNotaParcial): Promise<void> {
+  const plan = await planDeNotaCreditoParcial(db, input)
+  await ensureCounter(db, ctx.tenantId, plan.original.sale.branchId, plan.scope, plan.series, '')
+}
+
+/**
+ * Emite la nota de crédito PARCIAL (motivo 07 ⚠️) con sus líneas propias dentro de la transacción `t` de la devolución, SIN comprobar permisos:
+ * quien la llama ya autorizó (`ventas.anular`). La nota copia al receptor del original; sus importes son la suma de sus líneas.
+ * NO marca la cuenta por cobrar para revisión: la devolución ya reduce la deuda por sí misma.
+ */
+export async function emitirNotaCreditoParcialEn(t: TenantPrismaClient, ctx: TenantContext, input: InputNotaParcial): Promise<NotaCreditoEmitida> {
+  const plan = await planDeNotaCreditoParcial(t, input)
+  const { original, modo, series, scope, sustento } = plan
+  const { correlativo } = await claimNextNumber(t, ctx.tenantId, scope, series)
+  const fullNumber = formatFullNumber(series, correlativo)
+  const base = input.lineas.reduce((a, l) => a + l.baseCent, 0)
+  const igv = input.lineas.reduce((a, l) => a + l.igvCent, 0)
+
+  const nota = await t.taxDocument.create({
+    data: {
+      tenantId: ctx.tenantId, saleId: input.saleId, documentType: 'NOTA_CREDITO',
+      series, correlativo, fullNumber, status: 'PENDIENTE', isTrial: false,
+      relatedDocumentId: original.id, reasonCode: CODIGO_NOTA_PARCIAL, reasonDescription: sustento,
+      issuerTaxId: original.issuerTaxId, issuerLegalName: original.issuerLegalName,
+      receiverDocType: original.receiverDocType, receiverDocNumber: original.receiverDocNumber,
+      receiverName: original.receiverName, receiverAddress: original.receiverAddress,
+      currency: original.currency,
+      // El descuento ya está dentro de cada línea (el precio es neto): la nota no lo informa aparte.
+      subtotal: base / 100, taxTotal: igv / 100, discountTotal: 0, total: (base + igv) / 100,
+    },
+    select: { id: true, series: true, correlativo: true, fullNumber: true, status: true, total: true },
+  })
+  await t.taxDocumentItem.createMany({
+    data: input.lineas.map((l, i) => ({
+      tenantId: ctx.tenantId, documentId: nota.id, saleItemId: l.saleItemId, lineNo: i + 1, description: l.descripcion, sku: l.sku, unitType: l.unitType,
+      quantity: l.cantidad, taxRate: l.tasa, subtotal: l.baseCent / 100, taxAmount: l.igvCent / 100, total: (l.baseCent + l.igvCent) / 100,
+    })),
+  })
+  if (seEncola({ isTrial: false }, modo)) await encolarComprobante(t, ctx.tenantId, nota.id)
+
+  await t.auditLog.create({
+    data: {
+      tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role,
+      action: 'taxdocument.nota_credito', entityType: 'TaxDocument', entityId: nota.id,
+      after: { nota: fullNumber, original: original.fullNumber, motivo: CODIGO_NOTA_PARCIAL, parcial: true, lineas: input.lineas.length, sustento, modo, total: num(nota.total) },
+      impersonationId: ctx.impersonationId ?? null,
+    },
+  })
+  return { id: nota.id, series: nota.series, correlativo: nota.correlativo, fullNumber: nota.fullNumber, status: nota.status, total: num(nota.total), comprobanteOriginal: original.fullNumber }
 }

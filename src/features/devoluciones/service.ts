@@ -10,6 +10,7 @@ import { applyStockMovement } from '@/features/inventory/stock-service'
 import { emitirNotaCreditoTotalEn, prepararNotaCreditoTotal } from '@/features/invoicing/service'
 import { claimNextNumber, ensureCounter } from '@/features/pos/sale-service'
 import type { AnularOdevolverVentaInput } from './schemas'
+import { aDiezmilesimas, acumulado } from './parcial'
 import {
   CODIGO_NOTA, ESTADO_FINAL, ETIQUETA_TIPO, efectivoDelCajon, necesitaCaja, pagadoNeto, planDeComprobante, planDeCredito, productosDadosDeBaja, validarReembolsos,
   type PlanComprobante, type ReembolsoValido,
@@ -55,7 +56,7 @@ async function leerVenta(t: TenantPrismaClient, saleId: string) {
       items: {
         orderBy: { id: 'asc' },
         select: {
-          id: true, productId: true, variantId: true, quantity: true, lineTotal: true, nameSnapshot: true, unitCost: true,
+          id: true, productId: true, variantId: true, quantity: true, lineTotal: true, nameSnapshot: true, unitCost: true, taxRate: true, returnedQuantity: true,
           presentationId: true, enteredQuantity: true, presentationFactor: true, presentationName: true,
           product: { select: { name: true, trackStock: true, deletedAt: true } },
         },
@@ -94,6 +95,11 @@ async function evaluar(t: TenantPrismaClient, input: AnularOdevolverVentaInput):
     )
   }
 
+  // Con devoluciones parciales ya hechas, lo que falta se devuelve por líneas (F6.2): una devolución total contaría dos veces lo devuelto.
+  if (venta.items.some((i) => num(i.returnedQuantity) > 0)) {
+    throw invalido(`La venta ${venta.number} ya tiene devoluciones parciales: devuelve lo que falta con «Devolver productos» (no se puede anular ni devolver entera).`)
+  }
+
   // Productos con control de stock dados de baja: no pueden recibir el stock de vuelta.
   const baja = productosDadosDeBaja(venta.items.map((i) => ({ nombre: i.product.name, trackStock: i.product.trackStock, dadoDeBaja: i.product.deletedAt !== null })))
   if (baja.length > 0) {
@@ -116,7 +122,7 @@ async function evaluar(t: TenantPrismaClient, input: AnularOdevolverVentaInput):
   return { venta, reembolsos: r.reembolsos, paidNetCent: pagado.netoCent, planDoc, planCredito, lineasConStock: venta.items.filter((i) => i.product.trackStock) }
 }
 
-async function turnoAbiertoDe(t: TenantPrismaClient, branchId: string): Promise<string> {
+export async function turnoAbiertoDe(t: TenantPrismaClient, branchId: string): Promise<string> {
   const turno = await t.cashSession.findFirst({ where: { branchId, status: 'ABIERTA' }, select: { id: true } })
   if (!turno) throw new BusinessError('CASH_REQUIRED', 'Para devolver dinero en efectivo desde el cajón hace falta un turno de caja abierto en la sucursal de la venta. Abre la caja, o elige devolverlo por otro medio.')
   return turno.id
@@ -213,17 +219,26 @@ export async function anularOdevolverVenta(db: TenantPrismaClient, ctx: TenantCo
       const registro = await t.saleReturn.create({
         data: {
           tenantId: ctx.tenantId, saleId: input.saleId, kind: input.kind, number, reason: input.reason, isFull: true, userId: ctx.userId,
-          creditNoteId: nota?.id ?? null, saleTotal: num(venta.total), paidNet: ev.paidNetCent / 100, receivableVoidedAmount: canceladoCent / 100,
+          creditNoteId: nota?.id ?? null, saleTotal: num(venta.total), returnTotal: num(venta.total), paidNet: ev.paidNetCent / 100, receivableVoidedAmount: canceladoCent / 100,
           idempotencyKey: input.idempotencyKey,
         },
         select: { id: true },
       })
       await t.saleReturnItem.createMany({
-        data: venta.items.map((i) => ({
-          tenantId: ctx.tenantId, returnId: registro.id, saleItemId: i.id, quantity: num(i.quantity), amount: num(i.lineTotal),
-          enteredQuantity: i.enteredQuantity === null ? null : num(i.enteredQuantity), presentationName: i.presentationName,
-        })),
+        data: venta.items.map((i) => {
+          // La línea entera, con la MISMA partición base/IGV que usan la venta y las devoluciones parciales.
+          const todo = acumulado({ totalCent: Math.round(num(i.lineTotal) * 100), vendidaM: aDiezmilesimas(num(i.quantity)), tasa: num(i.taxRate) }, aDiezmilesimas(num(i.quantity)))
+          return {
+            tenantId: ctx.tenantId, returnId: registro.id, saleItemId: i.id, quantity: num(i.quantity), amount: num(i.lineTotal),
+            enteredQuantity: i.enteredQuantity === null ? null : num(i.enteredQuantity), presentationName: i.presentationName,
+            subtotal: todo.baseCent / 100, taxAmount: todo.igvCent / 100, taxRate: num(i.taxRate), destination: (i.product.trackStock ? 'STOCK' : 'SIN_STOCK') as 'STOCK' | 'SIN_STOCK',
+          }
+        }),
       })
+      // El tope por línea: lo vendido queda devuelto por completo.
+      for (const i of venta.items) {
+        await t.saleItem.update({ where: { id: i.id }, data: { returnedQuantity: num(i.quantity), returnedAmount: num(i.lineTotal) }, select: { id: true } })
+      }
       if (ev.reembolsos.length > 0) {
         await t.saleReturnRefund.createMany({
           data: ev.reembolsos.map((r) => ({ tenantId: ctx.tenantId, returnId: registro.id, mode: r.mode, method: r.method, amount: r.amount, reference: r.reference, cashSessionId: turnoId })),

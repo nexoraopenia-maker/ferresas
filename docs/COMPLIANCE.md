@@ -319,6 +319,16 @@ La serie de una nota empieza por la **misma letra** que la serie del comprobante
 | 12 | Ajustes afectos al IVAP |
 | 13 | Corrección del monto neto pendiente de pago y/o de las fechas de vencimiento del pago único o de las cuotas y/o los montos correspondientes a cada cuota, de ser el caso |
 
+### Notas de crédito parciales por devolución (F6.2) ⚠️
+
+Cada devolución parcial de productos de una venta con boleta o factura ACEPTADA u OBSERVADA emite **una nota de crédito parcial** con motivo **07** (devolución por ítem) y sus propias líneas (`tax_document_items`), por el importe de lo devuelto. Para el contador ⚠️ (nada de esto está validado):
+
+1. Que el **07** sea el código correcto para una devolución de parte de los ítems (no confundir con el tipo de comprobante 07 = nota de crédito).
+2. Que se pueda emitir sobre comprobantes **OBSERVADOS** (decisión del dueño, igual que la nota total).
+3. Que **varias notas parciales** sobre un mismo comprobante sean aceptables mientras su suma no supere al original (el sistema lo garantiza línea por línea) y que **no coexistan** con una nota total.
+4. Que la serie se derive igual que la de la nota total (`F001` → `FC01`, `B001` → `BC01`).
+5. El **umbral operativo de 30 días** (`UMBRAL_ADVERTENCIA_DEVOLUCION_DIAS`): solo avisa en pantalla; no bloquea.
+
 ### Catálogo 10: tipo de nota de débito ⚠️
 
 | Código | Descripción |

@@ -15,7 +15,7 @@ import type {
 } from './providers/types'
 import { construirXmlUbl } from './ubl'
 import { bloqueoDeEnvio, modoFiscal } from './modo-fiscal'
-import { documentoRelacionadoDe } from './notas'
+import { CODIGOS_NOTA_CREDITO_PARCIAL, documentoRelacionadoDe } from './notas'
 
 export { NotaEsperaOriginal } from './notas'
 
@@ -81,6 +81,8 @@ export async function cargarComprobanteFiscal(
       fullNumber: true, issuedAt: true, currency: true, isTrial: true, total: true,
       // Solo las notas tienen estos campos; el comprobante original llega por la clave foránea compuesta (mismo negocio).
       reasonCode: true, reasonDescription: true,
+      // Solo las notas PARCIALES (F6.2) tienen líneas propias; el resto deriva las suyas de la venta.
+      items: { orderBy: { lineNo: 'asc' }, select: { description: true, sku: true, unitType: true, quantity: true, taxRate: true, subtotal: true, taxAmount: true, total: true } },
       relatedDocument: {
         select: { documentType: true, series: true, correlativo: true, status: true, isTrial: true, total: true, currency: true },
       },
@@ -127,17 +129,23 @@ export async function cargarComprobanteFiscal(
   }
 
   // Misma extracción de IGV que hizo la venta (por línea): Σ líneas == totales.
-  const lineas: LineaFiscal[] = doc.sale.items.map((it, i) => {
+  const esParcial = CODIGOS_NOTA_CREDITO_PARCIAL.includes(doc.reasonCode ?? '')
+  if (esParcial && doc.items.length === 0) throw new BusinessError('INVALID_DOCUMENT', 'La nota parcial no tiene líneas: no se puede enviar.')
+  // Nota parcial: base e IGV ya vienen repartidos por línea (Σ líneas = total de la nota). Las demás: se extraen de cada línea de la venta.
+  const fuente = esParcial
+    ? doc.items.map((it) => ({ nombre: it.description, sku: it.sku, unitType: it.unitType, quantity: it.quantity, lineTotal: it.total, taxRate: it.taxRate, igv: Number(it.taxAmount) as number | null }))
+    : doc.sale.items.map((it) => ({ nombre: it.nameSnapshot, sku: it.skuSnapshot, unitType: it.product.unitType, quantity: it.quantity, lineTotal: it.lineTotal, taxRate: it.taxRate, igv: null as number | null }))
+  const lineas: LineaFiscal[] = fuente.map((it, i) => {
     const cantidad = Number(it.quantity)
     const neto = Number(it.lineTotal)
     const tasa = Number(it.taxRate)
-    const base = cent(neto / (1 + tasa))
-    const igv = cent(neto - base)
+    const base = it.igv === null ? cent(neto / (1 + tasa)) : cent(neto - it.igv)
+    const igv = it.igv === null ? cent(neto - base) : it.igv
     return {
       numero: i + 1,
-      descripcion: it.nameSnapshot,
-      codigoProducto: it.skuSnapshot,
-      unidadMedida: UNIDAD_SUNAT[it.product.unitType],
+      descripcion: it.nombre,
+      codigoProducto: it.sku,
+      unidadMedida: UNIDAD_SUNAT[it.unitType],
       cantidad,
       precioUnitario: neto / cantidad,
       valorUnitario: base / cantidad,

@@ -484,6 +484,7 @@ model Tenant {
   receivables        Receivable[]
   saleReturns        SaleReturn[]
   saleReturnItems    SaleReturnItem[]
+  taxDocumentItems   TaxDocumentItem[]
   saleReturnRefunds  SaleReturnRefund[]
   customerPayments   CustomerPayment[]
   paymentAllocations PaymentAllocation[]
@@ -1226,9 +1227,14 @@ model SaleItem {
   unitCost  Decimal @default(0) @db.Decimal(12, 4)
   lineTotal Decimal @db.Decimal(14, 2)
 
+  /// Lo ya devuelto de esta línea, en unidades base y en soles (F6.2). El tope duro: `returnedQuantity <= quantity` y `returnedAmount <= lineTotal` (CHECK).
+  returnedQuantity Decimal @default(0) @db.Decimal(14, 4)
+  returnedAmount   Decimal @default(0) @db.Decimal(14, 2)
+
   createdAt DateTime @default(now())
 
-  returnItems SaleReturnItem[]
+  returnItems      SaleReturnItem[]
+  taxDocumentItems TaxDocumentItem[]
 
   @@unique([tenantId, id])
   @@index([tenantId, saleId])
@@ -1926,6 +1932,7 @@ model TaxDocument {
   dispatch  FiscalDispatch?
   /// Devolución que originó esta nota de crédito (F6.1).
   returns   SaleReturn[]      @relation("DevolucionNota")
+  items     TaxDocumentItem[]
 
   @@unique([tenantId, id])
   /// La restricción LEGAL: no puede haber dos comprobantes con el mismo
@@ -2035,6 +2042,8 @@ model Merma {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  returnItems SaleReturnItem[]
 
   @@unique([tenantId, id])
   /// El contador del panel consulta por aquí: (tenant, estado).
@@ -2647,6 +2656,13 @@ enum SaleReturnKind {
   DEVOLUCION
 }
 
+/// A dónde fue la mercadería de una línea devuelta (F6.2).
+enum ReturnDestination {
+  STOCK
+  MERMA
+  SIN_STOCK
+}
+
 /// Dónde fue el dinero devuelto. CAJA = sale del cajón en efectivo; EXTERNO = por otro medio sin tocar el cajón; SIN_SALIDA = no se devuelve dinero (motivo obligatorio).
 enum RefundMode {
   CAJA
@@ -2680,6 +2696,8 @@ model SaleReturn {
   creditNote   TaxDocument? @relation("DevolucionNota", fields: [tenantId, creditNoteId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
 
   saleTotal              Decimal @db.Decimal(14, 2)
+  /// Importe de ESTA devolución (con IGV): la venta entera en F6.1, las líneas devueltas en F6.2. = Σ líneas = importe de su nota de crédito.
+  returnTotal            Decimal @db.Decimal(14, 2)
   /// Lo que el cliente pagó de verdad (sin lo fiado y sin el vuelto): la suma de los reembolsos tiene que ser exactamente esto.
   paidNet                Decimal @db.Decimal(14, 2)
   /// Deuda del cliente que se canceló al devolver una venta fiada (sin abonos).
@@ -2717,9 +2735,18 @@ model SaleReturnItem {
   presentationName String?
   /// Importe de la línea con IGV.
   amount           Decimal  @db.Decimal(14, 2)
+  /// Base e IGV de lo devuelto (`amount = subtotal + taxAmount`) y la tasa de la línea.
+  subtotal         Decimal  @db.Decimal(14, 2)
+  taxAmount        Decimal  @db.Decimal(14, 2)
+  taxRate          Decimal  @db.Decimal(5, 4)
+  /// A dónde fue lo devuelto: al stock vendible, a merma (dañado) o a ninguna parte (servicio sin control de stock).
+  destination      ReturnDestination @default(STOCK)
+  mermaId          String?
+  merma            Merma?   @relation(fields: [tenantId, mermaId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([tenantId, returnId, saleItemId])
   @@index([tenantId, saleItemId])
+  @@index([tenantId, mermaId])
   @@map("sale_return_items")
 }
 
@@ -2744,4 +2771,35 @@ model SaleReturnRefund {
   @@index([tenantId, returnId])
   @@index([tenantId, cashSessionId])
   @@map("sale_return_refunds")
+}
+
+/**
+ * Líneas PROPIAS de una nota de crédito PARCIAL (F6.2; el `TaxDocumentItem` que `notas.ts` dejaba pendiente). Las notas totales y los comprobantes
+ * de venta no las usan: derivan sus líneas de `sale_items`. `total = subtotal + taxAmount`; Σ líneas = total de la nota (lo vigila el servicio).
+ */
+model TaxDocumentItem {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  documentId String
+  document   TaxDocument @relation(fields: [tenantId, documentId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  saleItemId String
+  saleItem   SaleItem @relation(fields: [tenantId, saleItemId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  lineNo      Int
+  description String
+  sku         String
+  unitType    UnitType
+  quantity    Decimal  @db.Decimal(14, 4)
+  taxRate     Decimal  @db.Decimal(5, 4)
+  subtotal    Decimal  @db.Decimal(14, 2)
+  taxAmount   Decimal  @db.Decimal(14, 2)
+  total       Decimal  @db.Decimal(14, 2)
+
+  @@unique([tenantId, documentId, lineNo])
+  @@index([tenantId, documentId])
+  @@index([tenantId, saleItemId])
+  @@map("tax_document_items")
 }

@@ -24,6 +24,12 @@ export class NotaEsperaOriginal extends Error {
  */
 export const CODIGOS_NOTA_CREDITO_TOTAL: readonly string[] = ['01', '02', '06']
 
+/**
+ * Notas de crédito PARCIALES (F6.2): llevan líneas propias (`tax_document_items`) y un importe menor o igual que el del original.
+ * 07 devolución por ítem. ⚠️ Código sin validar con SUNAT ni con el contador (docs/COMPLIANCE.md §10).
+ */
+export const CODIGOS_NOTA_CREDITO_PARCIAL: readonly string[] = ['07']
+
 export interface NotaParaEnviar {
   documentType: 'NOTA_CREDITO' | 'NOTA_DEBITO'
   series: string
@@ -65,13 +71,19 @@ export function documentoRelacionadoDe(n: NotaParaEnviar): NonNullable<Comproban
   if (n.documentType === 'NOTA_DEBITO') {
     throw invalida('Las notas de débito aún no se pueden enviar: necesitan líneas propias (TaxDocumentItem, fase 1A.3b).')
   }
-  if (!CODIGOS_NOTA_CREDITO_TOTAL.includes(n.reasonCode)) {
+  const esParcial = CODIGOS_NOTA_CREDITO_PARCIAL.includes(n.reasonCode)
+  if (!CODIGOS_NOTA_CREDITO_TOTAL.includes(n.reasonCode) && !esParcial) {
     throw invalida(
       `El motivo ${n.reasonCode} aún no se puede enviar: por ahora solo notas de crédito totales ` +
-      `(${CODIGOS_NOTA_CREDITO_TOTAL.join(', ')}). Los demás necesitan líneas propias (TaxDocumentItem, fase 1A.3b).`,
+      `(${CODIGOS_NOTA_CREDITO_TOTAL.join(', ')}) y parciales (${CODIGOS_NOTA_CREDITO_PARCIAL.join(', ')}). Los demás necesitan líneas propias (TaxDocumentItem, fase 1A.3b).`,
     )
   }
-  if (Math.abs(n.total - rel.total) > 0.005) {
+  if (esParcial) {
+    // Una parcial lleva sus propias líneas y nunca supera al original (la suma de todas las parciales la vigila quien las emite).
+    if (n.total <= 0 || n.total > rel.total + 0.005) {
+      throw invalida(`Una nota parcial debe ser mayor que cero y no superar al comprobante original (${rel.total.toFixed(2)}); esta es por ${n.total.toFixed(2)}.`)
+    }
+  } else if (Math.abs(n.total - rel.total) > 0.005) {
     throw invalida(`Una nota total debe ser por el importe del comprobante original (${rel.total.toFixed(2)}); esta es por ${n.total.toFixed(2)}.`)
   }
 

@@ -69,8 +69,8 @@ export interface DatosCredito {
   }[]
   abonos: { id: string; customerId: string; amount: number; method: string; anulado: boolean; cashSessionId: string | null }[]
   repartos: { paymentId: string; receivableId: string; amount: number }[]
-  /** Ventas con alguna línea CREDITO, o que tienen cuenta. `fiado` = Σ de sus líneas CREDITO. */
-  ventas: { id: string; number: string; status: string; customerId: string | null; cashSessionId: string | null; fiado: number }[]
+  /** Ventas con alguna línea CREDITO, o que tienen cuenta. `fiado` = Σ de sus líneas CREDITO; `reducido` = Σ de lo que sus devoluciones (F6.2) bajaron de la cuenta. */
+  ventas: { id: string; number: string; status: string; customerId: string | null; cashSessionId: string | null; fiado: number; reducido?: number }[]
   turnosCerrados: { id: string; cashReceiptsTotal: number; otherReceiptsTotal: number; creditSalesTotal: number }[]
 }
 
@@ -150,8 +150,15 @@ export function auditarDatosCredito(d: DatosCredito): InformeCredito {
     }
     if (x) {
       if (v.fiado === 0) hay('CUENTA_SIN_FIADO_EN_VENTA', 'cuenta', x.id, v.number, 'Hay una cuenta por cobrar pero la venta no tiene ninguna línea a crédito.')
-      else if (c(x.amount) !== c(v.fiado)) {
-        hay('MONTO_CUENTA_VENTA', 'cuenta', x.id, v.number, `La cuenta es de ${soles(x.amount)} y la venta fió ${soles(v.fiado)}.`, { esperado: v.fiado, encontrado: x.amount })
+      else {
+        // Una devolución parcial baja el monto de la cuenta (F6.2). Viva (abierta o pagada): fiado − lo reducido. Dada de baja por la última
+        // devolución, conserva el monto que tenía antes de ese último paso: entre fiado − lo reducido y el fiado.
+        const reducido = c(v.reducido ?? 0)
+        const esperado = c(v.fiado) - reducido
+        const bien = x.status === 'ANULADA' ? c(x.amount) >= esperado && c(x.amount) <= c(v.fiado) : c(x.amount) === esperado
+        if (!bien) {
+          hay('MONTO_CUENTA_VENTA', 'cuenta', x.id, v.number, `La cuenta es de ${soles(x.amount)} y la venta fió ${soles(v.fiado)}${reducido > 0 ? ` (menos ${soles(s(reducido))} devueltos)` : ''}.`, { esperado: s(esperado), encontrado: x.amount })
+        }
       }
       if (v.customerId !== x.customerId) hay('CLIENTE_CUENTA_VENTA', 'cuenta', x.id, v.number, 'La cuenta es de un cliente distinto al de la venta.')
       if ((v.status === 'ANULADA' || v.status === 'DEVUELTA') && x.status === 'ABIERTA') {
@@ -203,7 +210,7 @@ export async function auditarCoherenciaCredito(db: TenantPrismaClient): Promise<
     db.paymentAllocation.findMany({ select: { customerPaymentId: true, receivableId: true, amount: true } }),
     db.sale.findMany({
       where: { OR: [{ payments: { some: { method: 'CREDITO' } } }, { receivable: { isNot: null } }] },
-      select: { id: true, number: true, status: true, customerId: true, cashSessionId: true, payments: { where: { method: 'CREDITO' }, select: { amount: true } } },
+      select: { id: true, number: true, status: true, customerId: true, cashSessionId: true, payments: { where: { method: 'CREDITO' }, select: { amount: true } }, saleReturns: { select: { receivableVoidedAmount: true } } },
     }),
     db.cashSession.findMany({ where: { status: 'CERRADA' }, select: { id: true, cashReceiptsTotal: true, otherReceiptsTotal: true, creditSalesTotal: true } }),
   ])
@@ -218,6 +225,7 @@ export async function auditarCoherenciaCredito(db: TenantPrismaClient): Promise<
     ventas: ventas.map((v) => ({
       id: v.id, number: v.number, status: v.status, customerId: v.customerId, cashSessionId: v.cashSessionId,
       fiado: v.payments.reduce((a, p) => a + c(num(p.amount)), 0) / 100,
+      reducido: v.saleReturns.reduce((a, r) => a + c(num(r.receivableVoidedAmount)), 0) / 100,
     })),
     turnosCerrados: turnos.map((t) => ({
       id: t.id, cashReceiptsTotal: num(t.cashReceiptsTotal), otherReceiptsTotal: num(t.otherReceiptsTotal), creditSalesTotal: num(t.creditSalesTotal),

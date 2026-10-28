@@ -315,7 +315,7 @@ async function cuerpo() {
   // Un registro ajeno que ya tiene el número que va a tomar esta devolución: la creación falla DESPUÉS de cancelar la deuda, emitir la nota y antes de reponer el stock.
   await prisma.documentCounter.updateMany({ where: { tenantId: R.t.id, scope: 'RETURN' }, data: { next: 7 } })
   await prisma.documentCounter.upsert({ where: { tenantId_scope_series: { tenantId: R.t.id, scope: 'RETURN', series: '001' } }, update: { next: 7 }, create: { tenantId: R.t.id, branchId: R.b1.branch.id, scope: 'RETURN', series: '001', prefix: 'D', next: 7 } })
-  await prisma.saleReturn.create({ data: { tenantId: R.t.id, saleId: otraVenta.saleId, kind: 'DEVOLUCION', number: 'D001-00000007', reason: 'Registro previo', isFull: false, userId: R.O.userId, saleTotal: 100, paidNet: 100, idempotencyKey: randomUUID() } })
+  await prisma.saleReturn.create({ data: { tenantId: R.t.id, saleId: otraVenta.saleId, kind: 'DEVOLUCION', number: 'D001-00000007', reason: 'Registro previo', isFull: false, userId: R.O.userId, saleTotal: 100, returnTotal: 100, paidNet: 100, idempotencyKey: randomUUID() } })
   const fr = await R.foto(vr.saleId)
   const er = await err(R.devolver(vr.saleId))
   const fr2 = await R.foto(vr.saleId)
