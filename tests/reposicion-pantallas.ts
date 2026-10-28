@@ -5,7 +5,8 @@ import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared
 import { ReposicionReporte } from '../src/features/inventory/components/ReposicionReporte'
 import { UmbralesGrid } from '../src/features/inventory/components/UmbralesGrid'
 import { UmbralesImport } from '../src/features/inventory/components/UmbralesImport'
-import { analizarUmbralesCsvAccion, guardarUmbralesAccion } from '../src/features/inventory/reposicion-actions'
+import { BotonBorradorCompra, BotonTransferencia } from '../src/features/inventory/components/AccionesReposicion'
+import { analizarUmbralesCsvAccion, crearBorradorDeCompraAccion, guardarUmbralesAccion, solicitarTransferenciaDesdeReposicionAccion } from '../src/features/inventory/reposicion-actions'
 import { cantidadAPedir, agruparPorProveedor } from '../src/features/inventory/reposicion-pedido'
 import type { LineaReposicion, ReporteReposicion } from '../src/features/inventory/reposicion-reporte'
 import type { FilaUmbral } from '../src/features/inventory/umbrales-service'
@@ -31,7 +32,7 @@ const ctxDe = (role: Role): TenantContext => ({ tenantId: 't', userId: 'u', role
 
 const caja12 = { id: 'pr', name: 'Caja', unitType: 'UNIDAD', factor: 12 }
 const linea = (o: Partial<LineaReposicion> & { sku: string; supplierId: string | null }): LineaReposicion => ({
-  clave: `w1:${o.sku}:-`, productId: `id-${o.sku}`, variantId: null, warehouseId: 'w1', almacen: 'Norte', nombre: `Producto ${o.sku}`, unitType: 'UNIDAD', estado: 'LOW',
+  clave: `w1:${o.sku}:-`, branchId: 'b1', excedentes: [], transferible: 0, pendienteDeLlegar: 0, productId: `id-${o.sku}`, variantId: null, warehouseId: 'w1', almacen: 'Norte', nombre: `Producto ${o.sku}`, unitType: 'UNIDAD', estado: 'LOW',
   cantidad: 4, reservado: 0, disponible: 4, enTransito: 0, posicion: 4, minimo: 10, maximo: null, objetivo: 20, sugerida: 14, pedir: cantidadAPedir(14, 'UNIDAD', caja12), bajoPedidoNegativo: false, ...o,
 })
 const reporteDe = (lineas: LineaReposicion[], conCostos: boolean): ReporteReposicion => {
@@ -56,7 +57,7 @@ check('>>> lo vendido sin existencias se marca', conCosto.includes('vendido sin 
 check('>>> aviso de lo que se trabaja contra pedido', /2 productos se trabajan contra pedido/.test(conCosto))
 check('>>> el enlace al kardex solo si puede verlo', conCosto.includes('data-producto="kardex"') && !sinCosto.includes('data-producto="kardex"'))
 check('>>> sin nada que reponer lo dice con calma', html(createElement(ReposicionReporte, { reporte: { ...reporteDe([], false), grupos: [], totalLineas: 0 } })).includes('Nada que reponer'))
-check('>>> la nota explica la fórmula y que los borradores no cuentan', /Posición = disponible/.test(conCosto) && /borradores de compra no cuentan/.test(conCosto))
+check('>>> la nota explica la fórmula y que los borradores no cuentan', /Posición = disponible/.test(conCosto) && /borradores de compra y las transferencias sin despachar no cuentan/.test(conCosto))
 
 console.log('\nB) La cuadrícula')
 const fila = (o: Partial<FilaUmbral>): FilaUmbral => ({ productId: 'p1', variantId: null, warehouseId: 'w1', nombre: 'Cemento Sol', sku: 'CEM', unitType: 'UNIDAD', cantidad: 8, almacenMin: null, almacenMax: null, minimo: 10, maximo: null, origenMinimo: 'PRODUCTO', origenMaximo: null, ...o })
@@ -96,6 +97,30 @@ check('>>> el enlace a los mínimos solo se ofrece a quien puede configurar', /p
 check('>>> ninguna página nombra costPrice ni unitCost: los costos solo salen del servicio', !/costPrice|unitCost/.test(rep + umb))
 check('>>> la página de alertas ofrece el reporte a quien puede verlo', /puede\(ctx, 'reposicion\.ver'\) && <Link href="\/inventario\/reposicion"/.test(codigo('src/app/(dashboard)/inventario/alertas/page.tsx')))
 check('>>> el reporte se vuelve a comprobar en el servicio (no solo en la página)', /exigir\(ctx, 'reposicion\.ver'\)/.test(codigo('src/features/inventory/reposicion-reporte.ts')) && /exigir\(ctx, 'reposicion\.configurar'\)/.test(codigo('src/features/inventory/umbrales-service.ts')))
+
+console.log('\nG) Acciones del reporte (F6.6c)')
+const donante = { warehouseId: 'wS', almacen: 'Sur', branchId: 'b2', sucursal: 'Sur', excedente: 30 }
+const conExc = [linea({ sku: 'A1', supplierId: 's1', excedentes: [donante], transferible: 14, pendienteDeLlegar: 6 }), linea({ sku: 'A2', supplierId: 's1' }), linea({ sku: 'B1', supplierId: null })]
+const full = html(createElement(ReposicionReporte, { reporte: reporteDe(conExc, false), puedeComprar: true, puedeTransferir: true, sucursalActualId: 'b1' }))
+const nada = html(createElement(ReposicionReporte, { reporte: reporteDe(conExc, false), sucursalActualId: 'b1' }))
+const ajena = html(createElement(ReposicionReporte, { reporte: reporteDe(conExc, false), puedeComprar: true, puedeTransferir: true, sucursalActualId: 'otra' }))
+check('>>> con compras.registrar hay un botón de borrador por proveedor, y el de «Otros» dice «sin proveedor»', cuenta(full, /data-reposicion="crear-borrador"/g) === 2 && full.includes('Crear borrador de compra') && full.includes('Crear borrador sin proveedor'))
+check('>>> sin compras.registrar no hay ningún botón de compra', !nada.includes('data-reposicion="crear-borrador"'))
+check('>>> >>> si otra sucursal tiene excedente, se avisa ANTES de comprar y se ofrece la transferencia', full.includes('Antes de comprar') && /le sobran 30/.test(full) && full.includes('data-reposicion="pedir-transferencia"') && /Sugerir transferencia desde Sur \(14/.test(full))
+check('>>> sin stock.transferir_solicitar se avisa del excedente pero NO hay botón', nada.includes('Antes de comprar') && !nada.includes('data-reposicion="pedir-transferencia"'))
+check('>>> las líneas sin excedente no llevan aviso (solo 1 de 3)', cuenta(full, /data-excedente=/g) === 1)
+check('>>> se avisa de lo ya pedido sin despachar', /Ya hay 6 /.test(full) && /aún no cuentan como «en camino»/.test(full))
+check('>>> parado en otra sucursal no se ofrece comprar ni pedir (la compra y el pedido son de la sucursal actual)', !ajena.includes('data-reposicion="crear-borrador"') && !ajena.includes('data-reposicion="pedir-transferencia"'))
+check('>>> el aviso de excedente no trae existencias del donante, solo lo que sobra', !/Existencias|existencias de/.test(full))
+check('>>> el botón de compra y el de transferencia son componentes aislados con sus datos', seguro(() => html(createElement(BotonBorradorCompra, { supplierId: 's1', warehouseId: 'w1', etiqueta: 'Crear borrador de compra' })), '').includes('Crear borrador de compra') && seguro(() => html(createElement(BotonTransferencia, { fromWarehouseId: 'a', toWarehouseId: 'b', productId: 'p', variantId: null, texto: 'Sugerir transferencia desde Sur (3 u)' })), '').includes('Sugerir transferencia desde Sur'))
+const vc = async (f: () => Promise<{ ok: boolean; code?: string }>) => { const r = await f(); return !r.ok && r.code === 'VALIDATION' }
+check('>>> crear borrador sin clave válida, sin almacén o con basura → VALIDATION antes de la sesión', await vc(() => crearBorradorDeCompraAccion({ supplierId: null, warehouseId: 'w', idempotencyKey: 'x' })) && await vc(() => crearBorradorDeCompraAccion({ supplierId: 's' })) && await vc(() => crearBorradorDeCompraAccion(null)))
+check('>>> pedir transferencia sin productos, o con más de 50 → VALIDATION', await vc(() => solicitarTransferenciaDesdeReposicionAccion({ fromWarehouseId: 'a', toWarehouseId: 'b', items: [] })) && await vc(() => solicitarTransferenciaDesdeReposicionAccion({ fromWarehouseId: 'a', toWarehouseId: 'b', items: Array.from({ length: 51 }, (_, i) => ({ productId: `p${i}` })) })))
+check('>>> las acciones no aceptan cantidades del cliente (el esquema las descarta)', !/quantity|cantidad|unitCost/.test(codigo('src/features/inventory/reposicion-schemas.ts')))
+check('>>> la página ofrece el CSV con el almacén filtrado y pasa los permisos de compra y transferencia', /data-reposicion="csv"/.test(rep) && /\/api\/inventario\/reposicion/.test(rep) && /puedeComprar=\{puede\(ctx, 'compras\.registrar'\)\}/.test(rep) && /puedeTransferir=\{puede\(ctx, 'stock\.transferir_solicitar'\)\}/.test(rep))
+const ruta = codigo('src/app/api/inventario/reposicion/route.ts')
+check('>>> la ruta CSV exige sesión (401), traduce permisos (403) y no decide costos (lo hace el servicio)', /status: 401/.test(ruta) && /FORBIDDEN_ROLE' \? 403/.test(ruta) && !/costPrice|ver_costo/.test(ruta) && /exportarReposicionCsv/.test(ruta))
+check('>>> las acciones se vuelven a comprobar en el servicio con SU permiso', /exigir\(ctx, 'compras\.registrar'\)/.test(codigo('src/features/inventory/reposicion-acciones.ts')) && /exigir\(ctx, 'stock\.transferir_solicitar'\)/.test(codigo('src/features/inventory/reposicion-acciones.ts')))
 
 console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
 return fail

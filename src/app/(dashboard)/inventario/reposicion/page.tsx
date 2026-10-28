@@ -42,7 +42,11 @@ export default async function ReposicionPage({ searchParams }: { searchParams: P
         </nav>
       )}
 
-      <ReposicionReporte reporte={reporte} verKardex={puede(ctx, 'kardex.ver')} />
+      <div className="flex justify-end">
+        <a data-reposicion="csv" href={`/api/inventario/reposicion${reporte.warehouseId ? `?almacen=${encodeURIComponent(reporte.warehouseId)}` : ''}`} className="text-sm font-semibold text-industrial-700 underline dark:text-industrial-300">Descargar CSV</a>
+      </div>
+
+      <ReposicionReporte reporte={reporte} verKardex={puede(ctx, 'kardex.ver')} puedeComprar={puede(ctx, 'compras.registrar')} puedeTransferir={puede(ctx, 'stock.transferir_solicitar')} sucursalActualId={ctx.branchId ?? null} />
     </main>
   )
 }

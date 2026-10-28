@@ -8,6 +8,8 @@ import { isBusinessError, type ActionResult } from '@/lib/errors'
 import type { TenantContext } from '@/lib/tenant-context'
 import { aplicarUmbralesSchema, analizarUmbralesCsvSchema } from './umbrales-schemas'
 import { analizarUmbralesCsv, aplicarUmbrales } from './umbrales-service'
+import { borradorDesdeReposicionSchema, transferenciaDesdeReposicionSchema } from './reposicion-schemas'
+import { crearBorradorDeCompraDesdeReposicion, solicitarTransferenciaDesdeReposicion } from './reposicion-acciones'
 
 /**
  * Server Actions de los mínimos y máximos de reposición (F6.6b). Cada una resuelve la sesión en el SERVIDOR, valida con Zod ANTES de tocar la base y deja que el SERVICIO
@@ -42,4 +44,22 @@ export async function analizarUmbralesCsvAccion(raw: unknown) {
   const p = analizarUmbralesCsvSchema.safeParse(raw)
   if (!p.success) return invalida(p.error)
   return conTenant('analizarUmbralesCsv', (db, ctx) => analizarUmbralesCsv(db, ctx, p.data.contenido))
+}
+
+/** Crea el borrador de compra de un proveedor (o sin proveedor) con lo que el reporte sugiere. Exige `compras.registrar` en el servicio. */
+export async function crearBorradorDeCompraAccion(raw: unknown) {
+  const p = borradorDesdeReposicionSchema.safeParse(raw)
+  if (!p.success) return invalida(p.error)
+  const r = await conTenant('crearBorradorDeCompra', (db, ctx) => crearBorradorDeCompraDesdeReposicion(db, ctx, p.data))
+  if (r.ok) { revalidatePath('/compras'); revalidatePath('/inventario/reposicion') }
+  return r
+}
+
+/** Pide a la sucursal con excedente lo que falta. Exige `stock.transferir_solicitar` en el servicio. */
+export async function solicitarTransferenciaDesdeReposicionAccion(raw: unknown) {
+  const p = transferenciaDesdeReposicionSchema.safeParse(raw)
+  if (!p.success) return invalida(p.error)
+  const r = await conTenant('solicitarTransferenciaDesdeReposicion', (db, ctx) => solicitarTransferenciaDesdeReposicion(db, ctx, p.data))
+  if (r.ok) { revalidatePath('/transferencias'); revalidatePath('/inventario/reposicion') }
+  return r
 }

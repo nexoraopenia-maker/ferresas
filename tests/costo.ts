@@ -98,6 +98,8 @@ async function main() {
     'src/features/devoluciones/parcial-service.ts',
     // Reporte de reposición (F6.6b): lee el costo SOLO si la persona tiene productos.ver_costo, para el valor estimado del pedido; sin ese permiso la respuesta no trae claves de costo (lo prueba `reposicion-reporte`).
     'src/features/inventory/reposicion-reporte.ts',
+    // Borrador de compra desde la reposición (F6.6c): copia el ÚLTIMO costo conocido a las líneas del borrador, que exige `compras.registrar` (quien ya teclea y ve costos); no lo devuelve al navegador.
+    'src/features/inventory/reposicion-acciones.ts',
     'src/features/inventory/stock-service.ts',
     'src/features/inventory/product-service.ts',
     'src/features/inventory/import-service.ts',

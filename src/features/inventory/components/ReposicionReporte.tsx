@@ -1,7 +1,9 @@
+import { Fragment } from 'react'
 import Link from 'next/link'
 import { formatQuantity, unitLabel } from '@/lib/quantity'
 import { enlaceKardex } from '../kardex-enlaces'
 import type { LineaReposicion, ReporteReposicion } from '../reposicion-reporte'
+import { BotonBorradorCompra, BotonTransferencia } from './AccionesReposicion'
 
 const soles = (n: number) => new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN' }).format(n)
 
@@ -12,11 +14,20 @@ export function textoPedir(l: Pick<LineaReposicion, 'pedir' | 'unitType'>): stri
   return `${formatQuantity(p.cantidad, l.unitType)} ${unitLabel(l.unitType)}`
 }
 
+/** Los almacenes (de la sucursal de la persona) con líneas en este grupo: un borrador de compra es de UN almacén, y se crea en la sucursal en la que se está. */
+function almacenesDe(lineas: readonly LineaReposicion[], sucursalActualId: string | null): { id: string; nombre: string }[] {
+  const vistos = new Map<string, string>()
+  for (const l of lineas) if (l.warehouseId && l.variantId === null && l.branchId === sucursalActualId && !vistos.has(l.warehouseId)) vistos.set(l.warehouseId, l.almacen ?? '')
+  return [...vistos].map(([id, nombre]) => ({ id, nombre }))
+}
+
 const ESTADO = { OUT: 'Agotado', LOW: 'En su mínimo', OK: 'Disponible' } as const
 const CLASE = { OUT: 'bg-stock-out-soft text-stock-out', LOW: 'bg-stock-low-soft text-stock-low', OK: 'bg-stock-ok-soft text-stock-ok' } as const
 
 /** Reposición sugerida agrupada por proveedor habitual (F6.6b). Solo muestra costos si el reporte los trae (`productos.ver_costo`). */
-export function ReposicionReporte({ reporte, verKardex = false }: { reporte: ReporteReposicion; verKardex?: boolean }) {
+export function ReposicionReporte({
+  reporte, verKardex = false, puedeComprar = false, puedeTransferir = false, sucursalActualId = null,
+}: { reporte: ReporteReposicion; verKardex?: boolean; puedeComprar?: boolean; puedeTransferir?: boolean; sucursalActualId?: string | null }) {
   const { grupos, verCostos } = reporte
   if (grupos.length === 0) {
     return (
@@ -42,6 +53,14 @@ export function ReposicionReporte({ reporte, verKardex = false }: { reporte: Rep
               </p>
             )}
           </header>
+          {puedeComprar && (
+            <div data-reposicion="comprar" className="mt-2 flex flex-wrap items-start justify-end gap-3">
+              {almacenesDe(g.lineas, sucursalActualId).map((a) => (
+                <BotonBorradorCompra key={a.id} supplierId={g.supplierId} warehouseId={a.id}
+                  etiqueta={`${g.supplierId === null ? 'Crear borrador sin proveedor' : 'Crear borrador de compra'}${almacenesDe(g.lineas, sucursalActualId).length > 1 ? ` · ${a.nombre}` : ''}`} />
+              ))}
+            </div>
+          )}
           <div className="mt-2 overflow-x-auto">
             <table className="w-full min-w-[40rem] text-left text-sm">
               <thead className="text-xs uppercase tracking-wide text-ink-muted">
@@ -58,7 +77,8 @@ export function ReposicionReporte({ reporte, verKardex = false }: { reporte: Rep
               </thead>
               <tbody>
                 {g.lineas.map((l) => (
-                  <tr key={l.clave} data-linea={l.clave} className="border-t border-hairline align-top">
+                  <Fragment key={l.clave}>
+                  <tr data-linea={l.clave} className="border-t border-hairline align-top">
                     <td className="py-2 pr-2">
                       <span className="block font-semibold text-ink">{l.nombre}</span>
                       <span className="block font-mono text-xs text-ink-muted">{l.sku}{l.almacen ? ` · ${l.almacen}` : ' · sin existencias cargadas'}</span>
@@ -74,6 +94,25 @@ export function ReposicionReporte({ reporte, verKardex = false }: { reporte: Rep
                     <td data-pedir="" className="py-2 pl-2 font-semibold text-ink">{textoPedir(l)}</td>
                     {verCostos && <td className="py-2 pl-2 text-right tabular-nums">{l.valorEstimado != null ? soles(l.valorEstimado) : <span className="text-xs text-ink-muted">sin costo</span>}</td>}
                   </tr>
+                  {(l.excedentes.length > 0 || l.pendienteDeLlegar > 0) && (
+                    <tr data-excedente={l.clave}>
+                      <td colSpan={verCostos ? 8 : 7} className="pb-2 pr-2">
+                        {l.excedentes.length > 0 && (
+                          <div role="note" className="flex flex-wrap items-center gap-3 rounded-xl border border-accent-500/50 bg-accent-50 px-3 py-2 text-sm text-accent-900">
+                            <span>
+                              <b>Antes de comprar:</b> a {l.excedentes.map((e) => `${e.sucursal} le sobran ${formatQuantity(e.excedente, l.unitType)} ${unitLabel(l.unitType)}`).join('; a ')}.
+                            </span>
+                            {puedeTransferir && l.transferible > 0 && l.warehouseId && l.branchId === sucursalActualId && (
+                              <BotonTransferencia fromWarehouseId={l.excedentes[0]!.warehouseId} toWarehouseId={l.warehouseId} productId={l.productId} variantId={l.variantId}
+                                texto={`Sugerir transferencia desde ${l.excedentes[0]!.sucursal} (${formatQuantity(l.transferible, l.unitType)} ${unitLabel(l.unitType)})`} />
+                            )}
+                          </div>
+                        )}
+                        {l.pendienteDeLlegar > 0 && <p data-pendiente="" className="mt-1 text-xs text-ink-muted">Ya hay {formatQuantity(l.pendienteDeLlegar, l.unitType)} {unitLabel(l.unitType)} pedidas en transferencias sin despachar (aún no cuentan como «en camino»).</p>}
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -82,7 +121,7 @@ export function ReposicionReporte({ reporte, verKardex = false }: { reporte: Rep
       ))}
       <p className="text-xs text-ink-muted">
         Posición = disponible (existencias − reservado) + lo que viene en transferencias en camino. Se repone hasta el máximo, o 2 × el mínimo si no hay máximo. Lo pedido se redondea hacia arriba a la
-        última presentación con la que se compró el producto. Los borradores de compra no cuentan como mercadería en camino.
+        última presentación con la que se compró el producto. Los borradores de compra y las transferencias sin despachar no cuentan como mercadería en camino: si pides una transferencia, no compres lo mismo.
       </p>
       <p className="text-xs text-ink-muted"><Link href="/inventario/alertas" className="font-semibold text-industrial-700 underline dark:text-industrial-300">Ver alertas de stock</Link></p>
     </div>
