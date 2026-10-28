@@ -22,6 +22,10 @@ const ESPERADOS = [
   { nombre: 'cash_sessions_una_abierta_por_sucursal', unico: true, donde: /status.*ABIERTA/ },
   // F6.3b: un abono se anula una sola vez, así que tiene a lo sumo UNA compensación en caja.
   { nombre: 'cash_movements_una_compensacion_por_abono', unico: true, donde: /"relatedPaymentId" IS NOT NULL/ },
+  // F6.5: un solo conteo abierto por almacén, y una línea por producto (y variante) en cada conteo.
+  { nombre: 'inventory_counts_uno_abierto', unico: true, donde: /BORRADOR.*EN_CONTEO.*EN_REVISION/ },
+  { nombre: 'inventory_count_items_sin_variante_key', unico: true, donde: /"variantId" IS NULL/ },
+  { nombre: 'inventory_count_items_con_variante_key', unico: true, donde: /"variantId" IS NOT NULL/ },
 ]
 
 async function main() {

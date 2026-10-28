@@ -30,6 +30,7 @@ export type CounterScope =
   | 'ORDER'
   | 'PURCHASE'
   | 'TRANSFER'
+  | 'INVENTORY_COUNT'
   | 'RETURN'
   | 'TAX_BOLETA'
   | 'TAX_FACTURA'
@@ -53,6 +54,8 @@ const CONFIG: Record<CounterScope, { letra: string; letraEnSerie: boolean }> = {
   ORDER: { letra: 'O', letraEnSerie: false },
   PURCHASE: { letra: 'P', letraEnSerie: false },
   TRANSFER: { letra: 'T', letraEnSerie: false },
+  // Toma de inventario físico (F6.5): «CF001-00000007». Interno, no lo regula nadie.
+  INVENTORY_COUNT: { letra: 'CF', letraEnSerie: false },
   // Devoluciones y anulaciones de ventas (F6.1): «D001-00000007». Interno, no lo regula nadie.
   RETURN: { letra: 'D', letraEnSerie: false },
   TAX_BOLETA: { letra: 'B', letraEnSerie: true },

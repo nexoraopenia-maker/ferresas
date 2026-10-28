@@ -39,6 +39,8 @@ export const PERMISOS_FUERA_DEL_PIN: readonly Permiso[] = [
   'auditoria.ver',
   // El kardex es de supervisión del inventario (y con costos, del dinero): un PIN de 4 cifras no lo abre (F6.4).
   'kardex.ver',
+  // Crear, cerrar o cancelar una toma de inventario es de supervisión: un PIN de 4 cifras no la abre. Contar (`conteo.registrar`) SÍ se puede con PIN (F6.5).
+  'conteo.gestionar',
 ]
 
 export type ErrorPin = 'FORMATO' | 'FACIL'

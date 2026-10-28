@@ -514,6 +514,9 @@ model Tenant {
   @@index([isActive])
   @@index([deletedAt])
   @@map("tenants")
+  inventoryCounts       InventoryCount[]
+  inventoryCountItems   InventoryCountItem[]
+  inventoryCountEntries InventoryCountEntry[]
 }
 
 // ============================================================================
@@ -687,6 +690,13 @@ model User {
   @@index([tenantId, role])
   @@index([tenantId, isActive])
   @@map("users")
+  inventoryCountsCreated   InventoryCount[]      @relation("InventoryCountCreatedBy")
+  inventoryCountsStarted   InventoryCount[]      @relation("InventoryCountStartedBy")
+  inventoryCountsClosed    InventoryCount[]      @relation("InventoryCountClosedBy")
+  inventoryCountsApplied   InventoryCount[]      @relation("InventoryCountAppliedBy")
+  inventoryCountsCancelled InventoryCount[]      @relation("InventoryCountCancelledBy")
+  inventoryCountEntries    InventoryCountEntry[] @relation("InventoryCountEntryBy")
+  inventoryCountEntriesVoided InventoryCountEntry[] @relation("InventoryCountEntryVoidedBy")
 }
 
 model Account {
@@ -773,6 +783,7 @@ model Warehouse {
   @@index([tenantId, branchId, isActive])
   @@index([tenantId, isActive])
   @@map("warehouses")
+  inventoryCounts InventoryCount[]
 }
 
 model Category {
@@ -798,6 +809,7 @@ model Category {
   @@unique([tenantId, slug])
   @@index([tenantId, parentId])
   @@map("categories")
+  inventoryCounts InventoryCount[]
 }
 
 model Supplier {
@@ -949,6 +961,7 @@ model Product {
   @@index([tenantId, categoryId])
   @@index([tenantId, deletedAt])
   @@map("products")
+  inventoryCountItems InventoryCountItem[]
 }
 
 model ProductVariant {
@@ -992,6 +1005,7 @@ model ProductVariant {
   @@unique([tenantId, qrCode])
   @@index([tenantId, productId])
   @@map("product_variants")
+  inventoryCountItems InventoryCountItem[]
 }
 
 // ============================================================================
@@ -2154,6 +2168,7 @@ model Branch {
   @@index([tenantId, isActive])
   @@index([tenantId, deletedAt])
   @@map("branches")
+  inventoryCounts InventoryCount[]
 }
 
 /**
@@ -2746,6 +2761,7 @@ model ProductPresentation {
   @@unique([tenantId, productId, name])
   @@index([tenantId, productId])
   @@map("product_presentations")
+  inventoryCountEntries InventoryCountEntry[]
 }
 
 /// Qué clase de devolución fue. Las dos reponen el stock; cambian el estado final de la venta y el código de la nota de crédito (01 / 06).
@@ -2900,4 +2916,168 @@ model TaxDocumentItem {
   @@index([tenantId, documentId])
   @@index([tenantId, saleItemId])
   @@map("tax_document_items")
+}
+
+// ============================================================================
+//  TOMA DE INVENTARIO FÍSICO (F6.5)
+// ============================================================================
+
+enum InventoryCountStatus {
+  BORRADOR
+  EN_CONTEO
+  EN_REVISION
+  APLICADO
+  CANCELADO
+}
+
+enum InventoryCountScope {
+  TOTAL
+  CATEGORIA
+  SELECCION
+}
+
+enum InventoryCountMode {
+  CIEGO
+  GUIADO
+}
+
+enum InventoryCountItemStatus {
+  PENDIENTE
+  CONTADO
+  RECONTAR
+  APROBADO
+  RECHAZADO
+}
+
+/**
+ * Toma de inventario físico de UN almacén (F6.5). Un documento con ciclo de vida: BORRADOR → EN_CONTEO → EN_REVISION → APLICADO (o CANCELADO desde cualquier
+ * estado previo a APLICADO). Solo puede haber UN conteo abierto (borrador, en conteo o en revisión) por almacén: lo garantiza un índice único parcial. En modo
+ * CIEGO quien cuenta no ve la cantidad del sistema. Nunca se borra: un conteo aplicado o cancelado es inmutable.
+ */
+model InventoryCount {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// «CF001-00000007», del contador de la sucursal (scope INVENTORY_COUNT).
+  number String
+
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [tenantId, warehouseId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+  /// La sucursal del almacén, denormalizada: el cliente aislado acota por ella.
+  branchId    String
+  branch      Branch    @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  scope      InventoryCountScope
+  categoryId String?
+  category   Category? @relation(fields: [tenantId, categoryId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+  mode       InventoryCountMode   @default(CIEGO)
+  status     InventoryCountStatus @default(BORRADOR)
+  notes      String?
+
+  createdById String
+  createdBy   User   @relation("InventoryCountCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  startedAt   DateTime?
+  startedById String?
+  startedBy   User?     @relation("InventoryCountStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
+  closedAt    DateTime?
+  closedById  String?
+  closedBy    User?     @relation("InventoryCountClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+  appliedAt   DateTime?
+  appliedById String?
+  appliedBy   User?     @relation("InventoryCountAppliedBy", fields: [appliedById], references: [id], onDelete: Restrict)
+  cancelledAt   DateTime?
+  cancelledById String?
+  cancelledBy   User?     @relation("InventoryCountCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  cancelReason  String?
+
+  idempotencyKey String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items InventoryCountItem[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, number])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, warehouseId, status])
+  @@index([tenantId, branchId, createdAt])
+  @@map("inventory_counts")
+}
+
+/// Una línea del conteo: un producto (y variante) con la foto del stock al empezar y lo contado (la suma de sus pasadas vigentes).
+model InventoryCountItem {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  countId String
+  count   InventoryCount @relation(fields: [tenantId, countId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  productId String
+  product   Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+  variantId String?
+  variant   ProductVariant? @relation(fields: [tenantId, variantId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  nameSnapshot String
+  skuSnapshot  String
+  unitType     UnitType
+
+  /// Foto del stock al empezar (NULL en borrador). En modo CIEGO no se manda a quien cuenta.
+  systemQtyAtStart Decimal? @db.Decimal(14, 4)
+  /// Suma de las pasadas vigentes, en unidad base (NULL mientras no haya ninguna).
+  countedQty       Decimal? @db.Decimal(14, 4)
+  status           InventoryCountItemStatus @default(PENDIENTE)
+  lastCountedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entries InventoryCountEntry[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, id, countId])
+  @@index([tenantId, countId, status])
+  @@map("inventory_count_items")
+}
+
+/// Una pasada de conteo: lo que una persona contó, en un momento, opcionalmente en una zona. Solo se agrega; se anula, no se borra.
+model InventoryCountEntry {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// La clave compuesta con `countId` obliga a que la pasada pertenezca al MISMO conteo que su línea.
+  itemId  String
+  countId String
+  item    InventoryCountItem @relation(fields: [tenantId, itemId, countId], references: [tenantId, id, countId], onDelete: Restrict, onUpdate: NoAction)
+
+  /// SIEMPRE en la unidad base del producto (≥ 0: contar «cero» también es contar).
+  quantity           Decimal  @db.Decimal(14, 4)
+  presentationId     String?
+  presentation       ProductPresentation? @relation(fields: [tenantId, presentationId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+  enteredQuantity    Decimal? @db.Decimal(14, 4)
+  presentationFactor Decimal? @db.Decimal(14, 6)
+
+  /// Pasillo, estante… texto libre (no hay ubicaciones maestras).
+  zone String?
+
+  userId String
+  user   User   @relation("InventoryCountEntryBy", fields: [userId], references: [id], onDelete: Restrict)
+
+  idempotencyKey String
+
+  voidedAt   DateTime?
+  voidedById String?
+  voidedBy   User?     @relation("InventoryCountEntryVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  voidReason String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, itemId])
+  @@index([tenantId, countId, createdAt])
+  @@map("inventory_count_entries")
 }

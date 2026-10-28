@@ -57,6 +57,9 @@ export const PERMISOS = [
   'reportes.ver',
   // Ver el kardex (cada movimiento de stock de un producto, con su saldo) en UNIDADES. Los valores y costos siguen siendo `productos.ver_costo` (F6.4).
   'kardex.ver',
+  // Toma de inventario físico (F6.5): contar (pasadas) y gestionar el conteo (crear, iniciar, cerrar, cancelar). Aplicar las diferencias es `stock.ajustar`.
+  'conteo.registrar',
+  'conteo.gestionar',
   'comprobantes.emitir',
   'comprobantes.anular',
   'comprobantes.estado_manual',
@@ -88,7 +91,7 @@ export const OPCIONALES: Partial<Record<Role, readonly Permiso[]>> = {
   // (quien cobra); el VENDEDOR arma pedidos y no cobra, así que no tendría dónde usarlo.
   CAJERO: ['ventas.descuento', 'credito.otorgar'],
   // Registrar una compra implica ver y teclear COSTOS: el almacenero no los ve de fábrica, así que lo activa el dueño si de verdad lo quiere así.
-  ALMACENERO: ['productos.editar_precio', 'stock.ajustar', 'compras.registrar'],
+  ALMACENERO: ['productos.editar_precio', 'stock.ajustar', 'compras.registrar', 'conteo.gestionar'],
 }
 
 /**
@@ -182,6 +185,8 @@ export const MATRIZ: Record<Role, readonly Permiso[]> = {
     'stock.transferir_recibir',
     // Ve el kardex en unidades (sin costos): es quien mueve el stock y necesita saber por qué cambió.
     'kardex.ver',
+    // Cuenta la mercadería (pasadas); crear, cerrar o cancelar un conteo no viene de fábrica (`conteo.gestionar`).
+    'conteo.registrar',
   ],
 
   /** Solo lectura: reportes, comprobantes, arqueos y kardex. Sí ve costos. */
@@ -258,6 +263,8 @@ export const ETIQUETAS: Record<Permiso, string> = {
   'stock.transferir_recibir': 'Recibir transferencias',
   'reportes.ver': 'Ver reportes',
   'kardex.ver': 'Ver el kardex de un producto (en unidades; los valores necesitan ver costos)',
+  'conteo.registrar': 'Contar mercadería en una toma de inventario',
+  'conteo.gestionar': 'Crear, iniciar, cerrar y cancelar tomas de inventario',
   'comprobantes.emitir': 'Emitir boletas y facturas',
   'comprobantes.anular': 'Emitir notas de crédito',
   'comprobantes.estado_manual': 'Cambiar a mano el estado tributario de un comprobante',
