@@ -50,3 +50,33 @@ Fase 1 (SUNAT real) se divide: **1A** (sin dependencias externas) y **1B** (perf
 **Fase 5 (reportes y SUNAT): cerrada** — F5.1–F5.5 y F5.7 hechas; F5.4 incluye la migración del documento de compra; **F5.6 (PLE) bloqueada** hasta tener la especificación oficial y la validación del contador. Detalle, definiciones, pendientes ⚠️ y lista de QA en `docs/FASE5-CIERRE.md`.
 
 Fases 2 a 9: ver el plan aprobado. Nada se publica hasta que la suite completa esté en verde y se dé la orden.
+
+
+## Fase 6 — POS e Inventario Pro (roadmap maestro, dado por el dueño el 2026-10-27)
+
+Alcance oficial:
+- **Devoluciones** con nota de crédito y reingreso a stock: venta completa (F6.1) y parcial por líneas (F6.2).
+- **Kardex** visible por producto, **toma de inventario físico**, **lotes** (opcional: evaluar), **stock mínimo y reposición sugerida**.
+- **Listas de precio** (minorista / mayorista) y **precio por volumen**.
+- **Movimientos de caja** (gastos / ingresos manuales), **varias cajas por sucursal**, **reporte de cierre mejorado**.
+- **Despacho / delivery** sobre pedidos.
+- **Generador de etiquetas** (código de barras / QR; el pendiente 3a).
+- **Modo offline (PWA)**: ventas en cola que se sincronizan al volver internet, sin duplicar comprobantes.
+
+Orden propuesto (decidido en conjunto; cada subpaso termina con su informe y espera autorización de commit):
+
+| # | Subpaso | Notas |
+|---|---|---|
+| F6.1 | Anular / devolver una venta completa | **a)** migración + servicio + pruebas · **b)** pantallas (historial de ventas, detalle, cierre de caja). Diseño en `docs/F6.1-DISENO.md` |
+| F6.2 | Devolución parcial por líneas + nota de crédito parcial | Depende de F6.1 y de las líneas propias del comprobante (`TaxDocumentItem`, la «fase 1A.3b» marcada en `notas.ts`) |
+| F6.3 | Movimientos de caja manuales (ingresos / gastos) | Pequeño y de mucho valor: además **desbloquea** devolver una venta fiada que ya tuvo abonos en turnos cerrados |
+| F6.4 | Kardex por producto | Solo lectura sobre `StockMovement`; sirve para verificar F6.1 |
+| F6.5 | Toma de inventario físico | Conteos por almacén, diferencias, ajuste aprobado (`stock.ajustar`, origen `CONTEO`) |
+| F6.6 | Stock mínimo y reposición sugerida | Desde mínimos y rotación; genera borrador de compra por proveedor o solicitud de transferencia |
+| F6.7 | Listas de precio y precio por volumen | Minorista / mayorista; descuento por cantidad |
+| F6.8 | Varias cajas por sucursal y reporte de cierre mejorado | Toca el índice «una caja abierta por sucursal», POS, arqueo y cierre: el más delicado de caja |
+| F6.9 | Despacho / delivery sobre pedidos | Sobre `Quote` PEDIDO y guías de remisión |
+| F6.10 | Generador de etiquetas | Pendiente 3a |
+| F6.11 | Modo offline (PWA) | Al final: el más riesgoso. La venta ya es idempotente (`Sale.idempotencyKey`); los comprobantes reales **no se emiten sin conexión** (la venta se encola y se emite al sincronizar) |
+| F6.12 | Lotes y vencimientos (evaluar) | Decisión del dueño según su operación; no se asume |
+| F6.13 | Cierre de la Fase 6 | Identidades entre kardex, stock, caja y reportes; barrido; checklist de QA |
