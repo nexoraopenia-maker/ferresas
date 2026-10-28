@@ -5,7 +5,8 @@ import { claveDeGrupo, etiquetaDeGrupo, type Granularidad } from './periodo'
  * solo se suma. Todo en céntimos enteros (nunca se suman decimales de coma flotante) y se devuelve en soles.
  *
  * ─── DEFINICIONES (las mismas en pantalla, en CSV y en las pruebas) ─────────────────────────────────────────────────────────────
- *  · VENTA: una venta COMPLETADA, fechada por el día (del negocio) en que se completó. Las anuladas y devueltas no cuentan.
+ *  · VENTA: una venta COMPLETADA, fechada por el día (del negocio) en que se completó. Las anuladas y devueltas no cuentan. Si tuvo devoluciones
+ *    PARCIALES (F6.2), cuenta una vez y por su importe NETO de lo devuelto, en el periodo de la venta (el servicio ya trae las filas netas).
  *  · A CRÉDITO: cuenta como venta el día de la operación. El fiado es un «medio» más (la venta se pagó con deuda); el abono posterior
  *    NO es venta: es un cobro (ver `cobrosPorMedio`).
  *  · MONTO DE UN MEDIO: lo cobrado menos el vuelto. En efectivo el cliente entrega más y se le devuelve la diferencia: la venta se
@@ -35,6 +36,8 @@ export interface VentaFila {
   total: number
   igv: number
   descuentos: number
+  /** Lo que las devoluciones parciales de la venta restaron de `total`, `igv` y `descuentos` (ya NETOS). Solo informativo. */
+  devuelto?: number
   /** Quien armó el pedido/cotización; si no hay, quien registró la venta. */
   vendedorId: string
   /** Quien registró (cobró) la venta. */
@@ -44,27 +47,27 @@ export interface VentaFila {
 
 // ─── Ventas por periodo ─────────────────────────────────────────────────────────────────────────────────────────────
 
-export interface FilaPeriodo { clave: string; etiqueta: string; ventas: number; total: number; igv: number; descuentos: number; ticketPromedio: number }
+export interface FilaPeriodo { clave: string; etiqueta: string; ventas: number; total: number; igv: number; descuentos: number; ticketPromedio: number; devuelto: number }
 export interface VentasPorPeriodo { granularidad: Granularidad; filas: FilaPeriodo[]; totales: Omit<FilaPeriodo, 'clave' | 'etiqueta'> }
 
 export function ventasPorPeriodo(
   ventas: readonly VentaFila[], g: Granularidad, zona: string, grupos: readonly { clave: string; etiqueta: string }[],
 ): VentasPorPeriodo {
-  const acc = new Map<string, { n: number; total: number; igv: number; desc: number }>(grupos.map((x) => [x.clave, { n: 0, total: 0, igv: 0, desc: 0 }]))
+  const acc = new Map<string, { n: number; total: number; igv: number; desc: number; dev: number }>(grupos.map((x) => [x.clave, { n: 0, total: 0, igv: 0, desc: 0, dev: 0 }]))
   for (const v of ventas) {
     const k = claveDeGrupo(v.completedAt, zona, g)
     // Una venta fuera de los grupos del periodo no debería llegar (el servicio filtra por rango); si llega, se cuenta en su grupo en vez de perderse.
-    const a = acc.get(k) ?? { n: 0, total: 0, igv: 0, desc: 0 }
-    a.n++; a.total += c(v.total); a.igv += c(v.igv); a.desc += c(v.descuentos)
+    const a = acc.get(k) ?? { n: 0, total: 0, igv: 0, desc: 0, dev: 0 }
+    a.n++; a.total += c(v.total); a.igv += c(v.igv); a.desc += c(v.descuentos); a.dev += c(v.devuelto ?? 0)
     acc.set(k, a)
   }
   const claves = [...grupos.map((x) => x.clave), ...[...acc.keys()].filter((k) => !grupos.some((x) => x.clave === k)).sort()]
   const filas = claves.map((clave): FilaPeriodo => {
     const a = acc.get(clave)!
-    return { clave, etiqueta: grupos.find((x) => x.clave === clave)?.etiqueta ?? etiquetaDeGrupo(clave, g), ventas: a.n, total: s(a.total), igv: s(a.igv), descuentos: s(a.desc), ticketPromedio: promedio(a.total, a.n) }
+    return { clave, etiqueta: grupos.find((x) => x.clave === clave)?.etiqueta ?? etiquetaDeGrupo(clave, g), ventas: a.n, total: s(a.total), igv: s(a.igv), descuentos: s(a.desc), ticketPromedio: promedio(a.total, a.n), devuelto: s(a.dev) }
   })
-  const T = [...acc.values()].reduce((x, a) => ({ n: x.n + a.n, total: x.total + a.total, igv: x.igv + a.igv, desc: x.desc + a.desc }), { n: 0, total: 0, igv: 0, desc: 0 })
-  return { granularidad: g, filas, totales: { ventas: T.n, total: s(T.total), igv: s(T.igv), descuentos: s(T.desc), ticketPromedio: promedio(T.total, T.n) } }
+  const T = [...acc.values()].reduce((x, a) => ({ n: x.n + a.n, total: x.total + a.total, igv: x.igv + a.igv, desc: x.desc + a.desc, dev: x.dev + a.dev }), { n: 0, total: 0, igv: 0, desc: 0, dev: 0 })
+  return { granularidad: g, filas, totales: { ventas: T.n, total: s(T.total), igv: s(T.igv), descuentos: s(T.desc), ticketPromedio: promedio(T.total, T.n), devuelto: s(T.dev) } }
 }
 
 // ─── Por vendedor ───────────────────────────────────────────────────────────────────────────────────────────────────

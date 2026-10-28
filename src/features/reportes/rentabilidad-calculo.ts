@@ -17,6 +17,11 @@ import { totalDeLinea } from '@/features/compras/costo'
  *  · COSTO DE LA LÍNEA: cantidad vendida (unidad base) × costo unitario con el que se vendió, a céntimos exactos.
  *  · UTILIDAD = venta neta con costo − costo. MARGEN % = utilidad / venta neta con costo (sobre ventas, no sobre costo).
  *  · COBERTURA % = venta neta con costo / venta neta total.
+ *
+ * ─── DEVOLUCIONES PARCIALES (F6.2) ──────────────────────────────────────────────────────────────────────────────────────────────
+ * Lo devuelto de una línea resta de la venta neta (su base, sin IGV) en el periodo de la VENTA. El costo se trata según a dónde fue la
+ * mercadería: lo que REINGRESÓ al stock vendible resta también su costo (la venta no ocurrió, el producto sigue ahí); lo que fue DAÑADO (merma)
+ * resta el ingreso pero CONSERVA su costo, para que la utilidad refleje la pérdida real. `unidades` cuenta lo vendido que se quedó con el cliente.
  */
 
 const c = (n: number) => Math.round(n * 100)
@@ -40,6 +45,8 @@ export interface LineaVentaCosto {
   totalConIgv: number
   /** 0.18, 0… */
   tasaIgv: number
+  /** Lo devuelto de esta línea (F6.2): unidades base en diezmilésimas, cuántas reingresaron al stock vendible, y su base sin IGV en céntimos. */
+  devuelta?: { cantidadM: number; cantidadStockM: number; baseCent: number }
 }
 
 /** Venta neta de IGV de una línea, en SOLES: exactamente la cuenta del POS. */
@@ -87,9 +94,12 @@ export function margenPorProducto(lineas: readonly LineaVentaCosto[]): Margenes 
   const acc = new Map<string, Acc>()
   for (const l of lineas) {
     const a = acc.get(l.productId) ?? { nombre: l.nombre, sku: l.sku, unidad: l.unidad, q: 0, n: 0, nSin: 0, venta: 0, ventaCon: 0, ventaSin: 0, costo: 0 }
-    const ventaC = c(ventaSinIgvDeLinea(l.totalConIgv, l.tasaIgv))
-    a.q += Math.round(l.cantidad * 10_000); a.n++; a.venta += ventaC
-    if (l.costoUnitario > 0) { a.ventaCon += ventaC; a.costo += c(totalDeLinea(l.cantidad, l.costoUnitario)) }
+    const dev = l.devuelta
+    const ventaC = c(ventaSinIgvDeLinea(l.totalConIgv, l.tasaIgv)) - (dev?.baseCent ?? 0)
+    const qM = Math.round(l.cantidad * 10_000)
+    a.q += qM - (dev?.cantidadM ?? 0); a.n++; a.venta += ventaC
+    // El costo es el de las unidades que NO volvieron al stock vendible (las dañadas lo conservan).
+    if (l.costoUnitario > 0) { a.ventaCon += ventaC; a.costo += c(totalDeLinea((qM - (dev?.cantidadStockM ?? 0)) / 10_000, l.costoUnitario)) }
     else { a.ventaSin += ventaC; a.nSin++ }
     acc.set(l.productId, a)
   }

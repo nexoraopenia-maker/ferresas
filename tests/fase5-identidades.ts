@@ -19,7 +19,8 @@ import { informeRegistroCompras, informeRegistroVentas } from '../src/features/r
 import { parametrosRegistrosSchema } from '../src/features/registros/schemas'
 import { informeConciliacion } from '../src/features/conciliacion/conciliacion-service'
 import { anularOdevolverVenta } from '../src/features/devoluciones/service'
-import { anularOdevolverVentaSchema } from '../src/features/devoluciones/schemas'
+import { anularOdevolverVentaSchema, devolverProductosSchema } from '../src/features/devoluciones/schemas'
+import { devolverProductosVenta } from '../src/features/devoluciones/parcial-service'
 import type { Role } from '../src/generated/prisma/enums'
 import type { TenantContext } from '../src/lib/tenant-context'
 
@@ -115,7 +116,7 @@ async function cuerpo() {
   await doc(ids[5]!, { en: en[5]!, estado: 'PENDIENTE' })
   await doc(ids[6]!, { en: en[6]!, estado: 'RECHAZADO' })
   // v8 es nota de venta (sin comprobante). v9 anulada. v10 fuera del periodo.
-  await prisma.taxDocument.create({ data: { tenantId: t.id, saleId: ids[1]!, documentType: 'NOTA_CREDITO', series: 'BC01', correlativo: 1, fullNumber: 'BC01-00000001', status: 'ACEPTADO', isTrial: false, subtotal: 80, taxTotal: 14.4, total: 94.4, issuedAt: new Date('2026-10-22T10:00:00Z'), relatedDocumentId: d2.id, reasonCode: '07', reasonDescription: 'Devolución parcial' } })
+  await prisma.taxDocument.create({ data: { tenantId: t.id, saleId: ids[1]!, documentType: 'NOTA_CREDITO', series: 'BC01', correlativo: 1, fullNumber: 'BC01-00000001', status: 'ACEPTADO', isTrial: false, subtotal: 80, taxTotal: 14.4, total: 94.4, issuedAt: new Date('2026-10-22T10:00:00Z'), relatedDocumentId: d2.id, reasonCode: '04', reasonDescription: 'Devolución parcial' } })
   void d1; void d3
   for (const [sc, sr, nx] of [['TAX_BOLETA', 'B001', corr + 1], ['TAX_FACTURA', 'F001', 2], ['TAX_NC_BOLETA', 'BC01', 2]] as const) await prisma.documentCounter.upsert({ where: { tenantId_scope_series: { tenantId: t.id, scope: sc, series: sr } }, update: { next: nx }, create: { tenantId: t.id, branchId: b1.branch.id, scope: sc, series: sr, prefix: '', next: nx, startNumber: 1 } })
 
@@ -213,6 +214,44 @@ async function cuerpo() {
   check('>>> el puente sigue PARTIENDO del total de ventas y cuadrando (diferencia 0), con una venta completada menos', cent(ccG.puente.ventasCompletadas.total) === cent(gp.datos.totales.total) && ccG.puente.ventasCompletadas.documentos === realG.n && ccG.puente.diferencia === 0 && ccG.puente.devueltas.documentos === 1 && ccG.cuadreVentas.diferencia === 0)
   check('>>> llega al registro con UNA línea más que explicar: registro = válidos del puente + comprobantes de ventas devueltas − notas de crédito VÁLIDAS (la nota de la devolución se emite HOY, fuera del periodo: restará en el registro de su propio periodo, y mientras SUNAT no la acepte va al control)', cent(regG.totales.total) === cent(ccG.puente.clasificacion.valido.total) + sumaDev - sumaNc && ncs.length === 1 && devueltasConDoc.length === 1 && (await prisma.taxDocument.count({ where: { tenantId: t.id, documentType: 'NOTA_CREDITO', status: 'PENDIENTE' } })) === 1, `${regG.totales.total}`)
   check('>>> y la conciliación lo EXPLICA sin alarmar: la devuelta con su nota no es un comprobante vivo ni una diferencia de fechas', !ccG.hallazgos.some((h) => h.codigo === 'COMPROBANTE_VIVO_EN_VENTA_CERRADA' && h.items.some((i) => i.detalle.includes(dev.saleNumber))) && ccG.hallazgos.some((h) => h.codigo === 'COMPROBANTES_DE_VENTAS_DEVUELTAS') && !ccG.hallazgos.some((h) => h.codigo === 'DIFERENCIA_DE_FECHAS'))
+
+  console.log('\nH) Con devoluciones PARCIALES activas (F6.2): las identidades cruzadas se cumplen al céntimo')
+  const neto = async (extra: Record<string, unknown> = {}) => {
+    const w = { ...enPeriodo, ...extra }
+    const a = await prisma.sale.aggregate({ where: w, _sum: { total: true, subtotal: true, taxTotal: true }, _count: true })
+    const d = await prisma.saleReturn.aggregate({ where: { sale: w }, _sum: { returnTotal: true } })
+    const di = await prisma.saleReturnItem.aggregate({ where: { saleReturn: { sale: w } }, _sum: { subtotal: true, taxAmount: true } })
+    const n0 = (x: { toString(): string } | null | undefined) => (x == null ? 0 : Number(x.toString()))
+    return { n: a._count, total: cent(n0(a._sum.total)) - cent(n0(d._sum.returnTotal)), subtotal: cent(n0(a._sum.subtotal)) - cent(n0(di._sum.subtotal)), igv: cent(n0(a._sum.taxTotal)) - cent(n0(di._sum.taxAmount)), devuelto: cent(n0(d._sum.returnTotal)) }
+  }
+  const parcial = async (saleId: string, lines: { saleItemId: string; quantity: number; destination?: 'STOCK' | 'MERMA' }[], monto: number, notaEn: string | null) => {
+    const r = await devolverProductosVenta(db, O1, devolverProductosSchema.parse({ saleId, reason: 'Devolución parcial', lines, idempotencyKey: randomUUID(), refunds: [{ mode: 'EXTERNO', method: 'YAPE', amount: monto }] }))
+    if (notaEn && r.creditNote) await prisma.taxDocument.update({ where: { id: r.creditNote.id }, data: { issuedAt: new Date(notaEn), status: 'ACEPTADO' } })
+    return r
+  }
+  const antesP = await neto()
+  const it5 = await prisma.saleItem.findMany({ where: { saleId: ids[4]! }, orderBy: { id: 'asc' } }), it1 = await prisma.saleItem.findFirstOrThrow({ where: { saleId: ids[0]! } })
+  const p5 = await parcial(ids[4]!, it5.map((x) => ({ saleItemId: x.id, quantity: num(x.quantity) === 10 ? 4 : 1 })), 110, '2026-10-25T10:00:00Z')            // la mixta (BOLETA observada… aceptada): una línea entera y 4 de 10 de la exenta, nota EN el periodo
+  const p1 = await parcial(ids[0]!, [{ saleItemId: it1.id, quantity: 1, destination: 'MERMA' }], 100, '2026-11-02T15:00:00Z')                                 // 1 de 2 dañada, nota DESPUÉS del periodo
+  const netoH = await neto()
+  const [hp, hv, hm, hc] = [await informeVentasPorPeriodo(db, OALL, PV, AHORA), await informeVentasPorVendedor(db, OALL, PV, AHORA), await informeVentasPorMedio(db, OALL, PV, AHORA), await informeCobros(db, OALL, PV, AHORA)]
+  check('>>> las ventas restan lo devuelto: una venta devuelta en parte sigue contando UNA vez y el total baja exactamente lo devuelto (110.00 + 100.00)', netoH.n === antesP.n && antesP.total - netoH.total === p5.total * 100 + p1.total * 100 && p5.total === 110 && p1.total === 100 && netoH.devuelto > 0)
+  check('>>> por periodo = por vendedor = por medio de pago = la base neta (al céntimo), con el mismo IGV', cent(hp.datos.totales.total) === netoH.total && cent(hv.datos.totales.total) === netoH.total && cent(hm.datos.totalVentas) === netoH.total && cent(hp.datos.totales.igv) === netoH.igv)
+  check('>>> por medio: lo pagado neto cuadra con las ventas netas y no hay ventas descuadradas; cobros = ventas netas − fiado', cent(hm.datos.totalMedios) === netoH.total && hm.datos.descuadradas.ventas === 0 && cent(hc.datos.totales.contado) === netoH.total - cent(500))
+  const mgH = await informeMargen(db, OALL, PC, AHORA), abcH = await informeAbc(db, OALL, PC, AHORA)
+  check('>>> rentabilidad: la venta sin IGV = subtotales netos (al céntimo); el IGV implícito = el de ventas; el ABC suma lo mismo', cent(mgH.datos.totales.ventaSinIgv) === netoH.subtotal && netoH.total - cent(mgH.datos.totales.ventaSinIgv) === netoH.igv && cent(abcH.datos.total) === cent(mgH.datos.totales.ventaSinIgv))
+  check('>>> y venta con costo + sin costo = venta sin IGV (el costo cero sigue siendo «no sé»)', cent(mgH.datos.totales.ventaConCosto) + cent(mgH.datos.totales.ventaSinCosto) === cent(mgH.datos.totales.ventaSinIgv))
+  const ccH = (await informeConciliacion(db, OALL, PR, AHORA)).informe
+  const regH = (await informeRegistroVentas(db, OALL, PR, AHORA)).datos
+  check('>>> el puente PARTE del total NETO de ventas y cuadra: diferencia 0, y el registro coincide con su cálculo independiente', cent(ccH.puente.ventasCompletadas.total) === cent(hp.datos.totales.total) && ccH.puente.diferencia === 0 && ccH.cuadreVentas.diferencia === 0)
+  const ncP = await prisma.taxDocument.findMany({ where: { tenantId: t.id, isTrial: false, documentType: 'NOTA_CREDITO', reasonCode: '07', status: { in: ['ACEPTADO', 'OBSERVADO'] }, issuedAt: { gte: DESDE, lt: HASTA } } })
+  check('>>> las notas parciales restan en el registro por su fecha de emisión: la de la mixta (25 oct) sí; la del dañado (2 nov) no', ncP.length === 1 && ncP[0]!.saleId === ids[4] && regH.filas.some((f) => f.tipo === 'NOTA_CREDITO' && cent(f.total) === 11_000))
+  check('>>> DESFASE 1: lo devuelto del primer vendido con la nota fuera del periodo (100.00) está en el puente', cent(ccH.puente.desfaseParciales.notaFueraDelPeriodo) === 10_000 && ccH.puente.desfaseParciales.notasDeOtrasVentas === 0)
+  check('>>> y las notas parciales suman exactamente lo devuelto (ningún error de notas parciales)', !ccH.hallazgos.some((h) => h.codigo === 'NOTAS_PARCIALES_NO_CUADRAN') && !ccH.hallazgos.some((h) => h.codigo === 'REGISTRO_VENTAS_NO_CUADRA'))
+  const real1H = await neto({ branchId: b1.branch.id })
+  const OB1h = OB1, d1h = getTenantPrisma(OB1h)
+  const [h1p, h1m, h1g] = [await informeVentasPorPeriodo(d1h, OB1h, PV, AHORA), await informeVentasPorMedio(d1h, OB1h, PV, AHORA), await informeMargen(d1h, OB1h, PC, AHORA)]
+  check('>>> sucursal 1: ventas = medios = base neta y rentabilidad = subtotales netos', cent(h1p.datos.totales.total) === real1H.total && cent(h1m.datos.totalVentas) === real1H.total && cent(h1g.datos.totales.ventaSinIgv) === real1H.subtotal)
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
   return fail

@@ -84,7 +84,16 @@ export function VistaConciliacion({ r }: { r: InformeConciliacion }) {
               ))}
               <tr data-puente="diferencia" className={`border-b border-hairline font-bold ${p.diferencia === 0 ? 'text-stock-ok' : 'text-stock-out'}`}><th scope="row" className="px-3 py-2 text-left">Diferencia sin explicar</th><td className={td} /><td className={td}>{money(p.diferencia)}</td></tr>
               <tr data-puente="anuladas" className="border-b border-hairline text-ink-muted"><th scope="row" className="px-3 py-2 text-left font-normal">Ventas anuladas del periodo (no suman)</th><td className={td}>{p.anuladas.documentos}</td><td className={td}>{money(p.anuladas.total)}</td></tr>
-              <tr data-puente="devueltas" className="text-ink-muted"><th scope="row" className="px-3 py-2 text-left font-normal">Ventas devueltas del periodo (no suman)</th><td className={td}>{p.devueltas.documentos}</td><td className={td}>{money(p.devueltas.total)}</td></tr>
+              <tr data-puente="devueltas" className="border-b border-hairline text-ink-muted"><th scope="row" className="px-3 py-2 text-left font-normal">Ventas devueltas del periodo (no suman)</th><td className={td}>{p.devueltas.documentos}</td><td className={td}>{money(p.devueltas.total)}</td></tr>
+              {p.devolucionesParciales.documentos > 0 && (
+                <tr data-puente="devoluciones-parciales" className="text-ink-muted"><th scope="row" className="px-3 py-2 text-left font-normal">Devoluciones parciales de estas ventas (ya restadas arriba)</th><td className={td}>{p.devolucionesParciales.documentos}</td><td className={td}>{money(p.devolucionesParciales.total)}</td></tr>
+              )}
+              {(p.desfaseParciales.notaFueraDelPeriodo !== 0 || p.desfaseParciales.notasDeOtrasVentas !== 0) && (
+                <>
+                  <tr data-puente="desfase-nota-fuera" className="border-t border-hairline text-ink-muted"><th scope="row" className="px-3 py-2 text-left font-normal">Desfase: devuelto de este periodo con la nota en otro (registro mayor)</th><td className={td} /><td className={td}>{money(p.desfaseParciales.notaFueraDelPeriodo)}</td></tr>
+                  <tr data-puente="desfase-notas-otras" className="text-ink-muted"><th scope="row" className="px-3 py-2 text-left font-normal">Desfase: notas parciales de este periodo sobre ventas de otro (registro menor)</th><td className={td} /><td className={td}>{money(-p.desfaseParciales.notasDeOtrasVentas)}</td></tr>
+                </>
+              )}
             </tbody>
           </table>
         </div>

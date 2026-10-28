@@ -1,6 +1,7 @@
 import { BusinessError } from '@/lib/errors'
 import { generarCsv } from '@/lib/csv-export'
 import { exigir } from '@/lib/puede'
+import { leerDevolucionesDeVentas, pagosTrasDevoluciones } from '@/features/devoluciones/neto'
 import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { describirPeriodo, granularidadAuto, gruposDelPeriodo, resolverPeriodo, type Granularidad, type PeriodoElegido } from './periodo'
@@ -37,7 +38,9 @@ async function preparar(db: TenantPrismaClient, ctx: TenantContext, p: Pick<Para
 
 const num = (d: { toString(): string } | null | undefined) => Number(d?.toString() ?? 0)
 
-/** Lee TODAS las ventas COMPLETADAS del periodo, por lotes (un periodo largo no se trae de golpe). */
+/**
+ * Lee TODAS las ventas COMPLETADAS del periodo, por lotes (un periodo largo no se trae de golpe). Los importes ya vienen NETOS de las devoluciones
+ * parciales (F6.2): total, IGV, descuentos y pagos restan lo devuelto en el periodo de la venta; `devuelto` guarda lo restado, para informarlo. */
 export async function leerVentas(db: TenantPrismaClient, periodo: Pick<PeriodoElegido, 'desde' | 'hasta'>): Promise<VentaFila[]> {
   const filas: VentaFila[] = []
   let cursor: string | undefined
@@ -53,11 +56,16 @@ export async function leerVentas(db: TenantPrismaClient, periodo: Pick<PeriodoEl
         payments: { select: { method: true, amount: true, change: true } },
       },
     })
+    const devueltas = await leerDevolucionesDeVentas(db, lote.map((v) => v.id))
     for (const v of lote) {
+      const dev = devueltas.get(v.id)
+      const cent = (n: number) => Math.round(n * 100)
       filas.push({
-        id: v.id, numero: v.number, completedAt: v.completedAt!, total: num(v.total), igv: num(v.taxTotal), descuentos: num(v.discountTotal),
+        id: v.id, numero: v.number, completedAt: v.completedAt!,
+        total: (cent(num(v.total)) - (dev?.totalCent ?? 0)) / 100, igv: (cent(num(v.taxTotal)) - (dev?.igvCent ?? 0)) / 100,
+        descuentos: (cent(num(v.discountTotal)) - (dev?.descuentoCent ?? 0)) / 100, devuelto: (dev?.totalCent ?? 0) / 100,
         vendedorId: v.quote?.userId ?? v.userId, cobroId: v.userId,
-        pagos: v.payments.map((p) => ({ metodo: p.method, monto: num(p.amount), vuelto: num(p.change) })),
+        pagos: pagosTrasDevoluciones(v.payments.map((p) => ({ metodo: p.method, monto: num(p.amount), vuelto: num(p.change) })), dev),
       })
     }
     if (lote.length < LOTE) break
@@ -102,9 +110,20 @@ export async function informeCobros(db: TenantPrismaClient, ctx: TenantContext, 
       where: { receivedAt: { gte: desde, lt: hasta }, method: { not: 'CREDITO' }, sale: { status: 'COMPLETADA' } },
       orderBy: [{ receivedAt: 'asc' }, { id: 'asc' }], take: LOTE,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      select: { id: true, method: true, amount: true, change: true },
+      select: { id: true, saleId: true, method: true, amount: true, change: true },
     })
-    for (const p of lote) pagos.push({ metodo: p.method, monto: num(p.amount), vuelto: num(p.change) })
+    // Lo devuelto en dinero de una venta baja sus cobros (en proporción a lo que cada medio pagó), igual que en «ventas por medio».
+    const ventasDelLote = [...new Set(lote.map((p) => p.saleId))]
+    const devueltas = await leerDevolucionesDeVentas(db, ventasDelLote)
+    for (const idVenta of ventasDelLote) {
+      const todos = await db.payment.findMany({ where: { saleId: idVenta }, orderBy: { id: 'asc' }, select: { id: true, method: true, amount: true, change: true } })
+      const netos = pagosTrasDevoluciones(todos.map((p) => ({ metodo: p.method, monto: num(p.amount), vuelto: num(p.change) })), devueltas.get(idVenta))
+      const porId = new Map(todos.map((p, i) => [p.id, netos[i]!]))
+      for (const p of lote.filter((x) => x.saleId === idVenta)) {
+        const n = porId.get(p.id)!
+        pagos.push({ metodo: n.metodo, monto: n.monto, vuelto: n.vuelto })
+      }
+    }
     if (lote.length < LOTE) break
     cursor = lote[lote.length - 1]!.id
   }

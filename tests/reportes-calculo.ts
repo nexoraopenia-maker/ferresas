@@ -45,7 +45,7 @@ check('totales: 3 ventas, 187.00, IGV 27.00, descuentos 5.00', p1.totales.ventas
 check('por semana: la semana se llama por su lunes', ventasPorPeriodo(vs, 'semana', LIMA, g('2026-10-20', '2026-10-30', 'semana')).filas.map((f) => f.clave).join() === '2026-10-19,2026-10-26')
 check('por mes: una venta del 31/10 23:30 de Lima va a octubre', ventasPorPeriodo([venta({ completedAt: new Date('2026-11-01T04:30:00Z') })], 'mes', LIMA, g('2026-10-01', '2026-11-05', 'mes')).filas[0]!.ventas === 1)
 check('>>> una venta fuera de los grupos no se pierde: se cuenta (el total no miente)', ventasPorPeriodo([venta({ completedAt: new Date('2026-12-15T15:00:00Z'), total: 7 })], 'dia', LIMA, g('2026-10-25', '2026-10-26')).totales.total === 7)
-check('sin ventas: todo en cero y sin NaN', JSON.stringify(ventasPorPeriodo([], 'dia', LIMA, g('2026-10-25', '2026-10-26')).totales) === JSON.stringify({ ventas: 0, total: 0, igv: 0, descuentos: 0, ticketPromedio: 0 }))
+check('sin ventas: todo en cero y sin NaN', JSON.stringify(ventasPorPeriodo([], 'dia', LIMA, g('2026-10-25', '2026-10-26')).totales) === JSON.stringify({ ventas: 0, total: 0, igv: 0, descuentos: 0, ticketPromedio: 0, devuelto: 0 }))
 
 console.log('\nC) Por vendedor')
 const nombres = new Map([['u1', 'Ana'], ['u2', 'Beto'], ['u3', '=HYPERLINK("http://x","clic")']])

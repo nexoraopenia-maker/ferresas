@@ -15,6 +15,9 @@ import { exportarCostosCsv, informeAbc, informeInventario, informeMargen } from 
 import { exportarRegistroCsv, informeRegistroCompras, informeRegistroVentas } from '../src/features/registros/registro-service'
 import { exportarConciliacionCsv, informeConciliacion } from '../src/features/conciliacion/conciliacion-service'
 import { listarAuditoria, personasParaFiltro } from '../src/features/auditoria/service'
+import { resumenDeVentas } from '../src/features/dashboard/service'
+import { devolverProductosVenta } from '../src/features/devoluciones/parcial-service'
+import { devolverProductosSchema } from '../src/features/devoluciones/schemas'
 import { parametrosCostosSchema, parametrosVentasSchema } from '../src/features/reportes/schemas'
 import { parametrosRegistrosSchema } from '../src/features/registros/schemas'
 import { parametrosAuditoriaSchema } from '../src/features/auditoria/schemas'
@@ -213,6 +216,32 @@ async function cuerpo() {
   check('>>> el ÚNICO archivo de reportes, registros, conciliación y auditoría que lee costos es `rentabilidad-service.ts`, que exige `productos.ver_costo`', costeadores.length === 1 && costeadores[0]!.endsWith('rentabilidad-service.ts') && /function exigirCostos\(ctx: TenantContext\): void \{ exigir\(ctx, 'productos\.ver_costo'\) \}/.test(readFileSync(costeadores[0]!, 'utf8')), costeadores.join())
   const acciones = readFileSync('src/features/compras/actions.ts', 'utf8')
   check('la acción de completar documento valida con su esquema y no decide permisos (los decide el servicio con `compras.registrar`)', acciones.includes('completarDocumentoSchema.safeParse') && /export async function completarDocumento[\s\S]*?completarDocumento as runCompletar|runCompletar\(db, ctx, p\.data\)/.test(acciones) && /export async function completarDocumento\([\s\S]*?\n\}/.exec(acciones)![0].indexOf('puede(') < 0 && /export async function completarDocumento[\s\S]*?exigir\(ctx, 'compras\.registrar'\)/.test(readFileSync('src/features/compras/service.ts', 'utf8')))
+
+  console.log('\nG) Con devoluciones PARCIALES activas (F6.2): ni un costo se escapa por `reportes.ver`')
+  // Una venta de 4 unidades con el costo centinela; se devuelve 1 sana (a stock) y 1 dañada (a merma).
+  const ventaP = await prisma.sale.create({ data: { tenantId: A.t.id, branchId: A.b1.branch.id, warehouseId: A.b1.warehouse.id, userId: A.u.OWNER!.userId, number: 'V-A-P', documentType: 'NOTA_VENTA', status: 'COMPLETADA', subtotal: 338.98, taxTotal: 61.02, total: 400, completedAt: new Date('2026-10-23T15:00:00Z') } })
+  const itemP = await prisma.saleItem.create({ data: { tenantId: A.t.id, saleId: ventaP.id, productId: dA.prod.id, nameSnapshot: dA.prod.name, skuSnapshot: dA.prod.sku, quantity: 4, unitPrice: 100, taxRate: 0.18, unitCost: COSTO_PRODUCTO, lineTotal: 400 } })
+  await prisma.payment.create({ data: { tenantId: A.t.id, saleId: ventaP.id, userId: A.u.OWNER!.userId, method: 'EFECTIVO', amount: 400, receivedAt: new Date('2026-10-23T15:00:00Z') } })
+  const dueno = A.u.OWNER!
+  for (const destination of ['STOCK', 'MERMA'] as const) {
+    await devolverProductosVenta(db(dueno), dueno, devolverProductosSchema.parse({ saleId: ventaP.id, reason: 'Prueba de seguridad', lines: [{ saleItemId: itemP.id, quantity: 1, destination }], idempotencyKey: randomUUID(), refunds: [{ mode: 'EXTERNO', method: 'YAPE', amount: 100 }] }))
+  }
+  check('(preparación) la venta tiene 2 devoluciones parciales (una a stock y una dañada) y sigue COMPLETADA', (await prisma.saleReturn.count({ where: { saleId: ventaP.id } })) === 2 && (await prisma.sale.findUniqueOrThrow({ where: { id: ventaP.id } })).status === 'COMPLETADA')
+  for (const [i, c] of [sinCosto, cajeroVeReportes].entries()) {
+    const out = { ...(await salidas(c)), dashboard: await resumenDeVentas(db(c), c, AHORA).catch(() => null) }
+    const texto = JSON.stringify(out)
+    const claves = [...texto.matchAll(/"([A-Za-z_]+)":/g)].map((m) => m[1]!)
+    const csv = Object.values(out).filter((v) => v && typeof v === 'object' && 'contenido' in (v as object)).map((v) => (v as unknown as { contenido: string }).contenido).join('\n')
+    check(`>>> ${i === 0 ? 'contador sin ver_costo' : 'cajero con reportes.ver'}: con parciales activas, el costo (37.7311) ni aparece en NINGUNA salida ni hay campos de costo, utilidad o margen`, !texto.includes(String(COSTO_PRODUCTO)) && !texto.includes('37.73') && !claves.some((k) => /^(cost|unitCost|costo|costPrice|utilidad|margen)/i.test(k)) && !/Costo|Utilidad|Margen/i.test(csv.split('\n').filter((l) => l.includes(';') && !/^\d/.test(l)).join(' ')))
+  }
+  const ventasNeto = (await informeVentasPorPeriodo(db(dueno), dueno, PV, AHORA)).datos.totales
+  check('>>> lo devuelto SÍ se resta en esas salidas (400 vendidos − 200 devueltos cuentan 200.00 de esa venta) y se informa el total devuelto', ventasNeto.devuelto === 200)
+  const mgP = await informeMargen(db(dueno), dueno, PC, AHORA)
+  const filaP = mgP.datos.filas.find((f) => f.productId === dA.prod.id)!
+  check('>>> la rentabilidad (con `productos.ver_costo`) sí usa el costo: lo dañado lo conserva y lo que volvió al stock lo resta (3 de 4 unidades siguen costando)', filaP.costo > 0 && mgP.datos.totales.costo > 0)
+  const nuevos = ['src/features/devoluciones/neto.ts', 'src/features/devoluciones/parcial.ts', 'src/features/dashboard/service.ts', 'src/features/reportes/ventas-service.ts', 'src/features/reportes/ventas-calculo.ts', 'src/features/conciliacion/conciliacion-service.ts', 'src/features/conciliacion/conciliacion-calculo.ts']
+  check('>>> el módulo compartido de devoluciones netas, el dashboard y los servicios de `reportes.ver` NO leen ni nombran costos (costPrice/unitCost)', nuevos.every((f) => !/costPrice|unitCost/.test(readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ''))))
+  check('>>> y el cliente de Prisma sin aislar no se usa en el módulo compartido', !/from '@\/lib\/prisma'/.test(readFileSync('src/features/devoluciones/neto.ts', 'utf8')))
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
   return fail

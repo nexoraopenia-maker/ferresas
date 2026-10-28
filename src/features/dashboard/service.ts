@@ -34,7 +34,9 @@ async function totalDe(db: TenantPrismaClient, r: Rango): Promise<TotalPeriodo> 
     _sum: { total: true },
     _count: { _all: true },
   })
-  const total = redondearCentimos(num(a._sum.total))
+  // Lo devuelto en parcial (F6.2) resta en el periodo de la VENTA, igual que en /reportes/ventas.
+  const dev = await db.saleReturn.aggregate({ where: { sale: { status: 'COMPLETADA', completedAt: { gte: r.desde, lt: r.hasta } } }, _sum: { returnTotal: true } })
+  const total = redondearCentimos(num(a._sum.total) - num(dev._sum.returnTotal))
   const ventas = a._count._all
   return { total, ventas, ticketPromedio: ventas > 0 ? redondearCentimos(total / ventas) : 0 }
 }
@@ -58,7 +60,7 @@ export async function resumenDeVentas(
   const zona = tenant.timezone
   const p = periodos(ahora, zona)
 
-  const [hoy, semana, mes, ventas7, top] = await Promise.all([
+  const [hoy, semana, mes, ventas7, top, devueltas7] = await Promise.all([
     totalDe(db, p.hoy),
     totalDe(db, p.semana),
     totalDe(db, p.mes),
@@ -70,9 +72,12 @@ export async function resumenDeVentas(
     db.saleItem.groupBy({
       by: ['productId', 'nameSnapshot'],
       where: { sale: { status: 'COMPLETADA', completedAt: { gte: p.mes.desde, lt: p.mes.hasta } } },
-      _sum: { quantity: true, lineTotal: true },
-      orderBy: { _sum: { lineTotal: 'desc' } },
-      take: 5,
+      _sum: { quantity: true, lineTotal: true, returnedQuantity: true, returnedAmount: true },
+    }),
+    db.saleReturn.findMany({
+      where: { sale: { status: 'COMPLETADA', completedAt: { gte: p.ultimos7.desde, lt: p.ultimos7.hasta } } },
+      select: { returnTotal: true, sale: { select: { completedAt: true } } },
+      take: 20_000,
     }),
   ])
 
@@ -83,16 +88,25 @@ export async function resumenDeVentas(
     if (porDia.has(d)) porDia.set(d, (porDia.get(d) ?? 0) + num(v.total))
   }
 
+  for (const d of devueltas7) {
+    if (!d.sale.completedAt) continue
+    const dia = diaLocal(zona, d.sale.completedAt)
+    if (porDia.has(dia)) porDia.set(dia, (porDia.get(dia) ?? 0) - num(d.returnTotal))
+  }
+
+  // Ranking NETO de lo devuelto (importe y unidades de cada producto). Se ordena aquí porque la base no ordena por una resta.
+  const netos = top.map((t) => ({
+    productId: t.productId,
+    nombre: t.nameSnapshot,
+    cantidad: Math.round((num(t._sum.quantity) - num(t._sum.returnedQuantity)) * 10_000) / 10_000,
+    total: redondearCentimos(num(t._sum.lineTotal) - num(t._sum.returnedAmount)),
+  })).sort((x, y) => y.total - x.total || (x.nombre < y.nombre ? -1 : x.nombre > y.nombre ? 1 : x.productId < y.productId ? -1 : 1))
+
   return {
     zona,
     hoy, semana, mes,
     ultimos7: p.dias7.map((dia) => ({ dia, total: redondearCentimos(porDia.get(dia) ?? 0) })),
-    topProductos: top.map((t) => ({
-      productId: t.productId,
-      nombre: t.nameSnapshot,
-      cantidad: num(t._sum.quantity),
-      total: redondearCentimos(num(t._sum.lineTotal)),
-    })),
+    topProductos: netos.slice(0, 5),
   }
 }
 

@@ -3,7 +3,7 @@ import { generarCsv } from '@/lib/csv-export'
 import { exigir } from '@/lib/puede'
 import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
-import { CODIGOS_NOTA_CREDITO_TOTAL } from '@/features/invoicing/notas'
+import { CODIGOS_NOTA_CREDITO_PARCIAL, CODIGOS_NOTA_CREDITO_TOTAL } from '@/features/invoicing/notas'
 import { modoFiscal, type ModoFiscal } from '@/features/invoicing/modo-fiscal'
 import { describirPeriodo, resolverPeriodo, type PeriodoElegido } from '@/features/reportes/periodo'
 import type { ArchivoCsv } from '@/features/reportes/ventas-service'
@@ -12,9 +12,9 @@ import { registroCompras, registroVentas } from '@/features/registros/registro-c
 import type { ParametrosRegistros } from '@/features/registros/schemas'
 import {
   ETIQUETA_PUENTE, armarInforme, cuadre, hallazgoDeCuadre, hallazgoDePuente, hallazgosDeCompras, hallazgosDeEnvio, hallazgosDeNotas, hallazgosDeNumeracion, hallazgosDeVentas,
-  hallazgosInformativos, hallazgosVentasCerradas, puenteVentas, scopeDeSerie, serieSospechosa, totalDesdeAgregados,
+  hallazgosDeNotasParciales, hallazgosInformativos, hallazgosVentasCerradas, puenteVentas, scopeDeSerie, serieSospechosa, totalDesdeAgregados,
   type AgregadoDoc, type DocAbierto, type DocVenta, type EnvioAgotado, type EstadoDoc, type Hallazgo, type InformeConciliacion, type NotaConc, type SerieConc, type TipoDoc,
-  type VentaCerrada, type VentaConc,
+  type VentaCerrada, type VentaConc, type VentaConParciales,
 } from './conciliacion-calculo'
 
 /**
@@ -57,13 +57,15 @@ export async function calcularConciliacion(db: TenantPrismaClient, p: Parametros
       orderBy: { id: 'asc' }, take: LOTE, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       select: {
         id: true, number: true, documentType: true, total: true, subtotal: true, taxTotal: true, completedAt: true,
+        saleReturns: { select: { returnTotal: true } },
         taxDocuments: { where: { documentType: { in: [...PRINCIPALES] } }, take: 1, select: { id: true, documentType: true, fullNumber: true, status: true, isTrial: true, subtotal: true, taxTotal: true, total: true, receiverDocType: true, receiverDocNumber: true, issuedAt: true } },
       },
     })
     for (const v of lote) {
       const d = v.taxDocuments[0]
       ventas.push({
-        id: v.id, numero: v.number, pide: v.documentType, total: num(v.total), base: num(v.subtotal), igv: num(v.taxTotal), completadaMs: (v.completedAt ?? ahora).getTime(),
+        id: v.id, numero: v.number, pide: v.documentType, total: num(v.total), base: num(v.subtotal), igv: num(v.taxTotal),
+        devuelto: v.saleReturns.reduce((a, r) => a + Math.round(num(r.returnTotal) * 100), 0) / 100, completadaMs: (v.completedAt ?? ahora).getTime(),
         doc: d ? { id: d.id, tipo: d.documentType as TipoDoc, numero: d.fullNumber, estado: d.status as EstadoDoc, isTrial: d.isTrial, base: num(d.subtotal), igv: num(d.taxTotal), total: num(d.total), receptorTipo: d.receiverDocType, receptorNumero: d.receiverDocNumber, emitidoMs: d.issuedAt.getTime() } satisfies DocVenta : null,
       })
     }
@@ -103,6 +105,44 @@ export async function calcularConciliacion(db: TenantPrismaClient, p: Parametros
   })
   const lineaDevueltas = { documentos: deDevueltas.length, total: deDevueltas.reduce((a, d) => a + Math.round(num(d.total) * 100), 0) / 100 }
   const brutoEmitido = totalDesdeAgregados(agregados.filter((a) => a.tipo === 'BOLETA' || a.tipo === 'FACTURA')).total
+
+  // 3b) Devoluciones PARCIALES (F6.2). (a) Las notas parciales válidas emitidas en el periodo, según la venta sea de este periodo o de otro: son
+  //     los dos desfases de fecha. (b) Por venta con comprobante real vivo: sus notas parciales deben sumar exactamente lo devuelto.
+  const notasParciales = await db.taxDocument.findMany({
+    where: { isTrial: false, documentType: 'NOTA_CREDITO', reasonCode: { in: [...CODIGOS_NOTA_CREDITO_PARCIAL] }, status: { in: ['ACEPTADO', 'OBSERVADO'] }, issuedAt: rango },
+    select: { total: true, sale: { select: { status: true, completedAt: true } } }, take: 5000,
+  })
+  const enRango = (d: Date | null) => !!d && d >= periodo.desde && d < periodo.hasta
+  const notasParcialesCent = { deVentasDelPeriodo: 0, deOtrasVentas: 0 }
+  for (const n of notasParciales) {
+    if (n.sale.status === 'COMPLETADA' && enRango(n.sale.completedAt)) notasParcialesCent.deVentasDelPeriodo += Math.round(num(n.total) * 100)
+    else notasParcialesCent.deOtrasVentas += Math.round(num(n.total) * 100)
+  }
+  const conParciales = await db.sale.findMany({
+    where: {
+      // Con alguna devolución, o con alguna nota parcial emitida en el periodo (una nota 07 SIN devolución que la respalde también es un hallazgo).
+      OR: [
+        { saleReturns: { some: {} }, completedAt: rango },
+        { saleReturns: { some: { createdAt: rango } } },
+        { taxDocuments: { some: { notes: { some: { documentType: 'NOTA_CREDITO', reasonCode: { in: [...CODIGOS_NOTA_CREDITO_PARCIAL] }, issuedAt: rango } } } } },
+      ],
+      taxDocuments: { some: { isTrial: false, documentType: { in: [...PRINCIPALES] }, status: { in: ['ACEPTADO', 'OBSERVADO'] } } },
+    },
+    orderBy: { id: 'asc' }, take: 1000,
+    select: {
+      id: true, number: true,
+      saleReturns: { select: { returnTotal: true, creditNote: { select: { reasonCode: true } } } },
+      taxDocuments: { where: { isTrial: false, documentType: { in: [...PRINCIPALES] } }, take: 1, select: { fullNumber: true, notes: { where: { documentType: 'NOTA_CREDITO', reasonCode: { in: [...CODIGOS_NOTA_CREDITO_PARCIAL] }, status: { not: 'RECHAZADO' } }, select: { total: true } } } },
+    },
+  })
+  const ventasParciales: VentaConParciales[] = conParciales.flatMap((v) => {
+    const d = v.taxDocuments[0]
+    if (!d) return []
+    // Lo que debe tener nota parcial: las devoluciones sin nota o con nota parcial (las que tienen una nota TOTAL se vigilan aparte).
+    const esperado = v.saleReturns.filter((r) => !r.creditNote || CODIGOS_NOTA_CREDITO_PARCIAL.includes(r.creditNote.reasonCode ?? '')).reduce((a, r) => a + Math.round(num(r.returnTotal) * 100), 0)
+    const notas = d.notes.reduce((a, n) => a + Math.round(num(n.total) * 100), 0)
+    return [{ id: v.id, numero: v.number, devuelto: esperado / 100, notas: notas / 100, comprobante: d.fullNumber }]
+  })
 
   // 4) Lo abierto (pendiente, enviado, rechazado) y los envíos agotados: sin importar la fecha.
   const abiertosDb = await db.taxDocument.findMany({
@@ -152,7 +192,7 @@ export async function calcularConciliacion(db: TenantPrismaClient, p: Parametros
   const indepC = gC.reduce((a, g) => a + (g.docType === 'NOTA_CREDITO' ? -1 : 1) * Math.round(num(g._sum.total) * 100), 0) / 100
 
   // 8) Armar.
-  const puente = puenteVentas(ventas, lineaDe('ANULADA'), lineaDe('DEVUELTA'))
+  const puente = puenteVentas(ventas, lineaDe('ANULADA'), lineaDe('DEVUELTA'), { deVentasDelPeriodo: notasParcialesCent.deVentasDelPeriodo / 100, deOtrasVentas: notasParcialesCent.deOtrasVentas / 100 })
   const hallazgos: Hallazgo[] = [
     hallazgoDePuente(puente, modo),
     ...hallazgosDeVentas(ventas, ahoraMs, modo),
@@ -160,6 +200,7 @@ export async function calcularConciliacion(db: TenantPrismaClient, p: Parametros
     ...hallazgosDeEnvio(abiertos, agotados, ahoraMs, modo),
     ...hallazgosDeNumeracion(series, modo),
     ...hallazgosDeNotas(notas, modo),
+    ...hallazgosDeNotasParciales(ventasParciales, modo),
     hallazgoDeCuadre('REGISTRO_VENTAS_NO_CUADRA', cuadre(registroV.totales.total, indepV.total), modo),
     hallazgoDeCuadre('REGISTRO_COMPRAS_NO_CUADRA', cuadre(registroC.totales.total, indepC), modo),
     ...hallazgosDeCompras(registroC, modo),
@@ -199,6 +240,9 @@ export function csvConciliacion(i: InformeConciliacion) {
       ['PUENTE', '', 'Diferencia sin explicar (debe ser 0)', '', '', m(p.diferencia)],
       ['PUENTE', '', 'Ventas anuladas (informativo)', `${p.anuladas.documentos} ventas`, '', m(p.anuladas.total)],
       ['PUENTE', '', 'Ventas devueltas (informativo)', `${p.devueltas.documentos} ventas`, '', m(p.devueltas.total)],
+      ['PUENTE', '', 'Devoluciones parciales de estas ventas (ya restadas de las ventas completadas)', `${p.devolucionesParciales.documentos} ventas`, '', m(p.devolucionesParciales.total)],
+      ['PUENTE', '', 'Desfase: devuelto de este periodo con la nota de crédito en otro (registro mayor)', '', '', m(p.desfaseParciales.notaFueraDelPeriodo)],
+      ['PUENTE', '', 'Desfase: notas parciales de este periodo sobre ventas de otro (registro menor)', '', '', m(-p.desfaseParciales.notasDeOtrasVentas)],
       ['CUADRE', '', 'Registro de ventas vs. cálculo independiente', '', '', m(i.cuadreVentas.diferencia)],
       ['CUADRE', '', 'Registro de compras vs. cálculo independiente', '', '', m(i.cuadreCompras.diferencia)],
     ],

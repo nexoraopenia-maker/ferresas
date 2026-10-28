@@ -43,15 +43,25 @@ async function preparar(db: TenantPrismaClient, ctx: TenantContext, p: Pick<Para
 
 /** Las líneas de las ventas COMPLETADAS del periodo (por lotes), con el nombre ACTUAL del producto (el de la venta si ya no existe). */
 async function leerLineas(db: TenantPrismaClient, periodo: Pick<PeriodoElegido, 'desde' | 'hasta'>): Promise<LineaVentaCosto[]> {
-  const crudas: { productId: string; nombre: string; sku: string; unidad: string; cantidad: number; costoUnitario: number; totalConIgv: number; tasaIgv: number }[] = []
+  const crudas: LineaVentaCosto[] = []
   let cursor: string | undefined
   for (;;) {
     const lote = await db.saleItem.findMany({
       where: { sale: { status: 'COMPLETADA', completedAt: { gte: periodo.desde, lt: periodo.hasta } } },
       orderBy: { id: 'asc' }, take: LOTE, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      select: { id: true, productId: true, nameSnapshot: true, skuSnapshot: true, unitType: true, quantity: true, unitCost: true, lineTotal: true, taxRate: true },
+      select: {
+        id: true, productId: true, nameSnapshot: true, skuSnapshot: true, unitType: true, quantity: true, unitCost: true, lineTotal: true, taxRate: true,
+        // Lo devuelto de la línea (F6.2): cuánto, su base y a dónde fue (stock vendible o merma).
+        returnItems: { select: { quantity: true, subtotal: true, destination: true } },
+      },
     })
-    for (const l of lote) crudas.push({ productId: l.productId, nombre: l.nameSnapshot, sku: l.skuSnapshot, unidad: l.unitType, cantidad: num(l.quantity), costoUnitario: num(l.unitCost), totalConIgv: num(l.lineTotal), tasaIgv: num(l.taxRate) })
+    for (const l of lote) {
+      const devuelta = l.returnItems.length === 0 ? undefined : l.returnItems.reduce((a, r) => {
+        const q = Math.round(num(r.quantity) * 10_000)
+        return { cantidadM: a.cantidadM + q, cantidadStockM: a.cantidadStockM + (r.destination === 'STOCK' ? q : 0), baseCent: a.baseCent + Math.round(num(r.subtotal) * 100) }
+      }, { cantidadM: 0, cantidadStockM: 0, baseCent: 0 })
+      crudas.push({ productId: l.productId, nombre: l.nameSnapshot, sku: l.skuSnapshot, unidad: l.unitType, cantidad: num(l.quantity), costoUnitario: num(l.unitCost), totalConIgv: num(l.lineTotal), tasaIgv: num(l.taxRate), ...(devuelta ? { devuelta } : {}) })
+    }
     if (lote.length < LOTE) break
     cursor = lote[lote.length - 1]!.id
   }

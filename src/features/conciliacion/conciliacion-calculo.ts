@@ -27,6 +27,7 @@ export const CODIGOS = [
   'COMPROBANTE_VIVO_EN_VENTA_CERRADA', 'FACTURA_SIN_RUC', 'COMPROBANTE_PENDIENTE', 'COMPROBANTE_RECHAZADO', 'ENVIO_AGOTADO', 'SERIE_CON_HUECOS',
   'CONTADOR_ATRASADO', 'CONTADOR_ADELANTADO', 'NOTA_EXCEDE_ORIGINAL', 'NOTA_DE_OTRA_VENTA', 'COMPRAS_PROVISIONALES', 'COMPRAS_PROVEEDOR_SIN_RUC',
   'COMPRAS_SIN_PROVEEDOR', 'DIFERENCIA_DE_FECHAS', 'COMPROBANTES_DE_VENTAS_DEVUELTAS', 'VENTAS_ANULADAS_O_DEVUELTAS', 'MODO_SIN_VALOR_FISCAL',
+  'NOTAS_PARCIALES_NO_CUADRAN', 'DEVOLUCIONES_PARCIALES_ENTRE_PERIODOS',
 ] as const
 export type CodigoHallazgo = (typeof CODIGOS)[number]
 
@@ -89,9 +90,12 @@ export interface VentaConc {
   numero: string
   /** Lo que se pidió al vender (NOTA_VENTA, BOLETA, FACTURA…). */
   pide: string
+  /** Lo que dice la venta (y copió su comprobante): BRUTO, sin descontar devoluciones. */
   total: number
   base: number
   igv: number
+  /** Lo que sus devoluciones parciales (F6.2) restaron del total. El puente cuenta la venta por `total − devuelto`, como /reportes/ventas. */
+  devuelto?: number
   completadaMs: number
   /** El comprobante principal (boleta o factura) de la venta, si ya se emitió. */
   doc: DocVenta | null
@@ -114,6 +118,20 @@ export interface PuenteVentas {
   /** Anuladas y devueltas del periodo: no suman en ventas completadas. */
   anuladas: LineaPuente
   devueltas: LineaPuente
+  /**
+   * Devoluciones PARCIALES (F6.2) de las ventas del periodo: ya están restadas de `ventasCompletadas` y de la clasificación (que cuentan lo NETO).
+   * `documentos` = ventas con alguna; `total` = lo devuelto. `enValidos` = la parte de ventas con comprobante aceptado u observado.
+   */
+  devolucionesParciales: LineaPuente & { enValidos: number }
+  /**
+   * Los dos desfases de fecha de las notas parciales, que explican por qué el registro (que resta cada nota el día en que se EMITE) difiere
+   * de las ventas (que restan lo devuelto en el periodo de la VENTA):
+   *  · `notaFueraDelPeriodo`: devuelto de ventas de este periodo cuya nota válida NO se emitió en este periodo (se emitirá o se emitió en otro,
+   *    o está pendiente/rechazada). Hace al registro MAYOR que las ventas netas.
+   *  · `notasDeOtrasVentas`: notas parciales válidas emitidas en este periodo sobre ventas que NO son de este periodo (anteriores, o ya devueltas
+   *    del todo). Hacen al registro MENOR.
+   */
+  desfaseParciales: { notaFueraDelPeriodo: number; notasDeOtrasVentas: number }
 }
 
 export const ETIQUETA_PUENTE = { valido: 'Con comprobante aceptado u observado', pendiente: 'Con comprobante pendiente o enviado', rechazado: 'Con comprobante rechazado', anulado: 'Con comprobante anulado', ensayo: 'Con comprobante de ensayo', sinComprobante: 'Piden comprobante y no lo tienen' } as const
@@ -121,12 +139,21 @@ export const ETIQUETA_PUENTE = { valido: 'Con comprobante aceptado u observado',
 const cero = (): { n: number; t: number } => ({ n: 0, t: 0 })
 const linea = (a: { n: number; t: number }): LineaPuente => ({ documentos: a.n, total: s(a.t) })
 
-export function puenteVentas(ventas: readonly VentaConc[], anuladas: LineaPuente, devueltas: LineaPuente): PuenteVentas {
+export function puenteVentas(
+  ventas: readonly VentaConc[], anuladas: LineaPuente, devueltas: LineaPuente,
+  /** Notas parciales válidas emitidas en el periodo: sobre ventas del periodo y sobre las de otros periodos (soles). Sin ellas el desfase sale 0. */
+  notasParciales: { deVentasDelPeriodo: number; deOtrasVentas: number } = { deVentasDelPeriodo: 0, deOtrasVentas: 0 },
+): PuenteVentas {
   const total = cero(), nv = cero(), con = cero()
   const k = { valido: cero(), pendiente: cero(), rechazado: cero(), anulado: cero(), ensayo: cero(), sinComprobante: cero() }
   const suma = (a: { n: number; t: number }, t: number) => { a.n++; a.t += t }
+  const parcial = cero()
+  let parcialEnValidos = 0
   for (const v of ventas) {
-    const t = c(v.total)
+    const dev = c(v.devuelto ?? 0)
+    // La venta cuenta por lo que quedó tras sus devoluciones parciales: así el puente PARTE del total de /reportes/ventas.
+    const t = c(v.total) - dev
+    if (dev > 0) { parcial.n++; parcial.t += dev; if (v.doc && !v.doc.isTrial && VALIDOS.includes(v.doc.estado)) parcialEnValidos += dev }
     suma(total, t)
     if (v.doc) {
       suma(con, t)
@@ -145,6 +172,8 @@ export function puenteVentas(ventas: readonly VentaConc[], anuladas: LineaPuente
     ventasCompletadas: linea(total), notasDeVenta: linea(nv), conComprobante: linea(con),
     clasificacion: { valido: linea(k.valido), pendiente: linea(k.pendiente), rechazado: linea(k.rechazado), anulado: linea(k.anulado), ensayo: linea(k.ensayo), sinComprobante: linea(k.sinComprobante) },
     diferencia: s(con.t - clasificado), anuladas, devueltas,
+    devolucionesParciales: { ...linea(parcial), enValidos: s(parcialEnValidos) },
+    desfaseParciales: { notaFueraDelPeriodo: s(parcialEnValidos - c(notasParciales.deVentasDelPeriodo)), notasDeOtrasVentas: notasParciales.deOtrasVentas },
   }
 }
 
@@ -337,6 +366,30 @@ export function hallazgosDeNotas(notas: readonly NotaConc[], modo: ModoFiscal): 
   return out
 }
 
+// ─── Notas parciales ↔ lo devuelto (F6.2) ───────────────────────────────────────────────────────────────────────────────
+
+export interface VentaConParciales {
+  id: string
+  numero: string
+  /** Σ de las devoluciones de la venta que deben tener nota parcial (soles). */
+  devuelto: number
+  /** Σ de las notas de crédito parciales NO rechazadas de su comprobante (soles). */
+  notas: number
+  comprobante: string
+}
+
+/**
+ * Una venta con comprobante REAL aceptado u observado debe tener notas de crédito parciales que sumen EXACTAMENTE lo devuelto (acumulado):
+ * una devolución sin nota deja el comprobante vigente por de más (declaras ventas que ya no existen) y una nota de más no tiene respaldo.
+ */
+export function hallazgosDeNotasParciales(ventas: readonly VentaConParciales[], modo: ModoFiscal, enlaceVenta: (id: string) => string | null = (id) => `/ventas/${id}`): Hallazgo[] {
+  const mal = ventas.filter((v) => c(v.devuelto) !== c(v.notas))
+  if (!mal.length) return []
+  return [hallazgo('NOTAS_PARCIALES_NO_CUADRAN', tope('ERROR', modo), 'Devoluciones parciales cuyas notas de crédito no suman lo devuelto',
+    'Cada devolución de una venta con comprobante real debe tener su nota de crédito parcial, y juntas deben sumar exactamente lo devuelto. El importe es la diferencia (notas − devuelto).',
+    mal.map((v) => ({ referencia: v.comprobante, detalle: `La venta ${v.numero} devolvió ${v.devuelto.toFixed(2)} y sus notas parciales suman ${v.notas.toFixed(2)}`, importe: s(c(v.notas) - c(v.devuelto)), enlace: enlaceVenta(v.id) })))]
+}
+
 // ─── Cuadre con los registros ───────────────────────────────────────────────────────────────────────────────────────
 
 export interface AgregadoDoc { tipo: TipoDoc; estado: EstadoDoc; documentos: number; base: number; igv: number; total: number }
@@ -400,6 +453,7 @@ export function hallazgosInformativos(
   /** Boletas y facturas válidas EMITIDAS en el periodo cuya venta ya se anuló o devolvió (F6.1): no están en las ventas completadas. */
   deVentasDevueltas: LineaPuente = { documentos: 0, total: 0 },
 ): Hallazgo[] {
+  const parciales = p.devolucionesParciales
   const out: Hallazgo[] = []
   if (sinValorFiscal(modo)) {
     out.push(sinSuma('MODO_SIN_VALOR_FISCAL', 'INFO', modo === 'DEMO' ? 'Cuenta de demostración' : 'Facturación electrónica real sin habilitar',
@@ -411,10 +465,21 @@ export function hallazgosInformativos(
     out.push(sinSuma('COMPROBANTES_DE_VENTAS_DEVUELTAS', 'INFO', 'Comprobantes de ventas anuladas o devueltas',
       `${deVentasDevueltas.documentos} comprobante${deVentasDevueltas.documentos === 1 ? '' : 's'} válido${deVentasDevueltas.documentos === 1 ? '' : 's'} emitido${deVentasDevueltas.documentos === 1 ? '' : 's'} en el periodo (${deVentasDevueltas.total.toFixed(2)}) cuya venta ya se anuló o devolvió: siguen sumando en el registro y su nota de crédito los compensa. Si alguno no tiene nota, aparece como error aparte.`, deVentasDevueltas.documentos))
   }
-  const dif = s(c(brutoEmitidoEnPeriodo) - c(p.clasificacion.valido.total) - c(deVentasDevueltas.total))
+  // Los válidos del puente son NETOS de las devoluciones parciales; el comprobante emitido es el BRUTO: se compara contra el válido bruto.
+  const dif = s(c(brutoEmitidoEnPeriodo) - c(p.clasificacion.valido.total) - c(parciales.enValidos) - c(deVentasDevueltas.total))
   if (dif !== 0) out.push(hallazgo('DIFERENCIA_DE_FECHAS', 'INFO', 'Comprobantes emitidos en otro periodo que su venta',
     'Una venta del periodo cuyo comprobante se emitió después (o antes) hace que las ventas y el registro difieran sin ser un error. Se explica la diferencia, no se corrige.',
     [{ referencia: 'Ventas con comprobante válido', detalle: `Por fecha de venta ${p.clasificacion.valido.total.toFixed(2)} · por fecha de emisión ${brutoEmitidoEnPeriodo.toFixed(2)}`, importe: dif, enlace: null }]))
+  // Devoluciones parciales: ya restadas de las ventas; el registro resta la nota el día en que se emite. Se explican las dos diferencias de fecha.
+  const ds = p.desfaseParciales
+  if (parciales.documentos > 0 || ds.notasDeOtrasVentas !== 0 || ds.notaFueraDelPeriodo !== 0) {
+    out.push(hallazgo('DEVOLUCIONES_PARCIALES_ENTRE_PERIODOS', 'INFO', 'Devoluciones parciales: la venta y su nota de crédito pueden caer en periodos distintos',
+      `Las ventas restan lo devuelto en el periodo de la VENTA (${parciales.documentos} venta${parciales.documentos === 1 ? '' : 's'} con devoluciones parciales, ${parciales.total.toFixed(2)}); el registro resta cada nota de crédito el día en que se EMITE. De ahí dos diferencias legítimas, que no son un error.`,
+      [
+        { referencia: 'Devuelto de ventas del periodo con la nota en otro periodo (o sin aceptar)', detalle: 'Hace al registro MAYOR que las ventas netas', importe: ds.notaFueraDelPeriodo, enlace: null },
+        { referencia: 'Notas parciales de este periodo sobre ventas de otro periodo', detalle: 'Hacen al registro MENOR que las ventas netas', importe: s(-c(ds.notasDeOtrasVentas)), enlace: null },
+      ]))
+  }
   const cerradas = p.anuladas.documentos + p.devueltas.documentos
   if (cerradas > 0) out.push(sinSuma('VENTAS_ANULADAS_O_DEVUELTAS', 'INFO', 'Ventas anuladas o devueltas del periodo',
     `No suman en las ventas completadas: ${p.anuladas.documentos} anulada${p.anuladas.documentos === 1 ? '' : 's'} (${p.anuladas.total.toFixed(2)}) y ${p.devueltas.documentos} devuelta${p.devueltas.documentos === 1 ? '' : 's'} (${p.devueltas.total.toFixed(2)}). Aparte se comprueba que ninguna conserve un comprobante vivo.`, cerradas))
