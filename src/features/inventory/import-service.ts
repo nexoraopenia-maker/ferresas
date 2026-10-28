@@ -49,6 +49,8 @@ export interface FilaAnalizada {
     costPrice: number | null
     stock: number
     minStock: number | null
+    /** `null` = el archivo no dice nada: al actualizar NO se toca el máximo actual. */
+    maxStock: number | null
   }
 }
 
@@ -163,12 +165,21 @@ export async function analyzeImport(
     )
   }
 
+  // Fijar el nivel objetivo de reposición es `reposicion.configurar`: un archivo con la columna solo lo importa quien puede configurarla. Se rechaza el archivo entero
+  // (y no la columna en silencio) para que nadie crea que el máximo quedó cargado.
+  if (columnas.indices.maxStock !== undefined && !puede(ctx, 'reposicion.configurar')) {
+    bloqueos.push(
+      'El archivo trae una columna de máximo y no tienes permiso para configurar la reposición. ' +
+        'Quita esa columna e inténtalo de nuevo.',
+    )
+  }
+
   // --- Productos existentes, en UNA consulta ----------------------------
   // Traer el catálogo de golpe y cruzar en memoria. Con dos mil filas, una
   // consulta por fila serían dos mil viajes a la base.
   const existentes = bloqueos.length > 0 ? [] : await db.product.findMany({
     where: { deletedAt: null },
-    select: { id: true, sku: true, barcode: true, name: true, salePrice: true },
+    select: { id: true, sku: true, barcode: true, name: true, salePrice: true, minStock: true },
   })
   const porBarcode = new Map(
     existentes.filter((p) => p.barcode).map((p) => [p.barcode!, p]),
@@ -243,6 +254,12 @@ export async function analyzeImport(
     const minRaw = parseAmount(col(fila, 'minStock'), 'quantity')
     const minStock = minRaw !== null && minRaw >= 0 ? redondear(minRaw) : null
 
+    // El nivel objetivo de la reposición (F6.6b). Vacío = no se toca; un número negativo o ilegible se ignora con aviso.
+    const maxRaw = parseAmount(col(fila, 'maxStock'), 'quantity')
+    if (col(fila, 'maxStock')?.trim() && maxRaw === null) avisos.push('El máximo no es un número; se ignora.')
+    const maxStock = maxRaw !== null && maxRaw >= 0 ? redondear(maxRaw) : null
+    if (maxStock !== null && minStock !== null && maxStock < minStock) errores.push('El máximo no puede ser menor que el mínimo.')
+
     const unidadTexto = col(fila, 'unitType')
     let unitType = normalizeUnit(unidadTexto)
     if (unidadTexto?.trim() && unitType === null) {
@@ -300,6 +317,11 @@ export async function analyzeImport(
       }
     }
 
+    // Con un máximo y sin mínimo en el archivo, el mínimo que rige es el que el producto ya tiene.
+    if (existente && maxStock !== null && minStock === null && maxStock < Number(existente.minStock)) {
+      errores.push(`El máximo (${maxStock}) es menor que el mínimo actual del producto (${Number(existente.minStock)}).`)
+    }
+
     if (existente && existente.name !== name) {
       avisos.push(`Renombra «${existente.name}» a «${name}».`)
     }
@@ -324,7 +346,7 @@ export async function analyzeImport(
       datos: {
         name, sku, barcode, qrCode, unitType,
         salePrice: salePrice ?? 0,
-        costPrice, stock, minStock,
+        costPrice, stock, minStock, maxStock,
       },
     })
   }
@@ -401,6 +423,13 @@ export async function commitImport(
   if (!puede(ctx, 'productos.ver_costo') && importables.some((f) => f.datos.costPrice !== null)) {
     throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para cargar costos.')
   }
+  // El máximo es de `reposicion.configurar`, y no puede quedar por debajo del mínimo (el análisis llega del cliente: se vuelve a comprobar).
+  if (importables.some((f) => f.datos.maxStock !== null)) {
+    if (!puede(ctx, 'reposicion.configurar')) throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para configurar la reposición (máximos).')
+    if (importables.some((f) => f.datos.maxStock !== null && (!(f.datos.maxStock >= 0) || (f.datos.minStock !== null && f.datos.maxStock < f.datos.minStock)))) {
+      throw new BusinessError('INVALID_DOCUMENT', 'Hay un máximo negativo o menor que su mínimo.')
+    }
+  }
   if (!puede(ctx, 'productos.editar_precio')) {
     const catalogo = await db.product.findMany({
       where: { deletedAt: null },
@@ -470,7 +499,10 @@ export async function commitImport(
             : null)
 
         if (existente) {
-          const antes = await t.product.findUniqueOrThrow({ where: { id: existente.id }, select: { barcode: true, qrCode: true } })
+          const antes = await t.product.findUniqueOrThrow({ where: { id: existente.id }, select: { barcode: true, qrCode: true, minStock: true } })
+          if (d.maxStock !== null && d.maxStock < (d.minStock ?? Number(antes.minStock))) {
+            throw new BusinessError('INVALID_DOCUMENT', `El máximo (${d.maxStock}) de «${d.name}» es menor que su mínimo (${d.minStock ?? Number(antes.minStock)}).`)
+          }
           const despues = await t.product.update({
             where: { id: existente.id },
             data: {
@@ -479,6 +511,7 @@ export async function commitImport(
               // Solo lo que el archivo dice: un campo ausente no se pone a 0.
               ...(d.costPrice !== null ? { costPrice: d.costPrice } : {}),
               ...(d.minStock !== null ? { minStock: d.minStock } : {}),
+              ...(d.maxStock !== null ? { maxStock: d.maxStock } : {}),
               ...(d.unitType !== null ? { unitType: d.unitType as 'UNIDAD' } : {}),
               // barcode y qrCode solo se RELLENAN si faltaban: sobreescribir
               // el código de un producto ya etiquetado rompería su escaneo.
@@ -506,6 +539,7 @@ export async function commitImport(
             salePrice: d.salePrice,
             costPrice: d.costPrice ?? 0,
             minStock: d.minStock ?? 0,
+            maxStock: d.maxStock,
           },
           select: { id: true },
         })

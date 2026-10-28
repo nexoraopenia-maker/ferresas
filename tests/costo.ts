@@ -96,6 +96,8 @@ async function main() {
     'src/features/devoluciones/service.ts',
     // Devolución parcial (F6.2): igual que la total, copia el costo de venta de la línea a los movimientos (reposición y, si va dañada, merma) como traza.
     'src/features/devoluciones/parcial-service.ts',
+    // Reporte de reposición (F6.6b): lee el costo SOLO si la persona tiene productos.ver_costo, para el valor estimado del pedido; sin ese permiso la respuesta no trae claves de costo (lo prueba `reposicion-reporte`).
+    'src/features/inventory/reposicion-reporte.ts',
     'src/features/inventory/stock-service.ts',
     'src/features/inventory/product-service.ts',
     'src/features/inventory/import-service.ts',

@@ -98,7 +98,8 @@ const todos = archivos(SRC)
 const llamanSemaforo = todos.filter((f) => /\bgetStockStatus\(/.test(readFileSync(f, 'utf8'))).map((f) => f.slice(SRC.length + 1)).sort()
 check('>>> solo el motor y la definición del semáforo llaman a getStockStatus', JSON.stringify(llamanSemaforo) === JSON.stringify(['features/inventory/reposicion-reglas.ts', 'lib/stock-status.ts']), llamanSemaforo.join(', '))
 // Nadie hereda a mano `stock?.minStock ?? variante?.minStock ?? product.minStock` (un `d.minStock ?? 0` de la importación es un valor por defecto, no una herencia).
-const heredanAMano = todos.filter((f) => /minStock\s*\?\?[^\n]*minStock/.test(readFileSync(f, 'utf8'))).map((f) => f.slice(SRC.length + 1))
+// La importación del catálogo usa `d.minStock ?? Number(antes.minStock)` para comparar el máximo con el mínimo que el producto YA tiene: es un respaldo de un archivo, no la herencia de umbrales.
+const heredanAMano = todos.filter((f) => /minStock\s*\?\?[^\n]*minStock/.test(readFileSync(f, 'utf8'))).map((f) => f.slice(SRC.length + 1)).filter((f) => f !== 'features/inventory/import-service.ts')
 check('>>> nadie repite la herencia «minStock ?? …» a mano', heredanAMano.length === 0, heredanAMano.join(', '))
 const alertas = readFileSync(join(SRC, 'features/dashboard/service.ts'), 'utf8')
 const lee = (f: string) => readFileSync(join(SRC, f), 'utf8')

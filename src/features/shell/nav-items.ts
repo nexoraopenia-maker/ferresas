@@ -76,6 +76,14 @@ export const NAV_ITEMS: NavItem[] = [
     permisos: ['conteo.registrar', 'conteo.gestionar', 'stock.ajustar'],
   },
   {
+    href: '/inventario/reposicion',
+    label: 'Reposición sugerida',
+    short: 'Reponer',
+    // Flechas en ciclo
+    icon: 'M4 4v5h5M20 20v-5h-5M5.6 15a7 7 0 0 0 12.3 2M18.4 9A7 7 0 0 0 6.1 7',
+    permisos: ['reposicion.ver'],
+  },
+  {
     href: '/inventario/kardex',
     label: 'Kardex',
     short: 'Kardex',

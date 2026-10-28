@@ -313,6 +313,11 @@ function Fila({ f }: { f: FilaAnalizada }) {
             mín {formatQuantity(f.datos.minStock, f.datos.unitType ?? 'UNIDAD')}
           </span>
         )}
+        {f.datos.maxStock !== null && (
+          <span className="block text-xs text-ink-muted">
+            máx {formatQuantity(f.datos.maxStock, f.datos.unitType ?? 'UNIDAD')}
+          </span>
+        )}
       </td>
       <td className="px-3 py-2">
         {f.estado === 'crear' && (

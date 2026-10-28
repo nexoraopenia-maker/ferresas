@@ -161,6 +161,7 @@ const ALIAS: Record<string, string[]> = {
   costPrice: ['costo', 'precio costo', 'precio de costo', 'p. costo', 'costprice', 'compra'],
   stock: ['stock', 'cantidad', 'existencia', 'existencias', 'inventario', 'saldo'],
   minStock: ['minimo', 'mínimo', 'stock minimo', 'stock mínimo', 'min', 'minstock', 'alerta'],
+  maxStock: ['maximo', 'máximo', 'stock maximo', 'stock máximo', 'max', 'maxstock'],
 }
 
 export interface ColumnMap {

@@ -51,6 +51,7 @@ export const ACCIONES: Readonly<Record<string, { categoria: Categoria; etiqueta:
   'proveedor.pago': { categoria: CP, etiqueta: 'Pago a proveedor' },
   'proveedor.pago_anulado': { categoria: CP, etiqueta: 'Pago a proveedor anulado' },
   'stock.adjust': { categoria: IN, etiqueta: 'Stock ajustado' },
+  'reposicion.umbrales': { categoria: IN, etiqueta: 'Cambiaron mínimos o máximos de reposición' },
   'stock.completar_costo': { categoria: IN, etiqueta: 'Costo pendiente completado' },
   'merma.solicitar': { categoria: IN, etiqueta: 'Merma solicitada' },
   'product.create.express': { categoria: IN, etiqueta: 'Producto creado desde el mostrador' },

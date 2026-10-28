@@ -38,7 +38,10 @@ export default async function AlertasPage() {
             Lo agotado primero. Registra lo que llegó o pídelo a otra sucursal.
           </p>
         </div>
-        <Link href="/panel" className="text-sm font-semibold text-industrial-700 dark:text-industrial-300">← Panel</Link>
+        <div className="flex flex-wrap items-center gap-3 text-sm font-semibold">
+          {puede(ctx, 'reposicion.ver') && <Link href="/inventario/reposicion" data-alertas="reposicion" className="text-industrial-700 dark:text-industrial-300">Reposición sugerida →</Link>}
+          <Link href="/panel" className="text-industrial-700 dark:text-industrial-300">← Panel</Link>
+        </div>
       </header>
 
       <AlertasStockWidget agotados={alertas.agotados} criticos={alertas.criticos} items={alertas.items} completo />
