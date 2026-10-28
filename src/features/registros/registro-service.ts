@@ -35,8 +35,8 @@ async function preparar(db: TenantPrismaClient, ctx: TenantContext, p: Parametro
   }
 }
 
-export async function informeRegistroVentas(db: TenantPrismaClient, ctx: TenantContext, p: ParametrosRegistros, ahora: Date = new Date()): Promise<InformeRegistro<RegistroVentas>> {
-  const { zona, periodo } = await preparar(db, ctx, p, ahora)
+/** Lee los comprobantes del periodo (sin comprobar permisos: lo hace quien llama). Lo comparten el registro y la conciliación fiscal. */
+export async function leerComprobantes(db: TenantPrismaClient, zona: string, periodo: Pick<PeriodoElegido, 'desde' | 'hasta'>): Promise<ComprobanteVenta[]> {
   const docs: ComprobanteVenta[] = []
   let cursor: string | undefined
   for (;;) {
@@ -58,22 +58,26 @@ export async function informeRegistroVentas(db: TenantPrismaClient, ctx: TenantC
     if (lote.length < LOTE) break
     cursor = lote[lote.length - 1]!.id
   }
-  return { periodo, zona, textoPeriodo: describirPeriodo(periodo), datos: registroVentas(docs) }
+  return docs
 }
 
-export async function informeRegistroCompras(db: TenantPrismaClient, ctx: TenantContext, p: ParametrosRegistros, ahora: Date = new Date()): Promise<InformeRegistro<RegistroCompras>> {
-  const { zona, periodo } = await preparar(db, ctx, p, ahora)
+/** El predicado de «compras del periodo»: con documento manda su emisión (un día); sin él, la recepción (provisional). */
+export function filtroComprasDelPeriodo(periodo: PeriodoElegido, branchIds?: readonly string[]) {
   const desdeDia = new Date(`${periodo.desdeDia}T00:00:00.000Z`), hastaDia = new Date(`${sumarDiasDia(periodo.hastaDia, 1)}T00:00:00.000Z`)
+  return {
+    status: 'RECIBIDA' as const,
+    OR: [{ issueDate: { gte: desdeDia, lt: hastaDia } }, { issueDate: null, receivedAt: { gte: periodo.desde, lt: periodo.hasta } }],
+    ...(branchIds ? { warehouse: { branchId: { in: [...branchIds] } } } : {}),
+  }
+}
+
+/** Lee las compras del periodo (sin comprobar permisos). Se acota por las sucursales dadas: las compras no se acotan solas. */
+export async function leerCompras(db: TenantPrismaClient, zona: string, periodo: PeriodoElegido, branchIds?: readonly string[]): Promise<CompraRegistrable[]> {
   const compras: CompraRegistrable[] = []
   let cursor: string | undefined
   for (;;) {
     const lote = await db.purchase.findMany({
-      where: {
-        status: 'RECIBIDA',
-        // Con documento: manda su fecha de emisión (un DÍA). Sin documento: la de recepción (un instante), como fecha provisional.
-        OR: [{ issueDate: { gte: desdeDia, lt: hastaDia } }, { issueDate: null, receivedAt: { gte: periodo.desde, lt: periodo.hasta } }],
-        ...(ctx.branchIds ? { warehouse: { branchId: { in: [...ctx.branchIds] } } } : {}),
-      },
+      where: filtroComprasDelPeriodo(periodo, branchIds),
       orderBy: { id: 'asc' }, take: LOTE, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       select: {
         id: true, number: true, issueDate: true, receivedAt: true, createdAt: true, docType: true, docSeries: true, docNumber: true, invoiceRef: true, paymentCondition: true,
@@ -91,7 +95,17 @@ export async function informeRegistroCompras(db: TenantPrismaClient, ctx: Tenant
     if (lote.length < LOTE) break
     cursor = lote[lote.length - 1]!.id
   }
-  return { periodo, zona, textoPeriodo: describirPeriodo(periodo), datos: registroCompras(compras) }
+  return compras
+}
+
+export async function informeRegistroVentas(db: TenantPrismaClient, ctx: TenantContext, p: ParametrosRegistros, ahora: Date = new Date()): Promise<InformeRegistro<RegistroVentas>> {
+  const { zona, periodo } = await preparar(db, ctx, p, ahora)
+  return { periodo, zona, textoPeriodo: describirPeriodo(periodo), datos: registroVentas(await leerComprobantes(db, zona, periodo)) }
+}
+
+export async function informeRegistroCompras(db: TenantPrismaClient, ctx: TenantContext, p: ParametrosRegistros, ahora: Date = new Date()): Promise<InformeRegistro<RegistroCompras>> {
+  const { zona, periodo } = await preparar(db, ctx, p, ahora)
+  return { periodo, zona, textoPeriodo: describirPeriodo(periodo), datos: registroCompras(await leerCompras(db, zona, periodo, ctx.branchIds)) }
 }
 
 /** Descarga un registro en CSV. Queda en la auditoría quién lo bajó, qué periodo y cuántas filas. */

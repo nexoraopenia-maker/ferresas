@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 
 /**
  * Centro de reportes. Cada tarjeta aparece solo para quien puede abrir ese reporte (`reportes.ver`; los que revelan costos, además
- * `productos.ver_costo`). Hoy: ventas, rentabilidad y registros de ventas y compras. Los demás se irán sumando aquí.
+ * `productos.ver_costo`). Hoy: ventas, rentabilidad, registros de ventas y compras, y conciliación fiscal. Los demás se irán sumando aquí.
  */
 export default async function ReportesPage() {
   const ctx = await requireTenantContext()
@@ -33,6 +33,12 @@ export default async function ReportesPage() {
           <Link href="/reportes/registros" data-reporte-tarjeta="registros" className="flex h-full flex-col gap-1 rounded-2xl border border-hairline bg-surface p-4 hover:bg-surface-sunken">
             <span className="font-bold text-ink">Registros de ventas y compras</span>
             <span className="text-sm text-ink-muted">Cada comprobante y cada documento de compra del periodo, para tu contador, con descarga en CSV.</span>
+          </Link>
+        </li>}
+        {verVentas && <li>
+          <Link href="/reportes/conciliacion" data-reporte-tarjeta="conciliacion" className="flex h-full flex-col gap-1 rounded-2xl border border-hairline bg-surface p-4 hover:bg-surface-sunken">
+            <span className="font-bold text-ink">Conciliación fiscal</span>
+            <span className="text-sm text-ink-muted">Comprueba que ventas, comprobantes, series, envíos y compras cuadran entre sí. Solo informa.</span>
           </Link>
         </li>}
         {verRentabilidad && <li>
