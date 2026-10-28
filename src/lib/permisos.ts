@@ -60,6 +60,10 @@ export const PERMISOS = [
   // Toma de inventario físico (F6.5): contar (pasadas) y gestionar el conteo (crear, iniciar, cerrar, cancelar). Aplicar las diferencias es `stock.ajustar`.
   'conteo.registrar',
   'conteo.gestionar',
+  // Stock mínimo y reposición (F6.6): ver lo que hay que reponer (en unidades; el costo estimado sigue siendo `productos.ver_costo`) y fijar mínimos y máximos.
+  // Crear el borrador de compra es `compras.registrar`; pedir una transferencia, `stock.transferir_solicitar`.
+  'reposicion.ver',
+  'reposicion.configurar',
   'comprobantes.emitir',
   'comprobantes.anular',
   'comprobantes.estado_manual',
@@ -91,7 +95,7 @@ export const OPCIONALES: Partial<Record<Role, readonly Permiso[]>> = {
   // (quien cobra); el VENDEDOR arma pedidos y no cobra, así que no tendría dónde usarlo.
   CAJERO: ['ventas.descuento', 'credito.otorgar'],
   // Registrar una compra implica ver y teclear COSTOS: el almacenero no los ve de fábrica, así que lo activa el dueño si de verdad lo quiere así.
-  ALMACENERO: ['productos.editar_precio', 'stock.ajustar', 'compras.registrar', 'conteo.gestionar'],
+  ALMACENERO: ['productos.editar_precio', 'stock.ajustar', 'compras.registrar', 'conteo.gestionar', 'reposicion.configurar'],
 }
 
 /**
@@ -187,10 +191,12 @@ export const MATRIZ: Record<Role, readonly Permiso[]> = {
     'kardex.ver',
     // Cuenta la mercadería (pasadas); crear, cerrar o cancelar un conteo no viene de fábrica (`conteo.gestionar`).
     'conteo.registrar',
+    // Ve qué reponer (sin costos); fijar los mínimos y máximos no viene de fábrica (`reposicion.configurar`).
+    'reposicion.ver',
   ],
 
-  /** Solo lectura: reportes, comprobantes, arqueos y kardex. Sí ve costos. */
-  CONTADOR: ['reportes.ver', 'caja.arqueo', 'productos.ver_costo', 'kardex.ver'],
+  /** Solo lectura: reportes, comprobantes, arqueos, kardex y reposición. Sí ve costos. */
+  CONTADOR: ['reportes.ver', 'caja.arqueo', 'productos.ver_costo', 'kardex.ver', 'reposicion.ver'],
 }
 
 /** Permisos de fábrica de un rol. */
@@ -265,6 +271,8 @@ export const ETIQUETAS: Record<Permiso, string> = {
   'kardex.ver': 'Ver el kardex de un producto (en unidades; los valores necesitan ver costos)',
   'conteo.registrar': 'Contar mercadería en una toma de inventario',
   'conteo.gestionar': 'Crear, iniciar, cerrar y cancelar tomas de inventario',
+  'reposicion.ver': 'Ver qué productos reponer y cuánto',
+  'reposicion.configurar': 'Fijar los stocks mínimos y máximos de reposición',
   'comprobantes.emitir': 'Emitir boletas y facturas',
   'comprobantes.anular': 'Emitir notas de crédito',
   'comprobantes.estado_manual': 'Cambiar a mano el estado tributario de un comprobante',

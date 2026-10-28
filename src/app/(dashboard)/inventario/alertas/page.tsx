@@ -47,13 +47,13 @@ export default async function AlertasPage() {
         <ul className="flex flex-col gap-2">
           {alertas.items.map((a) => (
             <li
-              key={a.productId} id={a.productId}
+              key={a.clave} id={a.clave}
               className="scroll-mt-20 rounded-2xl border border-hairline bg-surface p-3 shadow-sm target:ring-2 target:ring-accent-500"
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate font-semibold text-ink">{a.nombre}</p>
-                  <p className="font-mono text-xs text-ink-muted">{a.sku}</p>
+                  <p className="font-mono text-xs text-ink-muted">{a.sku}{a.almacen && <span className="font-sans"> · {a.almacen}</span>}</p>
                   {verKardex && <a data-producto="kardex" href={enlaceKardex({ producto: a.productId })} className="text-xs font-semibold text-industrial-700 underline dark:text-industrial-300">Ver kardex</a>}
                 </div>
                 <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold ${
@@ -65,10 +65,11 @@ export default async function AlertasPage() {
               <p className="mt-1 text-sm text-ink-muted">
                 Hay <b className="text-ink">{formatQuantity(a.stock, a.unitType)}</b> {unitLabel(a.unitType)}
                 {a.minimo > 0 && <> · mínimo {formatQuantity(a.minimo, a.unitType)}</>}
+                {a.enTransito > 0 && <> · <b className="text-ink">{formatQuantity(a.enTransito, a.unitType)}</b> en camino</>}
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                {puedeEntrada && almacen && (
-                  <ReposicionRapida productId={a.productId} warehouseId={almacen.id} unitType={a.unitType} />
+                {puedeEntrada && (a.warehouseId ?? almacen?.id) && (
+                  <ReposicionRapida productId={a.productId} variantId={a.variantId} warehouseId={(a.warehouseId ?? almacen?.id)!} unitType={a.unitType} />
                 )}
                 {puedePedir && (
                   <Link

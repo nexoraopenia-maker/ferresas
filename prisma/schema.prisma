@@ -930,6 +930,8 @@ model Product {
   taxRate   Decimal @default(0.1800) @db.Decimal(5, 4)
 
   /// Umbrales del semáforo (§5.1): rojo <= 0, ámbar <= minStock, verde resto.
+  /// Valor predeterminado de todos los almacenes y variantes (F6.6: herencia Stock → Variante → Producto).
+  /// `maxStock` es el nivel objetivo de la reposición; sin él, el objetivo es 2 × el mínimo.
   minStock Decimal  @default(0) @db.Decimal(14, 4)
   maxStock Decimal? @db.Decimal(14, 4)
 
@@ -984,7 +986,10 @@ model ProductVariant {
 
   costPrice Decimal? @db.Decimal(12, 4)
   salePrice Decimal? @db.Decimal(12, 4)
+  /// 0 = «sin valor propio»: hereda el del producto (la columna no admite NULL). F6.6.
   minStock  Decimal  @default(0) @db.Decimal(14, 4)
+  /// Nivel objetivo propio de la variante; NULL = hereda el del producto. F6.6.
+  maxStock  Decimal? @db.Decimal(14, 4)
 
   isActive  Boolean   @default(true)
   createdAt DateTime  @default(now())
@@ -1035,8 +1040,10 @@ model Stock {
   /// Disponible = quantity - reserved.
   reserved Decimal @default(0) @db.Decimal(14, 4)
 
-  /// Override del mínimo a nivel de almacén; si es NULL manda Product.minStock.
+  /// Override del mínimo a nivel de almacén; si es NULL manda el de la variante o, si no, Product.minStock.
   minStock Decimal? @db.Decimal(14, 4)
+  /// Override del nivel objetivo a nivel de almacén (F6.6); si es NULL manda el de la variante o el del producto.
+  maxStock Decimal? @db.Decimal(14, 4)
 
   /// Bloqueo optimista para el UI optimista del móvil (§5.1): el cliente
   /// envía la versión que leyó y el servidor rechaza si ya cambió.

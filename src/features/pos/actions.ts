@@ -1,12 +1,12 @@
 'use server'
 
-import { resolverCodigo, mensajeAmbiguo } from '@/features/inventory/codigos'
+import { resolverCodigo, mensajeAmbiguo, estadoDeCodigo } from '@/features/inventory/codigos'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { getTenantPrisma, type TenantPrismaClient } from '@/lib/tenant-prisma'
 import { requireTenantContext } from '@/lib/session'
 import { isBusinessError, type ActionResult } from '@/lib/errors'
-import { getStockStatus, type StockStatus } from '@/lib/stock-status'
+import type { StockStatus } from '@/lib/stock-status'
 import type { TenantContext } from '@/lib/tenant-context'
 import {
   convertQuoteSchema,
@@ -140,8 +140,7 @@ export async function lookupForPos(
     if (r.estado === 'ambiguo') return { ok: false, code: 'DUPLICATE_CODE', message: mensajeAmbiguo(r) }
 
     const { producto: product, variante } = r
-    const stock = r.stock ? Number(r.stock.quantity) : 0
-    const minStock = Number(r.stock?.minStock ?? variante?.minStock ?? product.minStock)
+    const { cantidad: stock, minimo: minStock, estado } = estadoDeCodigo(r)
 
     return {
       ok: true,
@@ -159,7 +158,7 @@ export async function lookupForPos(
         trackStock: product.trackStock,
         stock,
         minStock,
-        stockStatus: getStockStatus(stock, minStock),
+        stockStatus: estado,
         warehouseId: warehouse.id,
         warehouseName: warehouse.name,
         presentation: r.presentacion

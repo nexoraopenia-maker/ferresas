@@ -55,7 +55,7 @@ console.log('\nC) El cursor')
 }
 
 console.log('\nD) El permiso `kardex.ver`')
-check('>>> existe, con etiqueta, y hay 42 permisos', (PERMISOS as readonly string[]).includes('kardex.ver') && (ETIQUETAS as Record<string, string>)['kardex.ver']!.length > 10 && PERMISOS.length === 42)
+check('>>> existe, con etiqueta, y hay 44 permisos', (PERMISOS as readonly string[]).includes('kardex.ver') && (ETIQUETAS as Record<string, string>)['kardex.ver']!.length > 10 && PERMISOS.length === 44)
 const tiene = (rol: Parameters<typeof permisosDeRol>[0]) => permisosDeRol(rol).has('kardex.ver')
 check('>>> lo tienen dueño, administrador, contador y almacenero', tiene('OWNER') && tiene('ADMIN') && tiene('CONTADOR') && tiene('ALMACENERO'))
 check('>>> NO lo tienen cajero ni vendedor', !tiene('CAJERO') && !tiene('VENDEDOR'))

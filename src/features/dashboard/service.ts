@@ -2,7 +2,7 @@ import { BusinessError } from '@/lib/errors'
 import { redondearCentimos } from '@/lib/dinero'
 import { diaLocal, periodos, type Rango } from '@/lib/periodos'
 import { exigir, puede } from '@/lib/puede'
-import { getStockStatus } from '@/lib/stock-status'
+import { posicionesDeStock } from '@/features/inventory/reposicion-service'
 import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 
@@ -181,12 +181,21 @@ export async function rendimientoDeCaja(
 }
 
 export interface AlertaStock {
+  /** Identifica la fila (almacén × producto × variante): un producto puede alertar en dos almacenes a la vez. */
+  clave: string
   productId: string
+  variantId: string | null
+  /** `null` solo para un producto que nunca tuvo existencias en un almacén alcanzable. */
+  warehouseId: string | null
+  almacen: string | null
   nombre: string
   sku: string
   unitType: string
+  /** Lo DISPONIBLE (cantidad − reservado): lo que el semáforo juzgó. */
   stock: number
   minimo: number
+  /** Lo que ya viene en camino por transferencias. */
+  enTransito: number
   estado: 'OUT' | 'LOW'
 }
 
@@ -198,47 +207,33 @@ export interface ResumenAlertas {
 }
 
 /**
- * Productos agotados o en su mínimo.
+ * Filas de stock agotadas o en su mínimo.
  *
- * Suma el stock de los almacenes de las sucursales que el usuario alcanza
- * (`ctx.branchIds`): el saldo de un local ajeno no tapa un faltante en el
- * propio. No pide un permiso aparte: es el mismo dato que el POS enseña al
- * vender, y no incluye costos.
+ * Usa el criterio ÚNICO de reposición (`posicionesDeStock` + `evaluarReposicion`): el mismo semáforo que enseñan el escáner y el POS, por almacén y con la
+ * herencia de umbrales. El saldo de un local ajeno ya no tapa un faltante en otro. No pide un permiso aparte: es el mismo dato que el POS enseña al vender,
+ * y no incluye costos.
  */
 export async function alertasDeStock(
   db: TenantPrismaClient,
   ctx: TenantContext,
   limite = 8,
 ): Promise<ResumenAlertas> {
-  const [productos, saldos] = await Promise.all([
-    db.product.findMany({
-      where: { deletedAt: null, isActive: true, trackStock: true },
-      select: { id: true, name: true, sku: true, unitType: true, minStock: true },
-    }),
-    db.stock.groupBy({
-      by: ['productId'],
-      where: ctx.branchIds ? { warehouse: { branchId: { in: [...ctx.branchIds] } } } : {},
-      _sum: { quantity: true },
-    }),
-  ])
-  const saldo = new Map(saldos.map((s) => [s.productId, num(s._sum.quantity)]))
+  const posiciones = await posicionesDeStock(db, ctx)
 
   const alertas: AlertaStock[] = []
-  for (const p of productos) {
-    const stock = saldo.get(p.id) ?? 0
-    const minimo = num(p.minStock)
-    const estado = getStockStatus(stock, minimo)
-    // Un mínimo en 0 significa «sin umbral»: solo importa si se agotó del todo.
-    if (estado === 'OK' || (estado === 'LOW' && minimo <= 0)) continue
+  for (const p of posiciones) {
+    if (p.estado === 'OK') continue
     alertas.push({
-      productId: p.id, nombre: p.name, sku: p.sku, unitType: p.unitType,
-      stock, minimo, estado,
+      clave: `${p.warehouseId ?? '-'}:${p.productId}:${p.variantId ?? '-'}`,
+      productId: p.productId, variantId: p.variantId, warehouseId: p.warehouseId, almacen: p.almacen,
+      nombre: p.nombre, sku: p.sku, unitType: p.unitType,
+      stock: p.disponible, minimo: p.minimo, enTransito: p.enTransito, estado: p.estado,
     })
   }
   alertas.sort((a, b) =>
     (a.estado === b.estado ? 0 : a.estado === 'OUT' ? -1 : 1) ||
     (a.stock / (a.minimo || 1)) - (b.stock / (b.minimo || 1)) ||
-    a.nombre.localeCompare(b.nombre))
+    a.nombre.localeCompare(b.nombre) || (a.almacen ?? '').localeCompare(b.almacen ?? ''))
 
   return {
     agotados: alertas.filter((a) => a.estado === 'OUT').length,

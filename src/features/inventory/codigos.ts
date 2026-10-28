@@ -1,7 +1,9 @@
 import type { ProductCodeType } from '@/generated/prisma/enums'
 import { BusinessError } from '@/lib/errors'
 import { esGs1Valido } from '@/lib/codigos-barras'
+import type { StockStatus } from '@/lib/stock-status'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
+import { estadoDeFila } from './reposicion-reglas'
 
 /**
  * Códigos de producto: tipo, plan de relleno desde las columnas antiguas, resolvedor único y sincronización.
@@ -104,17 +106,17 @@ export function planificarCodigos(entrada: readonly DuenoLegado[]): { insertar: 
 
 const PRODUCTO = {
   id: true, name: true, sku: true, barcode: true, qrCode: true, unitType: true,
-  salePrice: true, taxRate: true, minStock: true, trackStock: true,
+  salePrice: true, taxRate: true, minStock: true, maxStock: true, trackStock: true,
 } as const
-const VARIANTE = { id: true, name: true, sku: true, barcode: true, qrCode: true, salePrice: true, minStock: true } as const
-const STOCK = { quantity: true, minStock: true, version: true } as const
+const VARIANTE = { id: true, name: true, sku: true, barcode: true, qrCode: true, salePrice: true, minStock: true, maxStock: true } as const
+const STOCK = { quantity: true, reserved: true, minStock: true, maxStock: true, version: true } as const
 // Sin el costo: lo que sale de un escaneo llega a quien cobra, y el costo es solo de quien tiene `productos.ver_costo`.
 const PRESENTACION = { id: true, name: true, unitType: true, factor: true, salePrice: true, isActive: true, deletedAt: true } as const
 
-type ProductoSel = { id: string; name: string; sku: string; barcode: string | null; qrCode: string | null; unitType: string; salePrice: { toString(): string }; taxRate: { toString(): string }; minStock: { toString(): string }; trackStock: boolean }
-type VarianteSel = { id: string; name: string; sku: string; barcode: string | null; qrCode: string | null; salePrice: { toString(): string } | null; minStock: { toString(): string } }
+type ProductoSel = { id: string; name: string; sku: string; barcode: string | null; qrCode: string | null; unitType: string; salePrice: { toString(): string }; taxRate: { toString(): string }; minStock: { toString(): string }; maxStock: { toString(): string } | null; trackStock: boolean }
+type VarianteSel = { id: string; name: string; sku: string; barcode: string | null; qrCode: string | null; salePrice: { toString(): string } | null; minStock: { toString(): string }; maxStock: { toString(): string } | null }
 export type PresentacionSel = { id: string; name: string; unitType: string; factor: { toString(): string }; salePrice: { toString(): string } | null }
-type StockSel = { quantity: { toString(): string }; minStock: { toString(): string } | null; version: number }
+type StockSel = { quantity: { toString(): string }; reserved: { toString(): string }; minStock: { toString(): string } | null; maxStock: { toString(): string } | null; version: number }
 
 export interface CodigoResuelto {
   estado: 'ok'
@@ -128,6 +130,20 @@ export interface CodigoResuelto {
   presentacion: PresentacionSel | null
   /** Existencias del dueño del código en el almacén pedido (`null` si no se pidió almacén o no hay fila). */
   stock: StockSel | null
+}
+
+/**
+ * El mínimo que rige y el semáforo de lo escaneado, por el criterio único de reposición (almacén → variante → producto; el semáforo juzga lo disponible).
+ * Lo comparten el escáner de inventario y el POS: ninguno compara `minStock` por su cuenta.
+ */
+export function estadoDeCodigo(r: CodigoResuelto): { cantidad: number; minimo: number; estado: StockStatus } {
+  const e = estadoDeFila({
+    cantidad: r.stock?.quantity, reservado: r.stock?.reserved,
+    almacenMin: r.stock?.minStock, almacenMax: r.stock?.maxStock,
+    varianteMin: r.variante?.minStock, varianteMax: r.variante?.maxStock,
+    productoMin: r.producto.minStock, productoMax: r.producto.maxStock,
+  })
+  return { cantidad: r.stock ? Number(r.stock.quantity) : 0, minimo: e.minimo, estado: e.estado }
 }
 
 export interface CodigoAmbiguo {

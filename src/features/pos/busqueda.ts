@@ -1,7 +1,8 @@
-import { getStockStatus, type StockStatus } from '@/lib/stock-status'
+import type { StockStatus } from '@/lib/stock-status'
 import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { filtroAlmacen } from '@/features/branches/queries'
+import { estadoDeFila } from '@/features/inventory/reposicion-reglas'
 import { variantesConTilde } from './resaltado'
 
 /**
@@ -122,10 +123,10 @@ export async function buscarProductos(
     orderBy: { name: 'asc' },
     select: {
       id: true, name: true, sku: true, barcode: true, qrCode: true,
-      unitType: true, salePrice: true, taxRate: true, minStock: true, trackStock: true,
+      unitType: true, salePrice: true, taxRate: true, minStock: true, maxStock: true, trackStock: true,
       stocks: {
         where: { warehouseId: warehouse.id, variantId: null },
-        select: { quantity: true, minStock: true },
+        select: { quantity: true, reserved: true, minStock: true, maxStock: true },
         take: 1,
       },
     },
@@ -135,7 +136,12 @@ export async function buscarProductos(
     .map((p) => {
       const s = p.stocks[0]
       const stock = s ? Number(s.quantity) : 0
-      const minStock = Number(s?.minStock ?? p.minStock)
+      // El criterio único de reposición: almacén → producto, y el semáforo juzga lo disponible.
+      const { minimo: minStock, estado } = estadoDeFila({
+        cantidad: stock, reservado: s?.reserved,
+        almacenMin: s?.minStock, almacenMax: s?.maxStock,
+        productoMin: p.minStock, productoMax: p.maxStock,
+      })
       return {
         productId: p.id,
         variantId: null,
@@ -149,7 +155,7 @@ export async function buscarProductos(
         trackStock: p.trackStock,
         stock,
         minStock,
-        stockStatus: getStockStatus(stock, minStock),
+        stockStatus: estado,
         warehouseId: warehouse.id,
         warehouseName: warehouse.name,
         relevancia: relevancia(p, t),

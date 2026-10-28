@@ -41,6 +41,8 @@ export const PERMISOS_FUERA_DEL_PIN: readonly Permiso[] = [
   'kardex.ver',
   // Crear, cerrar o cancelar una toma de inventario es de supervisión: un PIN de 4 cifras no la abre. Contar (`conteo.registrar`) SÍ se puede con PIN (F6.5).
   'conteo.gestionar',
+  // Fijar mínimos y máximos decide cuándo y cuánto se compra: es de supervisión, un PIN de 4 cifras no la abre. Ver la reposición (`reposicion.ver`) SÍ se puede con PIN (F6.6).
+  'reposicion.configurar',
 ]
 
 export type ErrorPin = 'FORMATO' | 'FACIL'

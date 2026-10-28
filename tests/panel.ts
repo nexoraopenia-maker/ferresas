@@ -126,7 +126,8 @@ async function main() {
   check('lo que no lleva control de stock no alerta', !alA.items.some((a) => a.sku === 'SRV'))
   check('los contadores coinciden con el listado', alA.agotados === 1 && alA.criticos === 1, JSON.stringify([alA.agotados, alA.criticos]))
   const alOwner = await alertasDeStock(dbOwner, cOwner)
-  check('>>> el dueño, que ve A y B, suma 504 de Cemento: ya NO es crítico', !alOwner.items.some((a) => a.productId === prodX.id))
+  // F6.6a: el criterio es por ALMACÉN (con herencia de umbrales). Antes se sumaban las sucursales y los 500 de B tapaban el faltante de A.
+  check('>>> el dueño, que ve A y B, ve el crítico de A aunque B tenga 500 (ya no se suman) y B no alerta', alOwner.items.some((a) => a.productId === prodX.id && a.warehouseId === wA.id && a.estado === 'LOW') && !alOwner.items.some((a) => a.productId === prodX.id && a.warehouseId === wB.id))
   const sinLista = await alertasDeStock(dbOwner, cOwner, 0)
   check('el límite acota la lista pero no los contadores', sinLista.items.length === 0 && sinLista.agotados === alOwner.agotados)
 

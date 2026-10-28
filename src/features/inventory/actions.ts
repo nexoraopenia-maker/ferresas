@@ -1,6 +1,8 @@
 'use server'
 
-import { resolverCodigo, mensajeAmbiguo } from './codigos'
+import { resolverCodigo, mensajeAmbiguo, estadoDeCodigo } from './codigos'
+import { estadoDeFila } from './reposicion-reglas'
+import { estadoTrasMovimiento } from './reposicion-service'
 import { revalidatePath } from 'next/cache'
 import { filtroAlmacen } from '@/features/branches/queries'
 import { z } from 'zod'
@@ -8,7 +10,7 @@ import { getTenantPrisma, type TenantPrismaClient } from '@/lib/tenant-prisma'
 import { requireTenantContext } from '@/lib/session'
 import { isBusinessError, type ActionResult } from '@/lib/errors'
 import type { TenantContext } from '@/lib/tenant-context'
-import { getStockStatus, type StockStatus } from '@/lib/stock-status'
+import type { StockStatus } from '@/lib/stock-status'
 import {
   createProductExpressSchema,
   createStockMovementSchema,
@@ -158,8 +160,7 @@ export async function findProductByCode(
     if (r.estado === 'ambiguo') return { ok: false, code: 'DUPLICATE_CODE', message: mensajeAmbiguo(r) }
 
     const { producto: product, variante } = r
-    const quantity = r.stock ? Number(r.stock.quantity) : 0
-    const minStock = Number(r.stock?.minStock ?? variante?.minStock ?? product.minStock)
+    const { cantidad: quantity, minimo: minStock, estado } = estadoDeCodigo(r)
 
     return {
       ok: true,
@@ -175,7 +176,7 @@ export async function findProductByCode(
         warehouseName: warehouse.name,
         quantity,
         minStock,
-        status: getStockStatus(quantity, minStock),
+        status: estado,
         version: r.stock?.version ?? 0,
         presentation: r.presentacion
           ? { id: r.presentacion.id, name: r.presentacion.name, unitType: r.presentacion.unitType, factor: r.presentacion.factor.toString() }
@@ -209,12 +210,10 @@ export async function createStockMovement(
   return withTenant('createStockMovement', async (db, ctx) => {
     const result = await runCreateStockMovement(db, ctx, parsed.data)
 
-    // El mínimo se relee del producto porque el movimiento pudo cambiarlo.
-    const product = await db.product.findFirst({
-      where: { id: result.productId },
-      select: { minStock: true },
+    // Los umbrales se releen (almacén → variante → producto) porque el movimiento pudo cambiarlos; el semáforo es el criterio único de reposición.
+    const estado = await estadoTrasMovimiento(db, {
+      warehouseId: parsed.data.warehouseId, productId: result.productId, variantId: parsed.data.variantId ?? null, cantidad: result.balanceAfter,
     })
-    const minStock = Number(product?.minStock ?? 0)
 
     revalidatePath('/inventario')
 
@@ -224,7 +223,7 @@ export async function createStockMovement(
         movementId: result.movementId,
         balanceAfter: result.balanceAfter,
         version: result.version,
-        status: getStockStatus(result.balanceAfter, minStock),
+        status: estado,
         replayed: result.replayed,
         wentNegative: result.wentNegative,
       },
@@ -271,7 +270,7 @@ export async function createProductExpress(
         warehouseName: warehouse.name,
         quantity: created.quantity,
         minStock: parsed.data.minStock,
-        status: getStockStatus(created.quantity, parsed.data.minStock),
+        status: estadoDeFila({ cantidad: created.quantity, productoMin: parsed.data.minStock }).estado,
         version: created.version,
         alreadyExisted: created.alreadyExisted,
       },

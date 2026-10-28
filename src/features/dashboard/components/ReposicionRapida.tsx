@@ -7,8 +7,8 @@ import { createStockMovement } from '@/features/inventory/actions'
 
 /** Registra una ENTRADA de mercadería sin salir de la lista de alertas. */
 export function ReposicionRapida({
-  productId, warehouseId, unitType,
-}: { productId: string; warehouseId: string; unitType: string }) {
+  productId, variantId = null, warehouseId, unitType,
+}: { productId: string; variantId?: string | null; warehouseId: string; unitType: string }) {
   const router = useRouter()
   const [abierto, setAbierto] = useState(false)
   const [cantidad, setCantidad] = useState('')
@@ -21,7 +21,7 @@ export function ReposicionRapida({
     if (!q || q <= 0) { setError('Escribe cuánto llegó.'); return }
     startTransition(async () => {
       const res = await createStockMovement({
-        type: 'ENTRADA', source: 'MANUAL', productId, warehouseId, quantity: q,
+        type: 'ENTRADA', source: 'MANUAL', productId, ...(variantId ? { variantId } : {}), warehouseId, quantity: q,
         idempotencyKey: crypto.randomUUID(),
       })
       if (!res.ok) { setError(res.message); return }

@@ -178,12 +178,15 @@ export function AlertasStockWidget({
       ) : !completo ? (
         <ul className="mt-3 flex flex-col gap-1.5">
           {items.map((a) => (
-            <li key={a.productId}>
+            <li key={a.clave}>
               <Link
-                href={`/inventario/alertas#${a.productId}`}
+                href={`/inventario/alertas#${a.clave}`}
                 className="flex items-center justify-between gap-2 rounded-lg bg-surface-sunken px-3 py-2 text-sm hover:bg-industrial-50 dark:hover:bg-graphite-800"
               >
-                <span className="min-w-0 truncate font-semibold text-ink">{a.nombre}</span>
+                <span className="min-w-0 truncate font-semibold text-ink">
+                  {a.nombre}
+                  {a.almacen && <span className="font-normal text-ink-muted"> · {a.almacen}</span>}
+                </span>
                 <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold ${
                   a.estado === 'OUT' ? 'bg-stock-out-soft text-stock-out' : 'bg-stock-low-soft text-stock-low'
                 }`}>
