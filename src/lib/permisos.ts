@@ -55,6 +55,8 @@ export const PERMISOS = [
   'stock.transferir_despachar',
   'stock.transferir_recibir',
   'reportes.ver',
+  // Ver el kardex (cada movimiento de stock de un producto, con su saldo) en UNIDADES. Los valores y costos siguen siendo `productos.ver_costo` (F6.4).
+  'kardex.ver',
   'comprobantes.emitir',
   'comprobantes.anular',
   'comprobantes.estado_manual',
@@ -178,10 +180,12 @@ export const MATRIZ: Record<Role, readonly Permiso[]> = {
     'stock.transferir_solicitar',
     'stock.transferir_despachar',
     'stock.transferir_recibir',
+    // Ve el kardex en unidades (sin costos): es quien mueve el stock y necesita saber por qué cambió.
+    'kardex.ver',
   ],
 
-  /** Solo lectura: reportes, comprobantes y arqueos. Sí ve costos. */
-  CONTADOR: ['reportes.ver', 'caja.arqueo', 'productos.ver_costo'],
+  /** Solo lectura: reportes, comprobantes, arqueos y kardex. Sí ve costos. */
+  CONTADOR: ['reportes.ver', 'caja.arqueo', 'productos.ver_costo', 'kardex.ver'],
 }
 
 /** Permisos de fábrica de un rol. */
@@ -253,6 +257,7 @@ export const ETIQUETAS: Record<Permiso, string> = {
   'stock.transferir_aprobar': 'Aprobar transferencias',
   'stock.transferir_recibir': 'Recibir transferencias',
   'reportes.ver': 'Ver reportes',
+  'kardex.ver': 'Ver el kardex de un producto (en unidades; los valores necesitan ver costos)',
   'comprobantes.emitir': 'Emitir boletas y facturas',
   'comprobantes.anular': 'Emitir notas de crédito',
   'comprobantes.estado_manual': 'Cambiar a mano el estado tributario de un comprobante',

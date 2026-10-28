@@ -122,6 +122,9 @@ async function main() {
     // fuera del navegador y de cualquier pantalla): no devuelve costos a nadie, los escribe en la tabla de movimientos.
     'src/features/inventory/kardex-reconstruccion.ts',
     'src/features/inventory/kardex-relleno.ts',
+    // Kardex (F6.4b): lee `costPrice` del producto SOLO si quien consulta tiene `productos.ver_costo` (`conCostos`); sin ese permiso las columnas de costo no están
+    // en ningún `select` ni en la respuesta. Lo prueba `kardex-lectura` (un espía de consultas, el recorrido del JSON y el CSV con y sin costos).
+    'src/features/inventory/kardex-service.ts',
   ])
   const proj = proyecto()
   const fuentes = ficheros(join(RAIZ, 'src'), (f) => f.endsWith('.ts') || f.endsWith('.tsx'))

@@ -37,6 +37,8 @@ export const PERMISOS_FUERA_DEL_PIN: readonly Permiso[] = [
   'caja.ajuste',
   // El registro de auditoría es de administración: un PIN de 4 cifras no lo abre.
   'auditoria.ver',
+  // El kardex es de supervisión del inventario (y con costos, del dinero): un PIN de 4 cifras no lo abre (F6.4).
+  'kardex.ver',
 ]
 
 export type ErrorPin = 'FORMATO' | 'FACIL'
