@@ -73,6 +73,7 @@ async function main() {
   })
   check('>>> el stock entró por el LEDGER (movimiento INICIAL)', mov !== null)
   check('con origen IMPORTACION', mov?.source === 'IMPORTACION')
+  check('>>> el INICIAL de la importación deja su costo (28.00) como valor aplicado y promedio, EXACTO (kardex valorizado)', Number(mov?.unitCostApplied) === 28 && Number(mov?.costAfter) === 28 && mov?.costOrigin === 'EXACTO')
   const suma = await db.stockMovement.aggregate({
     where: { productId: cemento.id }, _sum: { quantity: true },
   })

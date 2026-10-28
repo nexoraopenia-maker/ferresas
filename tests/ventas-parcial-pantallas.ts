@@ -134,7 +134,7 @@ check('>>> «Anular / devolver todo» solo si la venta NO tiene parciales (`vent
 check('>>> si no se puede devolver, la página dice por qué (bloqueo del diagnóstico) en lugar de un formulario', det.includes('dp.bloqueo') && det.includes('No se pueden devolver productos de esta venta todavía'))
 check('>>> ni la página, ni el formulario, ni el cálculo ni el detalle nombran costos/utilidad/margen en código', ['src/app/(dashboard)/ventas/[id]/page.tsx', 'src/app/(dashboard)/ventas/page.tsx', 'src/features/ventas/components/FormularioDevolucionParcial.tsx', 'src/features/ventas/components/DetalleVenta.tsx', 'src/features/ventas/components/TablaVentas.tsx', 'src/features/ventas/devolucion-parcial.ts', 'src/features/ventas/service.ts'].every((f) => !/unitCost|costPrice|utilidad|margen|ver_costo/i.test(codigo(f))))
 void dc
-check('el diagnóstico que viaja al navegador no lleva costos (lo comprueba su servicio de lectura)', !/unitCost|costPrice/.test(codigo('src/features/devoluciones/parcial-service.ts').replace(/unitCost: i\.unitCost/g, '').replace(/unitCost: true,/g, '')))
+check('el diagnóstico que viaja al navegador no lleva costos (lo comprueba su servicio de lectura)', !/unitCost|costPrice/.test(codigo('src/features/devoluciones/parcial-service.ts').replace(/unitCost: i\.unitCost/g, '').replace(/unitCostApplied: i\.unitCost/g, '').replace(/unitCost: true,/g, '')))
 check('la lista de comprobantes ya no ofrece una nota total sobre un comprobante con notas parciales vivas', codigo('src/app/(dashboard)/comprobantes/page.tsx').includes('...CODIGOS_NOTA_CREDITO_PARCIAL'))
 
 console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)

@@ -121,7 +121,7 @@ export async function applyStockMovement(
   //    aislado) y llevar control de stock.
   const product = await t.product.findFirst({
     where: { id: input.productId, deletedAt: null },
-    select: { id: true, name: true, trackStock: true, isActive: true },
+    select: { id: true, name: true, trackStock: true, isActive: true, costPrice: true },
   })
 
   if (!product) {
@@ -226,6 +226,12 @@ export async function applyStockMovement(
 
   const balanceAfter = toNumber(updated.quantity)
 
+  // Kardex valorizado (F6.4): el costo promedio vigente del producto en este instante, leído en la MISMA transacción. Quien cambia ese promedio DESPUÉS
+  // (una compra) o fija otro costo (una devolución) corrige estos dos campos en el mismo paso.
+  const costoVigente = toNumber(product.costPrice)
+  const costoEntrada = input.type === 'ENTRADA' ? input.unitCost : undefined
+  const entradaSinCosto = input.type === 'ENTRADA' && !typeOverride && costoEntrada === undefined
+
   // 3. Ledger. Va DESPUÉS del stock a propósito: si la clave de
   //    idempotencia choca (reintento del móvil), este insert revienta y
   //    toda la transacción — incluida la resta de stock — se deshace.
@@ -255,8 +261,11 @@ export async function applyStockMovement(
           : undefined,
       // Entrada manual sin costo: queda «costo pendiente» y no alimenta
       // ningún costo promedio hasta que alguien con `productos.ver_costo` la completa.
-      costPending:
-        input.type === 'ENTRADA' && !typeOverride && input.unitCost === undefined,
+      costPending: entradaSinCosto,
+      // Una entrada manual sin costo no tiene con qué valorarse hasta que alguien lo complete; todo lo demás se valora a su costo o al promedio vigente.
+      unitCostApplied: entradaSinCosto ? null : (costoEntrada ?? costoVigente),
+      costAfter: costoVigente,
+      costOrigin: 'EXACTO',
       reason: input.reason ?? null,
       referenceType: 'MANUAL',
       idempotencyKey: input.idempotencyKey ?? null,
@@ -454,14 +463,15 @@ export async function completarCostoEntrada(
         // Solo entradas de almacenes de las sucursales que este usuario alcanza.
         ...(ctx.branchIds ? { warehouse: { branchId: { in: [...ctx.branchIds] } } } : {}),
       },
-      select: { id: true, productId: true },
+      select: { id: true, productId: true, costOrigin: true },
     })
     if (!mov) {
       throw new BusinessError('NOT_FOUND', 'La entrada no existe o ya tiene costo.')
     }
     await t.stockMovement.update({
       where: { id: mov.id },
-      data: { unitCost, costPending: false },
+      // Un movimiento anterior al kardex valorizado (SIN_DATO) no admite cifras sueltas: su costo lo rellena el script de rellenado.
+      data: { unitCost, costPending: false, ...(mov.costOrigin !== 'SIN_DATO' ? { unitCostApplied: unitCost } : {}) },
     })
     await t.auditLog.create({
       data: {

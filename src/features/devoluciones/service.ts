@@ -259,7 +259,7 @@ export async function anularOdevolverVenta(db: TenantPrismaClient, ctx: TenantCo
             : null,
           reason: `${ETIQUETA_TIPO[input.kind]} de la venta ${venta.number} (${number})`,
         }, 'VENTA', undefined, 'DEVOLUCION_CLIENTE')
-        await t.stockMovement.update({ where: { id: mov.movementId }, data: { referenceType: 'DEVOLUCION', referenceId: registro.id, unitCost: l.unitCost }, select: { id: true } })
+        await t.stockMovement.update({ where: { id: mov.movementId }, data: { referenceType: 'DEVOLUCION', referenceId: registro.id, unitCost: l.unitCost, unitCostApplied: l.unitCost }, select: { id: true } })
       }
 
       // 7. La venta cambia de estado: sale de las ventas completadas de todos los reportes.

@@ -273,7 +273,7 @@ export async function devolverProductosVenta(db: TenantPrismaClient, ctx: Tenant
           type: 'ENTRADA', productId: i.productId, variantId: i.variantId ?? null, warehouseId: venta.warehouseId, quantity: cantidad, source: 'MANUAL', traza,
           reason: `Devolución parcial de la venta ${venta.number} (${number})`,
         }, 'VENTA', undefined, 'DEVOLUCION_CLIENTE')
-        await t.stockMovement.update({ where: { id: entrada.movementId }, data: { referenceType: 'DEVOLUCION', referenceId: registro.id, unitCost: i.unitCost }, select: { id: true } })
+        await t.stockMovement.update({ where: { id: entrada.movementId }, data: { referenceType: 'DEVOLUCION', referenceId: registro.id, unitCost: i.unitCost, unitCostApplied: i.unitCost }, select: { id: true } })
 
         if (l.destino === 'MERMA') {
           // Dañado: sale en el acto del stock vendible. Entrada y salida netas = 0; el kardex cuenta las dos.
@@ -281,7 +281,7 @@ export async function devolverProductosVenta(db: TenantPrismaClient, ctx: Tenant
             type: 'SALIDA', productId: i.productId, variantId: i.variantId ?? null, warehouseId: venta.warehouseId, quantity: cantidad, source: 'MANUAL', traza: null,
             reason: `Merma por devolución dañada de la venta ${venta.number} (${number})`,
           }, 'VENTA', undefined, 'MERMA')
-          await t.stockMovement.update({ where: { id: salida.movementId }, data: { referenceType: 'DEVOLUCION', referenceId: registro.id, unitCost: i.unitCost }, select: { id: true } })
+          await t.stockMovement.update({ where: { id: salida.movementId }, data: { referenceType: 'DEVOLUCION', referenceId: registro.id, unitCost: i.unitCost, unitCostApplied: i.unitCost }, select: { id: true } })
           const ahora = new Date()
           const merma = await t.merma.create({
             data: {

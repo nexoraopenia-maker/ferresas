@@ -118,6 +118,10 @@ async function main() {
     // Rentabilidad (F5.3): lee `unitCost` de las líneas vendidas y `costPrice` del producto. TODA función exportada pasa por `exigirCostos`
     // (`productos.ver_costo` y nada más); lo prueba `rentabilidad-servicio` (cajero/vendedor/almacenero denegados, y `reportes.ver` solo no basta).
     'src/features/reportes/rentabilidad-service.ts',
+    // Kardex valorizado (F6.4a): rellenado histórico del costo de los movimientos. Solo lo corre un script de mantenimiento (`scripts/rellenar-costo-kardex.ts`,
+    // fuera del navegador y de cualquier pantalla): no devuelve costos a nadie, los escribe en la tabla de movimientos.
+    'src/features/inventory/kardex-reconstruccion.ts',
+    'src/features/inventory/kardex-relleno.ts',
   ])
   const proj = proyecto()
   const fuentes = ficheros(join(RAIZ, 'src'), (f) => f.endsWith('.ts') || f.endsWith('.tsx'))

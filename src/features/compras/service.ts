@@ -386,6 +386,7 @@ export async function recibirCompra(db: TenantPrismaClient, ctx: TenantContext, 
 
     const fotos = await fotografiar(t, items.map((i) => i.productId))                 // ③ los productos
 
+    const movimientosDe = new Map<string, string[]>()                                  // movimientos por producto: reciben el promedio NUEVO (kardex, F6.4)
     for (const i of items) {                                                           // ④ el stock
       const mov = await applyStockMovement(
         t, ctx,
@@ -396,6 +397,7 @@ export async function recibirCompra(db: TenantPrismaClient, ctx: TenantContext, 
         'COMPRA',
       )
       await t.stockMovement.update({ where: { id: mov.movementId }, data: { referenceType: 'COMPRA', referenceId: c.id }, select: { id: true } })
+      movimientosDe.set(i.productId, [...(movimientosDe.get(i.productId) ?? []), mov.movementId])
     }
 
     // Costo promedio ponderado móvil, por producto (varias líneas del mismo producto cuentan juntas).
@@ -403,7 +405,10 @@ export async function recibirCompra(db: TenantPrismaClient, ctx: TenantContext, 
     for (const [productId, g] of agruparPorProducto(items)) {
       const f = fotos.get(productId)!
       const nuevo = costoTrasCompra({ stock: f.stock, costo: f.costo, cantidad: g.cantidad.toString(), valor: g.valor.toString() })
-      if (nuevo !== f.costo) await t.product.update({ where: { id: productId }, data: { costPrice: nuevo }, select: { id: true } })
+      if (nuevo !== f.costo) {
+        await t.product.update({ where: { id: productId }, data: { costPrice: nuevo }, select: { id: true } })
+        await t.stockMovement.updateMany({ where: { id: { in: movimientosDe.get(productId) ?? [] } }, data: { costAfter: nuevo } })
+      }
       costos[productId] = { antes: f.costo, despues: nuevo }
     }
 
@@ -475,6 +480,7 @@ export async function anularCompra(db: TenantPrismaClient, ctx: TenantContext, i
     const items = await t.purchaseItem.findMany({ where: { purchaseId: c.id }, select: ITEMS, orderBy: { id: 'asc' } })
     const fotos = await fotografiar(t, items.map((i) => i.productId))                 // ③ los productos
 
+    const movimientosDe = new Map<string, string[]>()                                  // movimientos por producto: reciben el promedio NUEVO (kardex, F6.4)
     for (const i of items) {                                                           // ④ el stock
       const p = fotos.get(i.productId)!
       const mov = await applyStockMovement(
@@ -493,14 +499,19 @@ export async function anularCompra(db: TenantPrismaClient, ctx: TenantContext, i
           producto: p.name, faltante: Math.abs(mov.balanceAfter),
         })
       }
-      await t.stockMovement.update({ where: { id: mov.movementId }, data: { referenceType: 'COMPRA', referenceId: c.id }, select: { id: true } })
+      // La mercadería devuelta al proveedor sale al costo de la FACTURA, no al promedio de ese momento (ver costo.ts).
+      await t.stockMovement.update({ where: { id: mov.movementId }, data: { referenceType: 'COMPRA', referenceId: c.id, unitCostApplied: num(i.unitCost) }, select: { id: true } })
+      movimientosDe.set(i.productId, [...(movimientosDe.get(i.productId) ?? []), mov.movementId])
     }
 
     const costos: Record<string, { antes: number; despues: number }> = {}
     for (const [productId, g] of agruparPorProducto(items)) {
       const f = fotos.get(productId)!
       const nuevo = costoTrasDevolucion({ stock: f.stock, costo: f.costo, cantidad: g.cantidad.toString(), valor: g.valor.toString() })
-      if (nuevo !== null && nuevo !== f.costo) await t.product.update({ where: { id: productId }, data: { costPrice: nuevo }, select: { id: true } })
+      if (nuevo !== null && nuevo !== f.costo) {
+        await t.product.update({ where: { id: productId }, data: { costPrice: nuevo }, select: { id: true } })
+        await t.stockMovement.updateMany({ where: { id: { in: movimientosDe.get(productId) ?? [] } }, data: { costAfter: nuevo } })
+      }
       costos[productId] = { antes: f.costo, despues: nuevo ?? f.costo }
     }
 

@@ -122,6 +122,14 @@ enum MovementType {
   MERMA
 }
 
+/// De dónde sale el costo de un movimiento de stock (kardex valorizado, F6.4): `EXACTO` lo escribió el sistema en el momento; `RECONSTRUIDO` lo
+/// calculó el rellenado histórico repitiendo la historia; `SIN_DATO` no se puede saber (y entonces no hay cifras).
+enum MovementCostOrigin {
+  EXACTO
+  RECONSTRUIDO
+  SIN_DATO
+}
+
 enum MovementSource {
   MANUAL
   ESCANER
@@ -1077,6 +1085,12 @@ model StockMovement {
   /// Entrada sin costo (la registró alguien sin `productos.ver_costo`): no
   /// debe entrar en ningún costo promedio hasta que se complete.
   costPending  Boolean  @default(false)
+
+  /// Kardex valorizado (F6.4): costo por unidad base con el que se valoró ESTE movimiento (NULL si no se conoce, p. ej. entrada con costo pendiente).
+  unitCostApplied Decimal?           @db.Decimal(12, 4)
+  /// Costo promedio vigente del producto justo DESPUÉS del movimiento: saldo valorizado = balanceAfter × costAfter.
+  costAfter       Decimal?           @db.Decimal(12, 4)
+  costOrigin      MovementCostOrigin @default(SIN_DATO)
 
   /// Obligatorio para AJUSTE y MERMA (§6.6). Se valida con Zod, no aquí.
   reason String?

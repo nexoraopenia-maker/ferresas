@@ -456,6 +456,8 @@ export async function registerSale(
           // Sin clave propia: la idempotencia de la venta entera la da el
           // único de Sale.number, y la transacción cubre estos movimientos.
         }, 'VENTA', input.allowNegativeStock)
+        // El kardex lleva de este movimiento a su venta (antes quedaba como «MANUAL», sin enlace).
+        await t.stockMovement.update({ where: { id: mov.movementId }, data: { referenceType: 'VENTA', referenceId: sale.id }, select: { id: true } })
         if (mov.wentNegative) soldBelowStock = true
       }
 
