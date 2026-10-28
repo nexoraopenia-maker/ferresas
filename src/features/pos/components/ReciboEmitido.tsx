@@ -20,9 +20,12 @@ export const MENSAJE_FACTURA_FIADO = 'La factura de una venta fiada todavía no 
 export function ReciboEmitido({
   recibo,
   onCerrar,
+  puedeVerVenta = false,
 }: {
   recibo: ReciboVenta
   onCerrar: () => void
+  /** Puede ver el historial de ventas (`ventas.cobrar`, `ventas.anular` o `reportes.ver`). */
+  puedeVerVenta?: boolean
 }) {
   const [doc, setDoc] = useState<{ id: string; fullNumber: string; status: string; isTrial: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -119,6 +122,12 @@ export function ReciboEmitido({
         <p role="alert" className="mt-2 rounded-xl bg-stock-out-soft px-3 py-2 text-sm font-semibold text-stock-out">
           {error}
         </p>
+      )}
+
+      {puedeVerVenta && (
+        <a href={`/ventas/${recibo.saleId}`} data-recibo="ver-venta" className="mt-2 flex h-touch items-center justify-center rounded-lg text-sm font-semibold text-industrial-600 underline">
+          Ver esta venta
+        </a>
       )}
 
       <button type="button" onClick={onCerrar}

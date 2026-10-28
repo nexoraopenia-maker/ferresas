@@ -40,7 +40,7 @@ export default async function CajaPage() {
         id: true, openingAmount: true, countedAmount: true, expectedAmount: true,
         difference: true, salesCount: true, salesTotal: true, cashTotal: true,
         changeTotal: true, creditSalesTotal: true, cashReceiptsTotal: true,
-        otherReceiptsTotal: true, supplierCashPaymentsTotal: true, supplierOtherPaymentsTotal: true, refundsCashTotal: true, refundsOtherTotal: true, closedAt: true,
+        otherReceiptsTotal: true, supplierCashPaymentsTotal: true, supplierOtherPaymentsTotal: true, refundsCashTotal: true, refundsOtherTotal: true, closedAt: true, openedById: true, closedById: true,
         closedBy: { select: { name: true, email: true } },
       },
     }),
@@ -80,6 +80,8 @@ export default async function CajaPage() {
                 openingAmount: turnoRaw.openingAmount,
                 expectedAmount: turnoRaw.expectedAmount,
                 salesCount: turnoRaw.salesCount,
+                refundsCashTotal: turnoRaw.refundsCashTotal,
+                refundsOtherTotal: turnoRaw.refundsOtherTotal,
                 openedAt: turnoRaw.openedAt,
                 abiertoPor:
                   abiertoPor?.openedBy.name ?? abiertoPor?.openedBy.email ?? '—',
@@ -109,6 +111,9 @@ export default async function CajaPage() {
                 cerradoPor: ultimo.closedBy?.name ?? ultimo.closedBy?.email ?? undefined,
               }
             : null
+        }
+        puedeImprimirUltimoCierre={
+          !!ultimo && (puede(ctx, 'caja.arqueo') || (puede(ctx, 'caja.abrir_cerrar') && (ultimo.openedById === ctx.userId || ultimo.closedById === ctx.userId)))
         }
       />
     </main>

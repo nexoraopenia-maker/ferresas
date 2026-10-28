@@ -13,6 +13,10 @@ export interface TurnoAbierto {
   openingAmount: number
   expectedAmount: number
   salesCount: number
+  /** Devoluciones pagadas EN EFECTIVO desde el cajón este turno (restan del efectivo esperado). */
+  refundsCashTotal: number
+  /** Devoluciones por otro medio o sin salida de dinero (informativo: no tocaron el cajón). */
+  refundsOtherTotal: number
   openedAt: string
   abiertoPor: string
 }
@@ -54,12 +58,15 @@ export interface CierreReciente {
 export function CashPanel({
   turno,
   ultimoCierre,
+  puedeImprimirUltimoCierre = false,
   sucursal,
   puedeOperar,
   zonaHoraria,
 }: {
   turno: TurnoAbierto | null
   ultimoCierre: CierreReciente | null
+  /** El ticket de cierre solo lo ve quien tiene `caja.arqueo` o abrió/cerró ese turno; la ruta lo comprueba igual (404). */
+  puedeImprimirUltimoCierre?: boolean
   sucursal: string
   puedeOperar: boolean
   /**
@@ -144,7 +151,10 @@ export function CashPanel({
             <Dato k="Pagos a proveedores en efectivo" v={`- ${money(resultado.supplierCashPaymentsTotal)}`} />
           )}
           {resultado.refundsCashTotal > 0 && (
-            <Dato k="Devoluciones pagadas del cajón" v={`- ${money(resultado.refundsCashTotal)}`} />
+            <Dato k="Devoluciones pagadas del cajón (restan)" v={`- ${money(resultado.refundsCashTotal)}`} />
+          )}
+          {resultado.refundsOtherTotal > 0 && (
+            <Dato k="Devoluciones por otro medio o sin salida (informativo)" v={money(resultado.refundsOtherTotal)} />
           )}
           <Dato k="Debía haber" v={money(resultado.expectedAmount)} />
           <Dato k="Contaste" v={money(resultado.countedAmount)} />
@@ -165,6 +175,16 @@ export function CashPanel({
           ventas, este cierre no cambia: es la foto de lo que había en el cajón
           al terminar el turno.
         </p>
+
+        <a
+          href={`/imprimir/cierre-caja/${resultado.id}`}
+          target="_blank"
+          rel="noopener"
+          data-cierre="imprimir"
+          className="mt-4 flex h-touch w-full items-center justify-center rounded-xl border border-graphite-300 text-sm font-semibold"
+        >
+          Imprimir ticket de cierre
+        </a>
 
         <button
           type="button"
@@ -197,6 +217,8 @@ export function CashPanel({
           <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
             <Dato k="Fondo inicial" v={money(turno.openingAmount)} />
             <Dato k="Ventas del turno" v={String(turno.salesCount)} />
+            {turno.refundsCashTotal > 0 && <Dato k="Devoluciones pagadas del cajón (restan)" v={`- ${money(turno.refundsCashTotal)}`} />}
+            {turno.refundsOtherTotal > 0 && <Dato k="Devoluciones por otro medio o sin salida (informativo)" v={money(turno.refundsOtherTotal)} />}
             <Dato k="Abrió" v={turno.abiertoPor} />
             <Dato k="Desde" v={formatearFechaLocal(turno.openedAt, zonaHoraria)} />
           </dl>
@@ -326,9 +348,17 @@ export function CashPanel({
               <Dato k="Pagos a proveedores en efectivo" v={`- ${money(ultimoCierre.supplierCashPaymentsTotal)}`} />
             )}
             {ultimoCierre.refundsCashTotal > 0 && (
-              <Dato k="Devoluciones pagadas del cajón" v={`- ${money(ultimoCierre.refundsCashTotal)}`} />
+              <Dato k="Devoluciones pagadas del cajón (restan)" v={`- ${money(ultimoCierre.refundsCashTotal)}`} />
+            )}
+            {ultimoCierre.refundsOtherTotal > 0 && (
+              <Dato k="Devoluciones por otro medio o sin salida (informativo)" v={money(ultimoCierre.refundsOtherTotal)} />
             )}
           </dl>
+          {puedeImprimirUltimoCierre && (
+            <a href={`/imprimir/cierre-caja/${ultimoCierre.id}`} target="_blank" rel="noopener" data-cierre="imprimir-ultimo" className="mt-3 inline-block text-sm font-semibold underline">
+              Imprimir ticket de cierre
+            </a>
+          )}
         </div>
       )}
     </div>

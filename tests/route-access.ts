@@ -35,6 +35,15 @@ check('los webhooks NO se redirigen al login (Stripe llega sin cookie)',
     d.kind === 'redirect' && d.to === ROUTES.superadmin)
 }
 
+{
+  for (const ruta of ['/ventas', '/ventas/abc123', '/imprimir/cierre-caja/abc123']) {
+    const d = at(ruta, null)
+    check(`${ruta} sin sesión redirige al login`, d.kind === 'redirect' && d.to.startsWith('/login?callbackUrl='), d.kind === 'redirect' ? d.to : '')
+    check(`${ruta} con sesión de negocio pasa (el permiso lo decide la página)`, at(ruta, sess()).kind === 'allow')
+    check(`${ruta} cerrada para un SUPERADMIN sin soporte`, at(ruta, sess({ tenantId: null, role: 'SUPERADMIN' })).kind === 'redirect')
+  }
+}
+
 console.log('\n2) Panel Super Admin (§5.3): invisible para clientes')
 check('SUPERADMIN entra', at('/superadmin', sess({ tenantId: null, role: 'SUPERADMIN' })).kind === 'allow')
 {

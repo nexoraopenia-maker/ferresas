@@ -1,8 +1,10 @@
+import Link from 'next/link'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { requireTenantContext } from '@/lib/session'
 import { PosTerminal } from '@/features/pos/components/PosTerminal'
 import { puede } from '@/lib/puede'
 import { topeDescuento } from '@/lib/descuentos'
+import { puedeVerVentas } from '@/features/ventas/permisos'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,6 +50,7 @@ export default async function PosPage({
               ? `Almacén: ${warehouse.name}`
               : 'Esta sucursal no tiene almacén activo'}
         </p>
+        {puedeVerVentas(ctx) && <p className="mt-1 text-sm"><Link href="/ventas" data-enlace="historial-ventas" className="font-semibold text-industrial-600 underline">Ventas recientes</Link></p>}
       </header>
 
       {warehouse ? (
@@ -57,6 +60,7 @@ export default async function PosPage({
           puedeCobrar={puede(ctx, 'ventas.cobrar')}
           puedeArmarPedido={puede(ctx, 'ventas.crear')}
           puedeFiar={puede(ctx, 'credito.otorgar')}
+          puedeVerVenta={puedeVerVentas(ctx)}
           topeDescuentoPct={topeDescuento(ctx)}
           // Solo un id sencillo: el servidor valida de nuevo al tomarlo.
           pedidoId={pedido && /^[\w-]{1,64}$/.test(pedido) ? pedido : undefined}

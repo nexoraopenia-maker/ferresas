@@ -150,7 +150,7 @@ export function puenteVentas(ventas: readonly VentaConc[], anuladas: LineaPuente
 
 // ─── Comprobaciones por venta ───────────────────────────────────────────────────────────────────────────────────────
 
-export function hallazgosDeVentas(ventas: readonly VentaConc[], ahoraMs: number, modo: ModoFiscal, enlaceVenta: (id: string) => string | null = () => '/comprobantes'): Hallazgo[] {
+export function hallazgosDeVentas(ventas: readonly VentaConc[], ahoraMs: number, modo: ModoFiscal, enlaceVenta: (id: string) => string | null = (id) => `/ventas/${id}`): Hallazgo[] {
   const out: Hallazgo[] = []
   // Ventas que piden boleta/factura y no tienen comprobante: por antigüedad.
   const sin = ventas.filter((v) => !v.doc && (v.pide === 'BOLETA' || v.pide === 'FACTURA'))
@@ -209,7 +209,7 @@ export function estaNeutralizado(doc: VentaCerrada['doc']): boolean {
   return ncs.some((n) => n.motivoTotal) || ncs.reduce((a, n) => a + c(n.total), 0) >= c(doc.total)
 }
 
-export function hallazgosVentasCerradas(ventas: readonly VentaCerrada[], modo: ModoFiscal, enlaceVenta: (id: string) => string | null = () => '/comprobantes'): Hallazgo[] {
+export function hallazgosVentasCerradas(ventas: readonly VentaCerrada[], modo: ModoFiscal, enlaceVenta: (id: string) => string | null = (id) => `/ventas/${id}`): Hallazgo[] {
   const vivos = ventas.filter((v) => v.doc.estado !== 'RECHAZADO' && v.doc.estado !== 'ANULADO' && !estaNeutralizado(v.doc))
   if (!vivos.length) return []
   return [hallazgo('COMPROBANTE_VIVO_EN_VENTA_CERRADA', tope('ERROR', modo), 'Ventas anuladas o devueltas con un comprobante vivo sin nota de crédito',

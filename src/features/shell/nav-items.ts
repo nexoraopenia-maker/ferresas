@@ -2,6 +2,7 @@ import type { Permiso } from '@/lib/permisos'
 import { PERMISOS_VER_CLIENTES, PERMISOS_VER_COBRANZA } from '@/features/clientes/permisos'
 import { PERMISOS_VER_PROVEEDORES } from '@/features/proveedores/permisos'
 import { PERMISOS_VER_POR_PAGAR } from '@/features/por-pagar/permisos'
+import { PERMISOS_VER_VENTAS } from '@/features/ventas/permisos'
 
 /**
  * Elementos de navegación, en UN solo sitio.
@@ -145,6 +146,15 @@ export const NAV_ITEMS: NavItem[] = [
     // Camión
     icon: 'M3 7h11v9H3V7Zm11 3h4l3 3v3h-7v-6ZM7 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm10 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z',
     permisos: ['guias.emitir', 'guias.anular', 'reportes.ver'],
+  },
+  {
+    href: '/ventas',
+    label: 'Ventas',
+    short: 'Ventas',
+    // Recibo con visto
+    icon: 'M7 3h10a2 2 0 0 1 2 2v16l-3-2-2 2-2-2-2 2-2-2-3 2V5a2 2 0 0 1 2-2Zm1 5h8M8 12h8M8 16h5',
+    // Los mismos permisos que la página y el servicio: quien cobra, quien anula o quien revisa reportes. Ver no concede poder alguno.
+    permisos: [...PERMISOS_VER_VENTAS],
   },
   {
     href: '/pedidos',

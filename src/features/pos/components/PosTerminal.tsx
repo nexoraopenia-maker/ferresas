@@ -63,6 +63,7 @@ export function PosTerminal({
   pedidoId,
   topeDescuentoPct = 0,
   puedeFiar = false,
+  puedeVerVenta = false,
 }: {
   warehouseName: string
   /** Zona del negocio: ver la nota en CashPanel. */
@@ -77,6 +78,8 @@ export function PosTerminal({
   topeDescuentoPct?: number
   /** Tiene `credito.otorgar`: puede vender a crédito (fiar). */
   puedeFiar?: boolean
+  /** Puede ver el historial de ventas: el recibo ofrece abrir la venta recién cobrada. */
+  puedeVerVenta?: boolean
 }) {
   const [carrito, setCarrito] = useState<LineaCarrito[]>([])
   const enLinea = useEnLinea()
@@ -519,7 +522,7 @@ export function PosTerminal({
       {(recibo || aviso || error) && (
         <div className="flex flex-col gap-3 lg:col-span-2">
           {recibo && (
-            <ReciboEmitido recibo={recibo} onCerrar={() => setRecibo(null)} />
+            <ReciboEmitido recibo={recibo} onCerrar={() => setRecibo(null)} puedeVerVenta={puedeVerVenta} />
           )}
           {cotizacion && (
             <div className="rounded-2xl border-2 border-industrial-600 bg-industrial-50 p-4 dark:bg-industrial-950">

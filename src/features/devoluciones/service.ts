@@ -280,3 +280,45 @@ export async function anularOdevolverVenta(db: TenantPrismaClient, ctx: TenantCo
     throw e
   }
 }
+
+// ─── Lo que la pantalla necesita saber ANTES de devolver ────────────────────────────────────────────────────────────────────────
+
+export interface DiagnosticoDevolucion {
+  puede: boolean
+  /** Por qué NO se puede, en español claro y accionable (`code` distingue abonos, cola fiscal, producto dado de baja…). */
+  bloqueo: { code: string; mensaje: string } | null
+  /** Lo que el cliente pagó de verdad (sin lo fiado ni el vuelto). */
+  pagadoNeto: number
+  /** El reembolso propuesto: el dinero vuelve por donde entró. */
+  reembolsos: ReembolsoValido[]
+  /** ¿Hay un turno de caja abierto en la sucursal de la venta? Sin él, el efectivo no puede salir del cajón. */
+  hayTurnoAbierto: boolean
+  /** Si la venta tiene un comprobante real vivo, se emitirá su nota de crédito total (01 al anular, 06 al devolver). */
+  nota: { comprobante: string } | null
+  /** Si el comprobante es de ensayo, se marca anulado (sin nota). */
+  comprobanteDeEnsayo: boolean
+  /** Deuda del cliente que se cancelará (venta fiada sin abonos), en soles. */
+  cuentaACancelar: number
+}
+
+/**
+ * Lo mismo que comprobará `anularOdevolverVenta`, sin ejecutar nada: sirve para enseñar el botón, el reembolso propuesto y el motivo exacto
+ * por el que una venta no se puede devolver. Exige `ventas.anular` (quien no puede devolver no necesita este análisis).
+ */
+export async function diagnosticarDevolucion(db: TenantPrismaClient, ctx: TenantContext, saleId: string): Promise<DiagnosticoDevolucion> {
+  exigir(ctx, 'ventas.anular')
+  const vacio: DiagnosticoDevolucion = { puede: false, bloqueo: null, pagadoNeto: 0, reembolsos: [], hayTurnoAbierto: false, nota: null, comprobanteDeEnsayo: false, cuentaACancelar: 0 }
+  try {
+    const ev = await evaluar(db, { saleId, kind: 'DEVOLUCION', reason: 'diagnóstico', idempotencyKey: '00000000-0000-4000-8000-000000000000' })
+    const turno = await db.cashSession.findFirst({ where: { branchId: ev.venta.branchId, status: 'ABIERTA' }, select: { id: true } })
+    return {
+      puede: true, bloqueo: null, pagadoNeto: ev.paidNetCent / 100, reembolsos: ev.reembolsos, hayTurnoAbierto: !!turno,
+      nota: ev.planDoc.accion === 'EMITIR_NOTA' ? { comprobante: ev.venta.taxDocuments[0]!.fullNumber } : null,
+      comprobanteDeEnsayo: ev.planDoc.accion === 'MARCAR_ENSAYO',
+      cuentaACancelar: ev.planCredito.accion === 'CANCELAR_CUENTA' ? ev.planCredito.montoCent / 100 : 0,
+    }
+  } catch (e) {
+    if (e instanceof BusinessError && e.code !== 'FORBIDDEN_ROLE' && e.code !== 'TENANT_MISMATCH') return { ...vacio, bloqueo: { code: e.code, mensaje: e.message } }
+    throw e
+  }
+}

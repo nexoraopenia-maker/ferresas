@@ -355,7 +355,7 @@ export async function closeCashSession(
 export async function currentCashSession(
   db: TenantPrismaClient,
   ctx: TenantContext,
-): Promise<(CashSessionResult & { expectedAmount: number; salesCount: number }) | null> {
+): Promise<(CashSessionResult & { expectedAmount: number; salesCount: number; refundsCashTotal: number; refundsOtherTotal: number }) | null> {
   const branchId = requireBranch(ctx)
 
   const s = await db.cashSession.findFirst({
@@ -373,6 +373,8 @@ export async function currentCashSession(
     openedAt: s.openedAt.toISOString(),
     expectedAmount: efectivoEsperado(num(s.openingAmount), tot),
     salesCount: tot.salesCount,
+    refundsCashTotal: tot.refundsCashTotal,
+    refundsOtherTotal: tot.refundsOtherTotal,
   }
 }
 
