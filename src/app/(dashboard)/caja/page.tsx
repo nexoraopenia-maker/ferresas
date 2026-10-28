@@ -1,6 +1,7 @@
 import { requireTenantContext } from '@/lib/session'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
-import { currentCashSession } from '@/features/branches/cash-service'
+import { currentCashSession, desgloseDeMovimientos } from '@/features/branches/cash-service'
+import { listarMovimientosDelTurno, puedeVerMovimientos } from '@/features/branches/cash-movement-service'
 import { puede } from '@/lib/puede'
 import { CashPanel } from '@/features/branches/components/CashPanel'
 import { CajaObligatoria } from '@/features/branches/components/CajaObligatoria'
@@ -55,6 +56,8 @@ export default async function CajaPage() {
     : null
 
   const n = (v: unknown) => Number(v ?? 0)
+  const lista = turnoRaw && puedeVerMovimientos(ctx) ? await listarMovimientosDelTurno(db, ctx, turnoRaw.id) : []
+  const desgloseUltimo = ultimo ? await desgloseDeMovimientos(db, ultimo.id) : null
 
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-5 p-4">
@@ -73,6 +76,7 @@ export default async function CajaPage() {
         sucursal={sucursal?.name ?? 'Sucursal'}
         zonaHoraria={tenant?.timezone ?? 'America/Lima'}
         puedeOperar={ctx.access === 'FULL' || ctx.access === 'WARN'}
+        permisos={{ movimientos: puede(ctx, 'caja.movimientos'), ajuste: puede(ctx, 'caja.ajuste') }}
         turno={
           turnoRaw
             ? {
@@ -82,6 +86,8 @@ export default async function CajaPage() {
                 salesCount: turnoRaw.salesCount,
                 refundsCashTotal: turnoRaw.refundsCashTotal,
                 refundsOtherTotal: turnoRaw.refundsOtherTotal,
+                movimientos: turnoRaw.movimientos,
+                lista,
                 openedAt: turnoRaw.openedAt,
                 abiertoPor:
                   abiertoPor?.openedBy.name ?? abiertoPor?.openedBy.email ?? '—',
@@ -107,6 +113,7 @@ export default async function CajaPage() {
                 supplierOtherPaymentsTotal: n(ultimo.supplierOtherPaymentsTotal),
                 refundsCashTotal: n(ultimo.refundsCashTotal),
                 refundsOtherTotal: n(ultimo.refundsOtherTotal),
+                movimientos: desgloseUltimo!,
                 closedAt: (ultimo.closedAt ?? new Date()).toISOString(),
                 cerradoPor: ultimo.closedBy?.name ?? ultimo.closedBy?.email ?? undefined,
               }

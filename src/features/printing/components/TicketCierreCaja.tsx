@@ -9,7 +9,7 @@ import type { TicketCierre } from '../cierre-caja'
 export function TicketCierreCaja({ ticket: c }: { ticket: TicketCierre }) {
   const fmt = (n: number) => new Intl.NumberFormat('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
   const s = (n: number) => `S/ ${fmt(n)}`
-  const informativas = c.fiado > 0 || c.abonosOtrosMedios > 0 || c.pagosProveedorOtrosMedios > 0 || c.devolucionesOtrosMedios > 0
+  const informativas = c.fiado > 0 || c.abonosOtrosMedios > 0 || c.pagosProveedorOtrosMedios > 0 || c.devolucionesOtrosMedios > 0 || c.compensacionesOtrosMedios > 0
   return (
     <article className="ticket" data-ticket="cierre-caja">
       <header className="t-centro">
@@ -45,6 +45,9 @@ export function TicketCierreCaja({ ticket: c }: { ticket: TicketCierre }) {
       {c.abonosEfectivo > 0 && <Par etiqueta="+ Abonos en efectivo" valor={s(c.abonosEfectivo)} />}
       {c.pagosProveedorEfectivo > 0 && <Par etiqueta="- Pagos a proveedores" valor={s(c.pagosProveedorEfectivo)} />}
       {c.devolucionesCajon > 0 && <div data-ticket="devoluciones-cajon"><Par etiqueta="- Devoluciones pagadas del cajón" valor={s(c.devolucionesCajon)} /></div>}
+      {c.ingresosManuales > 0 && <div data-ticket="ingresos-manuales"><Par etiqueta="+ Ingresos manuales" valor={s(c.ingresosManuales)} /></div>}
+      {c.egresosManuales > 0 && <div data-ticket="egresos-manuales"><Par etiqueta="- Egresos manuales" valor={s(c.egresosManuales)} /></div>}
+      {c.compensacionesEfectivo > 0 && <div data-ticket="compensaciones-efectivo"><Par etiqueta="- Compensaciones de abonos anulados" valor={s(c.compensacionesEfectivo)} /></div>}
 
       <div className="t-sep" aria-hidden />
 
@@ -62,6 +65,9 @@ export function TicketCierreCaja({ ticket: c }: { ticket: TicketCierre }) {
           {c.fiado > 0 && <Par etiqueta="Fiado" valor={s(c.fiado)} />}
           {c.abonosOtrosMedios > 0 && <Par etiqueta="Abonos otros medios" valor={s(c.abonosOtrosMedios)} />}
           {c.pagosProveedorOtrosMedios > 0 && <Par etiqueta="Pagos prov. otros medios" valor={s(c.pagosProveedorOtrosMedios)} />}
+          {c.compensacionesOtrosMedios > 0 && (
+            <div data-ticket="compensaciones-otros"><Par etiqueta="Compensaciones otros medios" valor={s(c.compensacionesOtrosMedios)} /></div>
+          )}
           {c.devolucionesOtrosMedios > 0 && (
             <div data-ticket="devoluciones-otros"><Par etiqueta="Devoluciones otro medio / sin salida" valor={s(c.devolucionesOtrosMedios)} /></div>
           )}

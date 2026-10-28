@@ -3,6 +3,7 @@ import { diaLocal } from '@/lib/periodos'
 import { puede } from '@/lib/puede'
 import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
+import { desgloseDeMovimientos } from '@/features/branches/cash-service'
 
 /**
  * Ticket de cierre de turno de caja. SOLO LECTURA y SOLO de turnos CERRADOS: lee las columnas congeladas al cerrar, de modo que una
@@ -39,6 +40,12 @@ export interface TicketCierre {
   devolucionesCajon: number
   /** Devoluciones por otro medio o sin salida de dinero: informativo, no tocaron el cajón. */
   devolucionesOtrosMedios: number
+  /** Movimientos manuales de efectivo, congelados al cerrar: los que suman al cajón, los que restan y las compensaciones de abonos anulados. */
+  ingresosManuales: number
+  egresosManuales: number
+  compensacionesEfectivo: number
+  /** Compensaciones por otros medios: informativas, no tocaron el cajón. */
+  compensacionesOtrosMedios: number
   fiado: number
   abonosOtrosMedios: number
   pagosProveedorOtrosMedios: number
@@ -61,7 +68,7 @@ export async function getTicketCierre(db: TenantPrismaClient, ctx: TenantContext
     select: {
       id: true, openingAmount: true, countedAmount: true, expectedAmount: true, difference: true, openedAt: true, closedAt: true, closingNotes: true,
       salesCount: true, salesTotal: true, cashTotal: true, changeTotal: true, supplierCashPaymentsTotal: true, supplierOtherPaymentsTotal: true,
-      refundsCashTotal: true, refundsOtherTotal: true, creditSalesTotal: true, cashReceiptsTotal: true, otherReceiptsTotal: true,
+      refundsCashTotal: true, refundsOtherTotal: true, manualInTotal: true, manualOutTotal: true, creditSalesTotal: true, cashReceiptsTotal: true, otherReceiptsTotal: true,
       branch: { select: { name: true } },
       openedBy: { select: { name: true, email: true } },
       closedBy: { select: { name: true, email: true } },
@@ -69,6 +76,8 @@ export async function getTicketCierre(db: TenantPrismaClient, ctx: TenantContext
   })
   if (!s || !s.closedAt) throw new BusinessError('NOT_FOUND', 'El cierre de caja no existe.')
   const t = await db.tenant.findFirstOrThrow({ select: { name: true, legalName: true, taxId: true, address: true, phone: true, timezone: true, locale: true } })
+  // Un turno cerrado ya no admite movimientos ni anulaciones: el desglose es estable. Los totales congelados mandan; el desglose solo separa las compensaciones.
+  const mov = await desgloseDeMovimientos(db, s.id)
   const nombre = (u: { name: string | null; email: string }) => u.name ?? u.email
   return {
     numero: numeroDeCierre(s.id, diaLocal(t.timezone, s.closedAt)),
@@ -82,6 +91,8 @@ export async function getTicketCierre(db: TenantPrismaClient, ctx: TenantContext
     cobradoEfectivo: num(s.cashTotal), vueltos: num(s.changeTotal),
     abonosEfectivo: num(s.cashReceiptsTotal), pagosProveedorEfectivo: num(s.supplierCashPaymentsTotal),
     devolucionesCajon: num(s.refundsCashTotal), devolucionesOtrosMedios: num(s.refundsOtherTotal),
+    ingresosManuales: num(s.manualInTotal), egresosManuales: Math.round((num(s.manualOutTotal) - mov.compensacionesEfectivo) * 100) / 100,
+    compensacionesEfectivo: mov.compensacionesEfectivo, compensacionesOtrosMedios: mov.compensacionesOtrosMedios,
     fiado: num(s.creditSalesTotal), abonosOtrosMedios: num(s.otherReceiptsTotal), pagosProveedorOtrosMedios: num(s.supplierOtherPaymentsTotal),
     esperado: num(s.expectedAmount), contado: num(s.countedAmount), diferencia: num(s.difference),
     notas: s.closingNotes,

@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useMemo, useState, useTransition } from 'react'
+import { useMemo, useState, useTransition, type ReactNode } from 'react'
 import { MENSAJE_SIN_RED, useEnLinea } from '@/lib/en-linea'
 import { devolverProductos } from '@/features/devoluciones/actions'
 import type { DiagnosticoParcial } from '@/features/devoluciones/parcial-service'
@@ -24,7 +24,7 @@ interface AjusteReembolso { mode?: ModoReembolso; method?: string; reference?: s
  * deuda y dinero y el tope se calculan EN VIVO con la misma función que el servidor; el servidor vuelve a comprobarlo todo. La clave de
  * idempotencia nace al abrir el formulario.
  */
-export function FormularioDevolucionParcial({ saleId, numero, diagnostico: d, puedeOperar, pedidosIniciales }: {
+export function FormularioDevolucionParcial({ saleId, numero, diagnostico: d, puedeOperar, pedidosIniciales, ayudaAbonos }: {
   saleId: string
   numero: string
   diagnostico: DiagnosticoParcial
@@ -32,6 +32,8 @@ export function FormularioDevolucionParcial({ saleId, numero, diagnostico: d, pu
   puedeOperar: boolean
   /** Cantidades y destinos con que arranca el formulario (por defecto, ninguno). Sirve para «devolver lo que falta» y para probar cada estado. */
   pedidosIniciales?: Record<string, { cantidad: string; destino?: 'STOCK' | 'MERMA' }>
+  /** Qué hacer cuando el cálculo en vivo se bloquea por abonos cobrados (`AyudaAbonos`): la página la arma con el permiso y el cliente. */
+  ayudaAbonos?: ReactNode
 }) {
   const router = useRouter()
   const enLinea = useEnLinea()
@@ -156,6 +158,7 @@ export function FormularioDevolucionParcial({ saleId, numero, diagnostico: d, pu
       </label>
 
       {calc.estado === 'ERROR' && <p role="alert" data-devolucion="error-calculo" className="rounded-lg bg-stock-out-soft px-3 py-2 font-semibold text-stock-out">{calc.mensaje}</p>}
+      {calc.estado === 'BLOQUEADO' && calc.code === 'CREDIT_HAS_PAYMENTS' && ayudaAbonos}
       {calc.estado === 'BLOQUEADO' && <p role="alert" data-devolucion="bloqueado" data-codigo={calc.code} className="rounded-lg bg-stock-out-soft px-3 py-2 font-semibold text-stock-out">{calc.mensaje}</p>}
 
       {calc.estado === 'OK' && (

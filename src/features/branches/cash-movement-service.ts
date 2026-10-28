@@ -211,3 +211,50 @@ export async function compensarAbonoEn(
   })
   return { movementId: m.id, cashSessionId: abierto.id, efectivo }
 }
+
+// ─── Lectura para la pantalla de caja ───────────────────────────────────────────────────────────────────────────────
+
+export interface FilaMovimiento {
+  id: string
+  kind: TipoMovimiento
+  category: CategoriaDeMovimiento
+  method: string
+  amount: number
+  description: string
+  reference: string | null
+  exceededExpected: boolean
+  createdAt: string
+  autor: string
+  anulado: boolean
+  motivoAnulacion: string | null
+  /** Nació de anular un abono de un turno cerrado: la hace el sistema y no se anula a mano. */
+  esCompensacion: boolean
+  /** ¿Esta persona puede anularlo AHORA? Solo con el turno abierto, y según la regla de quién anula qué. */
+  puedeAnular: boolean
+}
+
+/** Quién puede VER los movimientos de la caja: quien la opera, quien registra movimientos o ajustes y quien revisa arqueos. */
+export const puedeVerMovimientos = (ctx: TenantContext): boolean =>
+  puede(ctx, 'caja.abrir_cerrar') || puede(ctx, 'caja.movimientos') || puede(ctx, 'caja.ajuste') || puede(ctx, 'caja.arqueo')
+
+/**
+ * Los movimientos manuales de un turno, del más antiguo al más reciente, anulados incluidos (se enseñan tachados: nada desaparece). Solo lectura.
+ * NO devuelve el efectivo esperado ni nada que lo revele: el arqueo es a ciegas.
+ */
+export async function listarMovimientosDelTurno(db: TenantPrismaClient, ctx: TenantContext, sessionId: string): Promise<FilaMovimiento[]> {
+  if (!puedeVerMovimientos(ctx)) throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para ver los movimientos de caja.')
+  const turno = await db.cashSession.findFirst({ where: { id: sessionId }, select: { status: true } })
+  if (!turno) throw new BusinessError('NOT_FOUND', 'El turno de caja no existe.')
+  const tiene = permisosDe(ctx)
+  const filas = await db.cashMovement.findMany({
+    where: { cashSessionId: sessionId }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    select: { ...seleccion, voidedAt: true, voidReason: true, userId: true, user: { select: { name: true, email: true } } },
+  })
+  return filas.map((m): FilaMovimiento => ({
+    id: m.id, kind: m.kind, category: m.category, method: m.method, amount: num(m.amount), description: m.description, reference: m.reference,
+    exceededExpected: m.exceededExpected, createdAt: m.createdAt.toISOString(), autor: m.user.name || m.user.email, anulado: m.voidedAt !== null, motivoAnulacion: m.voidReason,
+    esCompensacion: m.category === CATEGORIA_COMPENSACION,
+    puedeAnular: turno.status === 'ABIERTA' && m.voidedAt === null && m.category !== CATEGORIA_COMPENSACION
+      && puedeAnular({ tiene, esAutor: m.userId === ctx.userId, categoria: m.category, montoCent: cent(m.amount) }),
+  }))
+}

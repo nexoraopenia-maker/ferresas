@@ -41,7 +41,7 @@ check('la tabla es legible: cabeceras con scope y filas con th de fila', t3.incl
 console.log('\nB) Detalle de la venta')
 const base: Detalle = {
   id: 'venta0001abc', numero: 'B001-00000007', estado: 'COMPLETADA', cuando: '2026-10-26T20:15:00.000Z', sucursal: { id: 's1', nombre: 'Central' }, cobro: 'Rosa',
-  cliente: { nombre: 'Constructora SAC', documento: 'RUC 20123456789' }, notas: null, subtotal: 100, igv: 18, descuento: 0, total: 118,
+  cliente: { id: 'cli-1', nombre: 'Constructora SAC', documento: 'RUC 20123456789' }, notas: null, subtotal: 100, igv: 18, descuento: 0, total: 118,
   lineas: [{ id: 'li1', devuelta: 0, importeDevuelto: 0, pendiente: 10, nombre: 'Cemento Sol', sku: 'CEM-1', unidad: 'UNIDAD', cantidad: 10, presentacion: { nombre: 'Caja x 10', ingresada: 1, factor: 10 }, precio: 11.8, descuento: 0, total: 118 }],
   pagos: [{ metodo: 'EFECTIVO', monto: 120, vuelto: 2, referencia: null }],
   cuenta: { estado: 'PENDIENTE', monto: 118, abonado: 0, saldo: 118, vence: '2026-11-25', enRevision: false },
@@ -109,7 +109,7 @@ console.log('\nF) Caja: resumen del turno, cierre y ticket')
 const tk: TicketCierre = {
   numero: 'CC-20261027-ABC123', zonaHoraria: 'America/Lima', locale: 'es-PE', emisor: { nombre: 'Ferretería Demo', razonSocial: null, ruc: '20123456789', direccion: null, telefono: null },
   sucursal: 'Central', abrio: 'Rosa', cerro: 'Rosa', abiertoEn: '2026-10-27T13:00:00.000Z', cerradoEn: '2026-10-27T23:00:00.000Z', fondoInicial: 100,
-  ventasCantidad: 4, ventasTotal: 800, cobradoEfectivo: 500, vueltos: 20, abonosEfectivo: 0, pagosProveedorEfectivo: 0, devolucionesCajon: 118, devolucionesOtrosMedios: 40,
+  ingresosManuales: 0, egresosManuales: 0, compensacionesEfectivo: 0, compensacionesOtrosMedios: 0, ventasCantidad: 4, ventasTotal: 800, cobradoEfectivo: 500, vueltos: 20, abonosEfectivo: 0, pagosProveedorEfectivo: 0, devolucionesCajon: 118, devolucionesOtrosMedios: 40,
   fiado: 0, abonosOtrosMedios: 0, pagosProveedorOtrosMedios: 0, esperado: 462, contado: 462, diferencia: 0, notas: null,
 }
 const tc = html(createElement(TicketCierreCaja, { ticket: tk }))
@@ -119,10 +119,10 @@ check('cuadra: «CUADRA» sin diferencia; faltante y sobrante con su rótulo', t
 const sinDev = html(createElement(TicketCierreCaja, { ticket: { ...tk, devolucionesCajon: 0, devolucionesOtrosMedios: 0 } }))
 check('sin devoluciones no aparece ninguna de las dos líneas ni el bloque informativo', !sinDev.includes('devoluciones-cajon') && !sinDev.includes('devoluciones-otros') && !sinDev.includes('Informativo'))
 check('>>> es un documento interno: lo dice en el pie y NO muestra costos', tc.includes('No es un comprobante') && !/costo|utilidad|margen/i.test(tc))
-const pc = (o: Record<string, unknown>) => html(createElement(CashPanel, { turno: { id: 't1', openingAmount: 100, expectedAmount: 462, salesCount: 4, refundsCashTotal: 118, refundsOtherTotal: 40, openedAt: '2026-10-27T13:00:00.000Z', abiertoPor: 'Rosa' }, ultimoCierre: null, sucursal: 'Central', puedeOperar: true, zonaHoraria: 'America/Lima', ...o } as never))
+const pc = (o: Record<string, unknown>) => html(createElement(CashPanel, { turno: { id: 't1', openingAmount: 100, expectedAmount: 462, salesCount: 4, refundsCashTotal: 118, refundsOtherTotal: 40, movimientos: { ingresos: 0, egresos: 0, compensacionesEfectivo: 0, compensacionesOtrosMedios: 0 }, lista: [], openedAt: '2026-10-27T13:00:00.000Z', abiertoPor: 'Rosa' }, ultimoCierre: null, sucursal: 'Central', puedeOperar: true, zonaHoraria: 'America/Lima', ...o } as never))
 const abierto = pc({})
 check('>>> el turno abierto muestra las devoluciones (cajón restan / otro medio informativo) SIN revelar el efectivo esperado', abierto.includes('Devoluciones pagadas del cajón') && abierto.includes('Devoluciones por otro medio') && !abierto.includes('462.00'))
-const cierre = { id: 'c1', openingAmount: 100, countedAmount: 462, expectedAmount: 462, difference: 0, salesCount: 4, salesTotal: 800, cashTotal: 500, changeTotal: 20, creditSalesTotal: 0, cashReceiptsTotal: 0, otherReceiptsTotal: 0, supplierCashPaymentsTotal: 0, supplierOtherPaymentsTotal: 0, refundsCashTotal: 118, refundsOtherTotal: 40, closedAt: '2026-10-27T23:00:00.000Z', cerradoPor: 'Rosa' }
+const cierre = { movimientos: { ingresos: 0, egresos: 0, compensacionesEfectivo: 0, compensacionesOtrosMedios: 0 }, id: 'c1', openingAmount: 100, countedAmount: 462, expectedAmount: 462, difference: 0, salesCount: 4, salesTotal: 800, cashTotal: 500, changeTotal: 20, creditSalesTotal: 0, cashReceiptsTotal: 0, otherReceiptsTotal: 0, supplierCashPaymentsTotal: 0, supplierOtherPaymentsTotal: 0, refundsCashTotal: 118, refundsOtherTotal: 40, closedAt: '2026-10-27T23:00:00.000Z', cerradoPor: 'Rosa' }
 const ult = pc({ turno: null, ultimoCierre: cierre, puedeImprimirUltimoCierre: true })
 check('>>> el último cierre muestra ambas líneas y el enlace al ticket (solo si puede)', ult.includes('Devoluciones pagadas del cajón') && ult.includes('Devoluciones por otro medio') && ult.includes('href="/imprimir/cierre-caja/c1"'))
 check('sin permiso de imprimir no hay enlace', !pc({ turno: null, ultimoCierre: cierre, puedeImprimirUltimoCierre: false }).includes('/imprimir/cierre-caja/'))

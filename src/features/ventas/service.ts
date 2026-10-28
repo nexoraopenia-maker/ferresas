@@ -132,7 +132,7 @@ export interface DetalleVenta {
   cuando: string | null
   sucursal: { id: string; nombre: string }
   cobro: string
-  cliente: { nombre: string; documento: string | null } | null
+  cliente: { id: string; nombre: string; documento: string | null } | null
   notas: string | null
   subtotal: number
   igv: number
@@ -155,7 +155,7 @@ export async function obtenerVenta(db: TenantPrismaClient, ctx: TenantContext, s
     where: { id: saleId },
     select: {
       id: true, number: true, status: true, completedAt: true, subtotal: true, taxTotal: true, discountTotal: true, total: true, notes: true,
-      branch: { select: { id: true, name: true } }, user: { select: { name: true, email: true } }, customer: { select: { name: true, docType: true, docNumber: true } },
+      branch: { select: { id: true, name: true } }, user: { select: { name: true, email: true } }, customer: { select: { id: true, name: true, docType: true, docNumber: true } },
       items: {
         orderBy: { id: 'asc' },
         select: { id: true, nameSnapshot: true, skuSnapshot: true, unitType: true, quantity: true, unitPrice: true, discount: true, lineTotal: true, enteredQuantity: true, presentationName: true, presentationFactor: true, returnedQuantity: true, returnedAmount: true },
@@ -186,7 +186,7 @@ export async function obtenerVenta(db: TenantPrismaClient, ctx: TenantContext, s
   return {
     id: v.id, numero: v.number, estado: v.status as DetalleVenta['estado'], cuando: v.completedAt ? v.completedAt.toISOString() : null,
     sucursal: { id: v.branch.id, nombre: v.branch.name }, cobro: v.user.name || v.user.email,
-    cliente: v.customer ? { nombre: v.customer.name, documento: v.customer.docNumber ? `${v.customer.docType} ${v.customer.docNumber}` : null } : null,
+    cliente: v.customer ? { id: v.customer.id, nombre: v.customer.name, documento: v.customer.docNumber ? `${v.customer.docType} ${v.customer.docNumber}` : null } : null,
     notas: v.notes, subtotal: num(v.subtotal), igv: num(v.taxTotal), descuento: num(v.discountTotal), total: num(v.total),
     lineas: v.items.map((i) => ({
       id: i.id, devuelta: num(i.returnedQuantity), importeDevuelto: num(i.returnedAmount), pendiente: Math.round((num(i.quantity) - num(i.returnedQuantity)) * 10_000) / 10_000,

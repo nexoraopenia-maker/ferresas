@@ -4,6 +4,10 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatearFechaLocal } from '@/lib/fecha-local'
 import { closeCash, openCash } from '../actions'
+import { MovimientosCaja } from './MovimientosCaja'
+import type { PermisosDeCaja } from '../cash-movement-formulario'
+import type { FilaMovimiento } from '../cash-movement-service'
+import type { DesgloseMovimientos } from '../cash-service'
 
 const money = (n: number) =>
   `S/ ${new Intl.NumberFormat('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)}`
@@ -17,6 +21,9 @@ export interface TurnoAbierto {
   refundsCashTotal: number
   /** Devoluciones por otro medio o sin salida de dinero (informativo: no tocaron el cajón). */
   refundsOtherTotal: number
+  /** Movimientos manuales separados (ingresos, egresos y compensaciones). Nunca incluye el efectivo esperado. */
+  movimientos: DesgloseMovimientos
+  lista: FilaMovimiento[]
   openedAt: string
   abiertoPor: string
 }
@@ -42,6 +49,7 @@ export interface CierreReciente {
   refundsCashTotal: number
   /** Devoluciones por otro medio o sin salida de dinero: no tocaron el cajón. */
   refundsOtherTotal: number
+  movimientos: DesgloseMovimientos
   closedAt: string
   /** Ausente justo tras cerrar: el servicio devuelve el arqueo, no el nombre. */
   cerradoPor?: string
@@ -62,6 +70,7 @@ export function CashPanel({
   sucursal,
   puedeOperar,
   zonaHoraria,
+  permisos = { movimientos: false, ajuste: false },
 }: {
   turno: TurnoAbierto | null
   ultimoCierre: CierreReciente | null
@@ -76,6 +85,8 @@ export function CashPanel({
    * navegador imprimen lo mismo y no hay desajuste de hidratación.
    */
   zonaHoraria: string
+  /** Qué movimientos puede registrar esta persona (la acción vuelve a comprobarlo). */
+  permisos?: PermisosDeCaja
 }) {
   const router = useRouter()
   const [fondo, setFondo] = useState('')
@@ -156,6 +167,7 @@ export function CashPanel({
           {resultado.refundsOtherTotal > 0 && (
             <Dato k="Devoluciones por otro medio o sin salida (informativo)" v={money(resultado.refundsOtherTotal)} />
           )}
+          <LineasMovimientos m={resultado.movimientos} />
           <Dato k="Debía haber" v={money(resultado.expectedAmount)} />
           <Dato k="Contaste" v={money(resultado.countedAmount)} />
           <Dato k="Ventas del turno" v={`${resultado.salesCount} · ${money(resultado.salesTotal)}`} />
@@ -219,10 +231,13 @@ export function CashPanel({
             <Dato k="Ventas del turno" v={String(turno.salesCount)} />
             {turno.refundsCashTotal > 0 && <Dato k="Devoluciones pagadas del cajón (restan)" v={`- ${money(turno.refundsCashTotal)}`} />}
             {turno.refundsOtherTotal > 0 && <Dato k="Devoluciones por otro medio o sin salida (informativo)" v={money(turno.refundsOtherTotal)} />}
+            <LineasMovimientos m={turno.movimientos} />
             <Dato k="Abrió" v={turno.abiertoPor} />
             <Dato k="Desde" v={formatearFechaLocal(turno.openedAt, zonaHoraria)} />
           </dl>
         </div>
+
+        <MovimientosCaja movimientos={turno.lista} tiene={permisos} puedeOperar={puedeOperar} zonaHoraria={zonaHoraria} />
 
         <div className="rounded-2xl border border-hairline bg-surface p-5">
           <h3 className="font-bold text-ink">Cerrar y arquear</h3>
@@ -353,6 +368,7 @@ export function CashPanel({
             {ultimoCierre.refundsOtherTotal > 0 && (
               <Dato k="Devoluciones por otro medio o sin salida (informativo)" v={money(ultimoCierre.refundsOtherTotal)} />
             )}
+            <LineasMovimientos m={ultimoCierre.movimientos} />
           </dl>
           {puedeImprimirUltimoCierre && (
             <a href={`/imprimir/cierre-caja/${ultimoCierre.id}`} target="_blank" rel="noopener" data-cierre="imprimir-ultimo" className="mt-3 inline-block text-sm font-semibold underline">
@@ -362,6 +378,18 @@ export function CashPanel({
         </div>
       )}
     </div>
+  )
+}
+
+/** Las líneas de movimientos manuales: las que mueven el cajón (suman o restan) y las informativas. Solo aparecen las que tienen importe. */
+export function LineasMovimientos({ m }: { m: DesgloseMovimientos }) {
+  return (
+    <>
+      {m.ingresos > 0 && <Dato k="Ingresos manuales (suman)" v={money(m.ingresos)} />}
+      {m.egresos > 0 && <Dato k="Egresos manuales (restan)" v={`- ${money(m.egresos)}`} />}
+      {m.compensacionesEfectivo > 0 && <Dato k="Compensaciones de abonos anulados en efectivo (restan)" v={`- ${money(m.compensacionesEfectivo)}`} />}
+      {m.compensacionesOtrosMedios > 0 && <Dato k="Compensaciones por otros medios (informativo)" v={money(m.compensacionesOtrosMedios)} />}
+    </>
   )
 }
 

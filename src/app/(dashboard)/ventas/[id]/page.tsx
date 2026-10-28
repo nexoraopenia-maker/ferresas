@@ -9,6 +9,7 @@ import { puedeVerVentas } from '@/features/ventas/permisos'
 import { obtenerVenta } from '@/features/ventas/service'
 import { DetalleVenta } from '@/features/ventas/components/DetalleVenta'
 import { FormularioDevolucion } from '@/features/ventas/components/FormularioDevolucion'
+import { AyudaAbonos } from '@/features/ventas/components/AyudaAbonos'
 import { FormularioDevolucionParcial } from '@/features/ventas/components/FormularioDevolucionParcial'
 
 export const dynamic = 'force-dynamic'
@@ -37,17 +38,19 @@ export default async function DetalleVentaPage({ params }: { params: Promise<{ i
       const dp = await diagnosticarDevolucionParcial(db, ctx, venta.id)
       // «Anular / devolver todo» (F6.1) solo mientras la venta no tenga ninguna devolución parcial: después, lo que falta se devuelve por líneas.
       const d = venta.parcial ? null : await diagnosticarDevolucion(db, ctx, venta.id)
+      const ayuda = (codigo?: string) => (codigo === 'CREDIT_HAS_PAYMENTS' ? <AyudaAbonos clienteId={venta.cliente?.id ?? null} puedeAnularAbonos={puede(ctx, 'credito.castigar')} /> : null)
       const aviso = (marca: string, titulo: string, texto: string, codigo?: string) => (
         <section aria-label={titulo} data-devolucion={marca} data-codigo={codigo} role="alert" className="flex flex-col gap-1 rounded-2xl border-2 border-stock-low bg-stock-low-soft p-4 text-sm text-ink">
           <h2 className="text-base font-bold text-stock-low">{titulo}</h2>
           <p>{texto}</p>
+          {ayuda(codigo)}
         </section>
       )
       accion = (
         <>
           {dp.bloqueo
             ? aviso('bloqueo', 'No se pueden devolver productos de esta venta todavía', dp.bloqueo.mensaje, dp.bloqueo.code)
-            : <FormularioDevolucionParcial saleId={venta.id} numero={venta.numero} diagnostico={dp} puedeOperar={puedeOperar} />}
+            : <FormularioDevolucionParcial saleId={venta.id} numero={venta.numero} diagnostico={dp} puedeOperar={puedeOperar} ayudaAbonos={ayuda('CREDIT_HAS_PAYMENTS')} />}
           {d && (d.bloqueo
             ? aviso('bloqueo-total', 'Esta venta no se puede anular ni devolver entera todavía', d.bloqueo.mensaje, d.bloqueo.code)
             : (

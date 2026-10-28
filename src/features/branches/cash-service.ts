@@ -46,7 +46,38 @@ export interface CashCloseResult extends CashSessionResult {
   manualInTotal: number
   /** Egresos manuales de efectivo (F6.3): RESTAN al esperado. */
   manualOutTotal: number
+  /** Los mismos movimientos, separados para enseñarlos (gastos, compensaciones en efectivo, compensaciones informativas). */
+  movimientos: DesgloseMovimientos
   closedAt: string
+}
+
+/**
+ * Los movimientos manuales de un turno (no anulados), separados para enseñarlos con claridad (F6.3c):
+ *  · `ingresos`: efectivo que entró a mano (SUMA al esperado).
+ *  · `egresos`: efectivo que salió a mano por gastos, retiros, correcciones (RESTA).
+ *  · `compensacionesEfectivo`: lo que salió del cajón para compensar abonos anulados de turnos ya cerrados (RESTA).
+ *  · `compensacionesOtrosMedios`: compensaciones de abonos que NO fueron en efectivo: solo informativo, no tocan el cajón.
+ * `ingresos` y `egresos + compensacionesEfectivo` son exactamente `manualInTotal` y `manualOutTotal` del turno.
+ */
+export interface DesgloseMovimientos {
+  ingresos: number
+  egresos: number
+  compensacionesEfectivo: number
+  compensacionesOtrosMedios: number
+}
+
+export async function desgloseDeMovimientos(t: TenantPrismaClient, sessionId: string): Promise<DesgloseMovimientos> {
+  const filas = await t.cashMovement.findMany({ where: { cashSessionId: sessionId, voidedAt: null }, select: { kind: true, category: true, method: true, amount: true } })
+  const r: DesgloseMovimientos = { ingresos: 0, egresos: 0, compensacionesEfectivo: 0, compensacionesOtrosMedios: 0 }
+  for (const m of filas) {
+    const monto = num(m.amount)
+    if (m.category === 'COMPENSACION_ABONO') {
+      if (m.method === 'EFECTIVO') r.compensacionesEfectivo = redondearCentimos(r.compensacionesEfectivo + monto)
+      else r.compensacionesOtrosMedios = redondearCentimos(r.compensacionesOtrosMedios + monto)
+    } else if (m.kind === 'INGRESO') r.ingresos = redondearCentimos(r.ingresos + monto)
+    else r.egresos = redondearCentimos(r.egresos + monto)
+  }
+  return r
 }
 
 export interface TotalesTurno {
@@ -364,6 +395,7 @@ export async function closeCashSession(
       refundsOtherTotal,
       manualInTotal,
       manualOutTotal,
+      movimientos: await desgloseDeMovimientos(t, sesion.id),
       closedAt: cerrado.toISOString(),
     }
   }, { maxWait: 15_000, timeout: 30_000 })
@@ -378,7 +410,7 @@ export async function closeCashSession(
 export async function currentCashSession(
   db: TenantPrismaClient,
   ctx: TenantContext,
-): Promise<(CashSessionResult & { expectedAmount: number; salesCount: number; refundsCashTotal: number; refundsOtherTotal: number; manualInTotal: number; manualOutTotal: number }) | null> {
+): Promise<(CashSessionResult & { expectedAmount: number; salesCount: number; refundsCashTotal: number; refundsOtherTotal: number; manualInTotal: number; manualOutTotal: number; movimientos: DesgloseMovimientos }) | null> {
   const branchId = requireBranch(ctx)
 
   const s = await db.cashSession.findFirst({
@@ -400,6 +432,7 @@ export async function currentCashSession(
     refundsOtherTotal: tot.refundsOtherTotal,
     manualInTotal: tot.manualInTotal,
     manualOutTotal: tot.manualOutTotal,
+    movimientos: await desgloseDeMovimientos(db, s.id),
   }
 }
 
