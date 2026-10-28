@@ -95,7 +95,7 @@ async function cuerpo() {
   check('>>> CONTADO exige cantidad contada; PENDIENTE no puede tenerla', await falla(prisma.inventoryCountItem.update({ where: { id: it.id }, data: { status: 'CONTADO' } })) && await falla(prisma.inventoryCountItem.update({ where: { id: it.id }, data: { countedQty: 3 } })))
   check('>>> lo contado nunca es negativo', await falla(prisma.inventoryCountItem.update({ where: { id: it.id }, data: { status: 'CONTADO', countedQty: -1 } })))
   check('>>> CONTADO con cantidad (incluso cero) es válido', !(await falla(prisma.inventoryCountItem.update({ where: { id: it.id }, data: { status: 'CONTADO', countedQty: 0 } }))))
-  check('>>> los estados de F6.5b (RECONTAR, APROBADO, RECHAZADO) ya existen', await (async () => { for (const s of ['RECONTAR', 'APROBADO', 'RECHAZADO'] as const) await prisma.inventoryCountItem.update({ where: { id: iv.id }, data: { status: s, countedQty: 1 } }); return true })())
+  check('>>> los estados de F6.5b (RECONTAR, APROBADO, RECHAZADO) ya existen', await (async () => { const rev = { reviewedAt: ahora, reviewedById: U, reviewNote: 'Motivo de prueba' }; for (const st of ['RECONTAR', 'APROBADO', 'RECHAZADO'] as const) await prisma.inventoryCountItem.update({ where: { id: iv.id }, data: { status: st, countedQty: 1, ...rev } }); return true })())
 
   console.log('\nD) Las pasadas')
   const ent = (o: Record<string, unknown> = {}) => prisma.inventoryCountEntry.create({ data: { tenantId: A.t.id, itemId: it.id, countId: cl.id, quantity: 5, userId: U, idempotencyKey: randomUUID(), ...o } as never })
@@ -114,11 +114,34 @@ async function cuerpo() {
   check('>>> ni a una línea de otro negocio, ni a un usuario inexistente', await falla(ent({ tenantId: B.t.id })) && await falla(ent({ userId: 'no-existe' })))
   check('>>> la presentación de otro negocio se rechaza', await (async () => { const pb = await prisma.productPresentation.create({ data: { tenantId: B.t.id, productId: B.prod.id, name: 'Caja', unitType: 'UNIDAD', factor: 2 } }); return falla(ent({ quantity: 4, presentationId: pb.id, enteredQuantity: 2, presentationFactor: 2 })) })())
 
+  console.log('\nD2) Las líneas revisadas (F6.5b)')
+  const itR = await item({ productId: A.prod.id, variantId: null }).catch(async () => prisma.inventoryCountItem.findFirstOrThrow({ where: { countId: cl.id, productId: A.prod.id, variantId: null } }))
+  const upd = (data: Record<string, unknown>) => prisma.inventoryCountItem.update({ where: { id: itR.id }, data: data as never })
+  const limpiar = () => upd({ status: 'PENDIENTE', countedQty: null, reviewedAt: null, reviewedById: null, reviewNote: null, difference: null, systemQtyAtCount: null, resultingMovementId: null })
+  await limpiar()
+  check('>>> APROBADO exige cantidad contada, quién y cuándo revisó', await falla(upd({ status: 'APROBADO' })) && await falla(upd({ status: 'APROBADO', countedQty: 5 })) && await falla(upd({ status: 'APROBADO', countedQty: 5, reviewedAt: ahora })) && !(await falla(upd({ status: 'APROBADO', countedQty: 5, reviewedAt: ahora, reviewedById: U }))))
+  await limpiar()
+  check('>>> RECHAZADO y RECONTAR exigen el motivo (3 letras como mínimo, y no NULL)', await falla(upd({ status: 'RECHAZADO', countedQty: 5, reviewedAt: ahora, reviewedById: U })) && await falla(upd({ status: 'RECHAZADO', countedQty: 5, reviewedAt: ahora, reviewedById: U, reviewNote: 'ab' })) && await falla(upd({ status: 'RECONTAR' })) && await falla(upd({ status: 'RECONTAR', reviewNote: '  a ' })) && !(await falla(upd({ status: 'RECONTAR', reviewNote: 'Parece poco' }))))
+  await limpiar()
+  check('>>> la diferencia es EXACTAMENTE contado − sistema (si no, la base la rechaza) y no existe sin sus dos términos', await falla(upd({ countedQty: 8, status: 'CONTADO', systemQtyAtCount: 10, difference: -3 })) && await falla(upd({ countedQty: 8, status: 'CONTADO', difference: -2 })) && await falla(upd({ systemQtyAtCount: 10, difference: -2 })) && !(await falla(upd({ countedQty: 8, status: 'CONTADO', systemQtyAtCount: 10, difference: -2 }))))
+  await limpiar()
+  const movReal = await prisma.stockMovement.create({ data: { tenantId: A.t.id, productId: A.prod.id, warehouseId: W, userId: U, type: 'AJUSTE', quantity: 1, balanceAfter: 1 } })
+  const movAjeno = await prisma.stockMovement.create({ data: { tenantId: B.t.id, productId: B.prod.id, warehouseId: B.b.warehouse.id, userId: B.user.id, type: 'AJUSTE', quantity: 1, balanceAfter: 1 } })
+  check('>>> el movimiento resultante solo cuelga de una línea APROBADA con diferencia distinta de cero', await falla(upd({ resultingMovementId: movReal.id })) && await falla(upd({ status: 'APROBADO', countedQty: 5, reviewedAt: ahora, reviewedById: U, systemQtyAtCount: 5, difference: 0, resultingMovementId: movReal.id })) && !(await falla(upd({ status: 'APROBADO', countedQty: 6, reviewedAt: ahora, reviewedById: U, systemQtyAtCount: 5, difference: 1, resultingMovementId: movReal.id }))))
+  check('>>> el movimiento de OTRO negocio se rechaza (clave compuesta) y un movimiento no se enlaza a dos líneas distintas del mismo conteo sin que el otro negocio lo vea', await falla(upd({ resultingMovementId: movAjeno.id })))
+  await limpiar()
+  check('>>> el costo y los movimientos posteriores nunca son negativos', await falla(upd({ costAtApply: -1 })) && await falla(upd({ movedSinceCount: -1 })) && !(await falla(upd({ costAtApply: 0, movedSinceCount: 0 }))))
+  check('>>> un movimiento de stock no puede borrarse si una línea de conteo lo referencia (RESTRICT)', await (async () => { await upd({ status: 'APROBADO', countedQty: 6, reviewedAt: ahora, reviewedById: U, systemQtyAtCount: 5, difference: 1, resultingMovementId: movReal.id }); return falla(prisma.stockMovement.delete({ where: { id: movReal.id } })) })())
+  await limpiar()
+
   console.log('\nE) La migración, leída como archivo')
   const dir = readdirSync('prisma/migrations').find((d) => d.endsWith('_toma_inventario'))!
   const sql = readFileSync(`prisma/migrations/${dir}/migration.sql`, 'utf8'), down = existsSync(`prisma/migrations/${dir}/down.sql`) ? readFileSync(`prisma/migrations/${dir}/down.sql`, 'utf8') : ''
   check('>>> es ADITIVA: solo crea (tipos, tablas, índices, reglas); no borra ni altera tablas existentes', !/\bDROP\b/i.test(sql) && !/ALTER TABLE "(?!inventory_count)/.test(sql) && (sql.match(/CREATE TABLE/g) ?? []).length === 3 && (sql.match(/CREATE TYPE/g) ?? []).length === 4)
   check('>>> trae el índice único parcial del conteo abierto y los de línea sin/con variante', /inventory_counts_uno_abierto[^;]*WHERE "status" IN \('BORRADOR', 'EN_CONTEO', 'EN_REVISION'\)/.test(sql) && sql.includes('inventory_count_items_sin_variante_key') && sql.includes('inventory_count_items_con_variante_key'))
+  const dir2 = readdirSync('prisma/migrations').find((d) => d.endsWith('_toma_inventario_revision'))!
+  const sql2 = readFileSync(`prisma/migrations/${dir2}/migration.sql`, 'utf8'), down2 = existsSync(`prisma/migrations/${dir2}/down.sql`) ? readFileSync(`prisma/migrations/${dir2}/down.sql`, 'utf8') : ''
+  check('>>> la migración de F6.5b es ADITIVA (solo agrega columnas, un índice único y reglas; no borra nada) y trae su down.sql', !/\bDROP\b/i.test(sql2) && !/ALTER TABLE "(?!inventory_count_items)/.test(sql2) && sql2.includes('stock_movements_tenantId_id_key') && down2.includes('DROP COLUMN') && down2.includes('DROP INDEX IF EXISTS "stock_movements_tenantId_id_key"') && dir2 > dir)
   check('>>> y tiene su down.sql, que deshace todo en orden (pasadas, líneas, conteos, tipos)', down.includes('DROP TABLE IF EXISTS "inventory_count_entries"') && down.indexOf('inventory_count_entries') < down.indexOf('inventory_count_items') && down.indexOf('inventory_count_items') < down.indexOf('"inventory_counts"') && (down.match(/DROP TYPE/g) ?? []).length === 4)
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)

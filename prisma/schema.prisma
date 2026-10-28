@@ -697,6 +697,7 @@ model User {
   inventoryCountsCancelled InventoryCount[]      @relation("InventoryCountCancelledBy")
   inventoryCountEntries    InventoryCountEntry[] @relation("InventoryCountEntryBy")
   inventoryCountEntriesVoided InventoryCountEntry[] @relation("InventoryCountEntryVoidedBy")
+  inventoryCountItemsReviewed InventoryCountItem[] @relation("InventoryCountItemReviewedBy")
 }
 
 model Account {
@@ -1121,6 +1122,7 @@ model StockMovement {
 
   createdAt DateTime @default(now())
 
+  @@unique([tenantId, id])
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId, productId, createdAt])
   @@index([tenantId, warehouseId, createdAt])
@@ -1128,6 +1130,7 @@ model StockMovement {
   @@index([tenantId, referenceType, referenceId])
   @@index([transferGroupId])
   @@map("stock_movements")
+  inventoryCountItems InventoryCountItem[] @relation("InventoryCountItemMovement")
 }
 
 // ============================================================================
@@ -3030,6 +3033,26 @@ model InventoryCountItem {
   countedQty       Decimal? @db.Decimal(14, 4)
   status           InventoryCountItemStatus @default(PENDIENTE)
   lastCountedAt    DateTime?
+
+  // --- F6.5b: revisión y aplicación ---
+  /// Lo que el sistema decía cuando se contó: el saldo del kardex a la hora de la última pasada vigente.
+  systemQtyAtCount Decimal? @db.Decimal(14, 4)
+  /// contado − sistema al contar. NULL mientras no se haya evaluado.
+  difference       Decimal? @db.Decimal(14, 4)
+  /// Cuántos movimientos de esa fila de stock hubo DESPUÉS de contar (aviso para quien revisa).
+  movedSinceCount  Int?
+  /// Costo promedio con que se valoró el ajuste (NULL si el producto no tiene costo).
+  costAtApply      Decimal? @db.Decimal(12, 4)
+  /// El movimiento de stock que aplicó la diferencia (NULL si no hubo diferencia que aplicar).
+  resultingMovementId String?
+  resultingMovement   StockMovement? @relation("InventoryCountItemMovement", fields: [tenantId, resultingMovementId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+  reviewedAt          DateTime?
+  reviewedById        String?
+  reviewedBy          User?     @relation("InventoryCountItemReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
+  /// Motivo del recuento o del rechazo, o nota de la aprobación.
+  reviewNote          String?
+  /// El revisor aprobó una diferencia sobre el umbral sabiéndolo.
+  thresholdConfirmed  Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

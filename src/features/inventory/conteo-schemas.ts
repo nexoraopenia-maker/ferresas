@@ -70,3 +70,34 @@ export type RegistrarPasadaInput = z.infer<typeof registrarPasadaSchema>
 
 export const anularPasadaSchema = z.object({ entryId: id, reason: motivo })
 export type AnularPasadaInput = z.infer<typeof anularPasadaSchema>
+
+// ─── F6.5b: revisión y aplicación ─────────────────────────────────────────────────────────────────────────────────────
+
+export const recontarLineaSchema = z.object({ countId: id, itemId: id, reason: motivo })
+export type RecontarLineaInput = z.infer<typeof recontarLineaSchema>
+
+export const aprobarLineaSchema = z.object({
+  countId: id,
+  itemId: id,
+  /** El revisor sabe que la diferencia supera el umbral operativo y la aprueba igual. Sin esto, una diferencia grande se rechaza con `COUNT_OVER_THRESHOLD`. */
+  confirmaUmbral: z.boolean().default(false),
+  note: z.string().trim().max(280, 'La nota es demasiado larga (máximo 280 caracteres).').optional(),
+})
+export type AprobarLineaInput = z.infer<typeof aprobarLineaSchema>
+
+export const rechazarLineaSchema = z.object({ countId: id, itemId: id, reason: motivo })
+export type RechazarLineaInput = z.infer<typeof rechazarLineaSchema>
+
+export const aprobarSinAlertaSchema = z.object({ countId: id, cursor: id.optional() })
+export type AprobarSinAlertaInput = z.infer<typeof aprobarSinAlertaSchema>
+
+export const aplicarConteoSchema = z.object({ countId: id, note: z.string().trim().max(120, 'La nota es demasiado larga (máximo 120 caracteres).').optional() })
+export type AplicarConteoInput = z.infer<typeof aplicarConteoSchema>
+
+export const revisionSchema = z.object({
+  countId: id,
+  estado: z.enum(['PENDIENTE', 'CONTADO', 'RECONTAR', 'APROBADO', 'RECHAZADO']).optional(),
+  limite: z.number().int().min(1).max(200).default(100),
+  cursor: id.optional(),
+})
+export type RevisionInput = z.infer<typeof revisionSchema>

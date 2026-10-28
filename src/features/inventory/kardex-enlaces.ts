@@ -53,13 +53,14 @@ const TIPOS: Record<string, string> = {
   TRANSFERENCIA_ENTRADA: 'Transferencia (llega)', TRANSFERENCIA_SALIDA: 'Transferencia (sale)',
   DEVOLUCION_CLIENTE: 'Devolución de cliente', DEVOLUCION_PROVEEDOR: 'Devolución a proveedor', VENTA: 'Venta',
 }
-const ORIGEN_DOCUMENTO: Record<string, string> = { VENTA: 'Venta', COMPRA: 'Compra', DEVOLUCION: 'Devolución', TRANSFERENCIA: 'Transferencia', MERMA: 'Merma', MANUAL: '' }
+const ORIGEN_DOCUMENTO: Record<string, string> = { VENTA: 'Venta', COMPRA: 'Compra', DEVOLUCION: 'Devolución', TRANSFERENCIA: 'Transferencia', MERMA: 'Merma', CONTEO: 'Toma de inventario', MANUAL: '' }
 
 /** Cómo se llama un movimiento: el documento manda (una venta es «Venta» aunque por dentro sea una salida), si no, su tipo. */
 export function etiquetaMovimiento(l: { tipo: string; entrada: number; documento: { tipo: string } }): string {
   switch (l.documento.tipo) {
     case 'VENTA': return l.entrada > 0 ? 'Reingreso de venta' : 'Venta'
     case 'COMPRA': return l.entrada > 0 ? 'Compra' : 'Anulación de compra'
+    case 'CONTEO': return l.entrada > 0 ? 'Ajuste por conteo (sobrante)' : 'Ajuste por conteo (faltante)'
     case 'DEVOLUCION': return l.tipo === 'MERMA' ? 'Devolución dañada (merma)' : 'Devolución de cliente'
     default: return TIPOS[l.tipo] ?? l.tipo
   }

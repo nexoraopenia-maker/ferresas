@@ -125,6 +125,9 @@ async function main() {
     // Kardex (F6.4b): lee `costPrice` del producto SOLO si quien consulta tiene `productos.ver_costo` (`conCostos`); sin ese permiso las columnas de costo no están
     // en ningún `select` ni en la respuesta. Lo prueba `kardex-lectura` (un espía de consultas, el recorrido del JSON y el CSV con y sin costos).
     'src/features/inventory/kardex-service.ts',
+    // Toma de inventario (F6.5b): lee `costPrice` del producto para decidir los umbrales (una regla de autorización: > S/ 200) y para valorar el ajuste. NO lo manda a quien no tiene
+    // `productos.ver_costo` (la revisión solo trae las claves de costo con ese permiso); lo prueba `conteo-revision` (recorrido del JSON y causa genérica «GRANDE»).
+    'src/features/inventory/conteo-revision.ts',
   ])
   const proj = proyecto()
   const fuentes = ficheros(join(RAIZ, 'src'), (f) => f.endsWith('.ts') || f.endsWith('.tsx'))

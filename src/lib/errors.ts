@@ -38,6 +38,8 @@ export type BusinessErrorCode =
   | 'CASH_REQUIRED'
   /** Un egreso de caja supera el efectivo que el sistema espera en el cajón: se pide confirmación explícita (F6.3). */
   | 'CASH_EXCEEDS_EXPECTED'
+  /** La diferencia de una línea de toma de inventario supera el umbral operativo: se recomienda recontar o confirmar expresamente (F6.5b). */
+  | 'COUNT_OVER_THRESHOLD'
 
 export class BusinessError extends Error {
   readonly code: BusinessErrorCode

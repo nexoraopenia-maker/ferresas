@@ -7,6 +7,7 @@ import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { hoyEnZona, sumarDias } from '@/features/credito/reglas'
 import { puedeVerVentas } from '@/features/ventas/permisos'
 import { puedeVerProveedores } from '@/features/proveedores/permisos'
+import { puedeVerConteos } from './conteo-service'
 import { DIAS_MAXIMOS_KARDEX, TOPE_FILAS_CSV_KARDEX, type KardexCsvParams, type KardexParams } from './kardex-schemas'
 
 /**
@@ -33,7 +34,7 @@ const TOL = 0.0001
 const LOTE_CSV = 1000
 
 export type OrigenCostoKardex = 'EXACTO' | 'RECONSTRUIDO' | 'SIN_DATO'
-export type TipoDocumentoKardex = 'VENTA' | 'COMPRA' | 'DEVOLUCION' | 'TRANSFERENCIA' | 'MERMA' | 'MANUAL'
+export type TipoDocumentoKardex = 'VENTA' | 'COMPRA' | 'DEVOLUCION' | 'TRANSFERENCIA' | 'MERMA' | 'CONTEO' | 'MANUAL'
 
 export interface DocumentoKardex {
   tipo: TipoDocumentoKardex
@@ -224,18 +225,19 @@ const REF_TRANSFERENCIA = /^Transferencia (\S+)/
 
 /** Resuelve de cada movimiento su documento origen, respetando el permiso de ver ese documento. Una consulta por tipo, no por línea. */
 async function resolverDocumentos(db: TenantPrismaClient, ctx: TenantContext, filas: readonly FilaBase[]): Promise<Map<string, DocumentoKardex>> {
-  const verVentas = puedeVerVentas(ctx), verCompras = puedeVerProveedores(ctx)
+  const verVentas = puedeVerVentas(ctx), verCompras = puedeVerProveedores(ctx), verConteos = puedeVerConteos(ctx)
   const ids = (ref: string) => [...new Set(filas.filter((f) => f.referenceType === ref && f.referenceId).map((f) => f.referenceId!))]
-  const ventaIds = verVentas ? ids('VENTA') : [], compraIds = verCompras ? ids('COMPRA') : [], devolIds = verVentas ? ids('DEVOLUCION') : []
+  const ventaIds = verVentas ? ids('VENTA') : [], compraIds = verCompras ? ids('COMPRA') : [], devolIds = verVentas ? ids('DEVOLUCION') : [], conteoIds = verConteos ? ids('CONTEO') : []
   const numerosTransf = [...new Set(filas.filter((f) => f.type.startsWith('TRANSFERENCIA')).map((f) => REF_TRANSFERENCIA.exec(f.reason ?? '')?.[1]).filter((x): x is string => !!x))]
 
-  const [ventas, compras, devoluciones, transferencias] = await Promise.all([
+  const [ventas, compras, devoluciones, transferencias, conteos] = await Promise.all([
     ventaIds.length ? db.sale.findMany({ where: { id: { in: ventaIds } }, select: { id: true, number: true } }) : [],
     compraIds.length ? db.purchase.findMany({ where: { id: { in: compraIds } }, select: { id: true, number: true } }) : [],
     devolIds.length ? db.saleReturn.findMany({ where: { id: { in: devolIds } }, select: { id: true, number: true, saleId: true } }) : [],
     numerosTransf.length ? db.branchTransfer.findMany({ where: { number: { in: numerosTransf } }, select: { number: true } }) : [],
+    conteoIds.length ? db.inventoryCount.findMany({ where: { id: { in: conteoIds } }, select: { id: true, number: true } }) : [],
   ])
-  const vm = new Map(ventas.map((v) => [v.id, v])), cm = new Map(compras.map((x) => [x.id, x])), dm = new Map(devoluciones.map((x) => [x.id, x])), tm = new Set(transferencias.map((x) => x.number))
+  const vm = new Map(ventas.map((v) => [v.id, v])), cm = new Map(compras.map((x) => [x.id, x])), dm = new Map(devoluciones.map((x) => [x.id, x])), tm = new Set(transferencias.map((x) => x.number)), cn = new Map(conteos.map((x) => [x.id, x]))
 
   const out = new Map<string, DocumentoKardex>()
   for (const f of filas) {
@@ -243,6 +245,7 @@ async function resolverDocumentos(db: TenantPrismaClient, ctx: TenantContext, fi
     if (f.referenceType === 'VENTA') { const v = f.referenceId ? vm.get(f.referenceId) : undefined; doc = { tipo: 'VENTA', numero: v?.number ?? null, href: v ? `/ventas/${v.id}` : null } }
     else if (f.referenceType === 'COMPRA') { const x = f.referenceId ? cm.get(f.referenceId) : undefined; doc = { tipo: 'COMPRA', numero: x?.number ?? null, href: x ? `/compras/${x.id}` : null } }
     else if (f.referenceType === 'DEVOLUCION') { const x = f.referenceId ? dm.get(f.referenceId) : undefined; doc = { tipo: 'DEVOLUCION', numero: x?.number ?? null, href: x ? `/ventas/${x.saleId}` : null } }
+    else if (f.referenceType === 'CONTEO') { const x = f.referenceId ? cn.get(f.referenceId) : undefined; doc = { tipo: 'CONTEO', numero: x?.number ?? null, href: null } }
     else if (f.type === 'MERMA') doc = { tipo: 'MERMA', numero: null, href: null }
     else if (f.type.startsWith('TRANSFERENCIA')) { const n = REF_TRANSFERENCIA.exec(f.reason ?? '')?.[1]; doc = { tipo: 'TRANSFERENCIA', numero: n && tm.has(n) ? n : null, href: null } }
     else doc = { tipo: 'MANUAL', numero: null, href: null }
@@ -391,7 +394,7 @@ export async function kardexDeProducto(db: TenantPrismaClient, ctx: TenantContex
 // ─── Exportación a CSV ─────────────────────────────────────────────────────────────────────────────────────────────
 
 const hora = (iso: string, zona: string) => new Date(iso).toLocaleString('sv-SE', { timeZone: zona })
-const NOMBRE_DOC: Record<TipoDocumentoKardex, string> = { VENTA: 'Venta', COMPRA: 'Compra', DEVOLUCION: 'Devolución', TRANSFERENCIA: 'Transferencia', MERMA: 'Merma', MANUAL: 'Manual' }
+const NOMBRE_DOC: Record<TipoDocumentoKardex, string> = { VENTA: 'Venta', COMPRA: 'Compra', DEVOLUCION: 'Devolución', TRANSFERENCIA: 'Transferencia', MERMA: 'Merma', CONTEO: 'Toma de inventario', MANUAL: 'Manual' }
 
 /**
  * El kardex del rango completo en CSV (Excel es-PE), con las MISMAS reglas de costos que la lectura. Si el rango trae más de 50.000 movimientos, no

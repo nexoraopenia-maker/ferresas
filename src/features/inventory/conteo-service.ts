@@ -28,11 +28,11 @@ import {
  *  · Todo se audita, y es idempotente por clave (el móvil reintenta con mala señal).
  */
 
-const num = (v: { toString(): string } | null | undefined): number => Number(v?.toString() ?? 0)
-const r4 = (n: number): number => Math.round(n * 10_000) / 10_000
-const invalido = (m: string) => new BusinessError('INVALID_DOCUMENT', m)
-const noExiste = () => new BusinessError('NOT_FOUND', 'La toma de inventario no existe.')
-const OPCIONES_TX = { maxWait: 15_000, timeout: 60_000 } as const
+export const num = (v: { toString(): string } | null | undefined): number => Number(v?.toString() ?? 0)
+export const r4 = (n: number): number => Math.round(n * 10_000) / 10_000
+export const invalido = (m: string) => new BusinessError('INVALID_DOCUMENT', m)
+export const noExiste = () => new BusinessError('NOT_FOUND', 'La toma de inventario no existe.')
+export const OPCIONES_TX = { maxWait: 15_000, timeout: 60_000 } as const
 const LOTE = 1000
 
 const ESTADO_TEXTO: Record<InventoryCountStatus, string> = {
@@ -69,7 +69,7 @@ export interface ResumenConteo {
   closedAt: string | null
 }
 
-async function resumir(t: TenantPrismaClient, c: { id: string; number: string; status: InventoryCountStatus; scope: InventoryCountScope; mode: InventoryCountMode; categoryId: string | null; notes: string | null; createdAt: Date; startedAt: Date | null; closedAt: Date | null; warehouse: { id: string; name: string } }): Promise<ResumenConteo> {
+export async function resumir(t: TenantPrismaClient, c: { id: string; number: string; status: InventoryCountStatus; scope: InventoryCountScope; mode: InventoryCountMode; categoryId: string | null; notes: string | null; createdAt: Date; startedAt: Date | null; closedAt: Date | null; warehouse: { id: string; name: string } }): Promise<ResumenConteo> {
   const [lineas, contadas, pasadas] = await Promise.all([
     t.inventoryCountItem.count({ where: { countId: c.id } }),
     t.inventoryCountItem.count({ where: { countId: c.id, status: { not: 'PENDIENTE' } } }),
@@ -81,9 +81,9 @@ async function resumir(t: TenantPrismaClient, c: { id: string; number: string; s
   }
 }
 
-const SELECCION_CONTEO = { id: true, number: true, status: true, scope: true, mode: true, categoryId: true, notes: true, createdAt: true, startedAt: true, closedAt: true, warehouseId: true, branchId: true, warehouse: { select: { id: true, name: true } } } as const
+export const SELECCION_CONTEO = { id: true, number: true, status: true, scope: true, mode: true, categoryId: true, notes: true, createdAt: true, startedAt: true, closedAt: true, warehouseId: true, branchId: true, warehouse: { select: { id: true, name: true } } } as const
 
-async function auditar(t: TenantPrismaClient, ctx: TenantContext, accion: string, entityId: string, opts: { reason?: string; before?: object; after?: object } = {}) {
+export async function auditar(t: TenantPrismaClient, ctx: TenantContext, accion: string, entityId: string, opts: { reason?: string; before?: object; after?: object } = {}) {
   await t.auditLog.create({
     data: {
       tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role, action: accion, entityType: 'InventoryCount', entityId, reason: opts.reason ?? null,
@@ -96,7 +96,7 @@ async function auditar(t: TenantPrismaClient, ctx: TenantContext, accion: string
  * Bloquea la cabecera del conteo y la devuelve con su estado ACTUAL. Todo lo que cambia un conteo pasa por aquí antes de decidir: así cerrar y contar no se
  * cruzan. Un conteo que no existe o es de una sucursal que la persona no alcanza es el mismo NOT_FOUND.
  */
-async function bloquear(t: TenantPrismaClient, countId: string) {
+export async function bloquear(t: TenantPrismaClient, countId: string) {
   try {
     await t.inventoryCount.update({ where: { id: countId }, data: { updatedAt: new Date() }, select: { id: true } })
   } catch (e) {
@@ -108,7 +108,7 @@ async function bloquear(t: TenantPrismaClient, countId: string) {
   return c
 }
 
-function exigirEstado(c: { number: string; status: InventoryCountStatus }, ...validos: InventoryCountStatus[]): void {
+export function exigirEstado(c: { number: string; status: InventoryCountStatus }, ...validos: InventoryCountStatus[]): void {
   if (!validos.includes(c.status)) throw invalido(`La toma de inventario ${c.number} ${ESTADO_TEXTO[c.status]}: no admite esta operación.`)
 }
 
@@ -246,7 +246,9 @@ export interface ResultadoPasada {
 async function recalcularLinea(t: TenantPrismaClient, itemId: string, ahora: Date): Promise<number | null> {
   const agg = await t.inventoryCountEntry.aggregate({ where: { itemId, voidedAt: null }, _sum: { quantity: true }, _count: { _all: true } })
   if (agg._count._all === 0) {
-    await t.inventoryCountItem.update({ where: { id: itemId }, data: { countedQty: null, status: 'PENDIENTE', lastCountedAt: null }, select: { id: true } })
+    // Una línea mandada a RECONTAR sigue pendiente de su recuento: solo las demás vuelven a PENDIENTE (en la MISMA sentencia: la base no admite CONTADO sin cantidad).
+    const actual = await t.inventoryCountItem.findFirst({ where: { id: itemId }, select: { status: true } })
+    await t.inventoryCountItem.update({ where: { id: itemId }, data: { countedQty: null, lastCountedAt: null, status: actual?.status === 'RECONTAR' ? 'RECONTAR' : 'PENDIENTE' }, select: { id: true } })
     return null
   }
   const total = r4(num(agg._sum.quantity))
@@ -281,9 +283,11 @@ export async function registrarPasada(db: TenantPrismaClient, ctx: TenantContext
     return await db.$transaction(async (tx) => {
       const t = tx as unknown as TenantPrismaClient
       const c = await bloquear(t, input.countId)
-      exigirEstado(c, 'EN_CONTEO')
+      exigirEstado(c, 'EN_CONTEO', 'EN_REVISION')
 
-      let linea = await t.inventoryCountItem.findFirst({ where: { countId: c.id, productId: input.productId, variantId }, select: { id: true, productId: true } })
+      let linea = await t.inventoryCountItem.findFirst({ where: { countId: c.id, productId: input.productId, variantId }, select: { id: true, productId: true, status: true } })
+      // Con el conteo ya cerrado (en revisión) solo se cuenta de nuevo lo que el revisor mandó a recontar (F6.5b).
+      if (c.status === 'EN_REVISION' && linea?.status !== 'RECONTAR') throw invalido(`La toma de inventario ${c.number} ya se cerró y está en revisión: solo se cuenta de nuevo lo que se mandó a recontar.`)
       if (!linea) {
         // Mercadería que no estaba en la lista: en un total o por categoría se admite (se halló algo que el sistema no esperaba); en una selección, no.
         if (c.scope === 'SELECCION') throw new BusinessError('NOT_FOUND', 'Ese producto no está en esta toma de inventario.')
@@ -298,7 +302,7 @@ export async function registrarPasada(db: TenantPrismaClient, ctx: TenantContext
             tenantId: ctx.tenantId, countId: c.id, productId: producto.id, variantId, nameSnapshot: unidadNombre(producto, variante), skuSnapshot: variante?.sku ?? producto.sku, unitType: producto.unitType,
             systemQtyAtStart: stock?.quantity ?? 0,
           },
-          select: { id: true, productId: true },
+          select: { id: true, productId: true, status: true },
         })
       }
 
@@ -368,6 +372,7 @@ export async function cancelarConteo(db: TenantPrismaClient, ctx: TenantContext,
     const t = tx as unknown as TenantPrismaClient
     const c = await bloquear(t, input.countId)
     exigirEstado(c, 'BORRADOR', 'EN_CONTEO', 'EN_REVISION')
+    if ((await t.inventoryCountItem.count({ where: { countId: c.id, resultingMovementId: { not: null } } })) > 0) throw invalido(`La toma de inventario ${c.number} ya aplicó ajustes al stock: no se puede cancelar.`)
     const ok = await t.inventoryCount.updateMany({ where: { id: c.id, status: { in: ['BORRADOR', 'EN_CONTEO', 'EN_REVISION'] } }, data: { status: 'CANCELADO', cancelledAt: new Date(), cancelledById: ctx.userId, cancelReason: input.reason } })
     if (ok.count !== 1) throw invalido('La toma de inventario cambió mientras se cancelaba. Vuelve a cargarla.')
     const fresco = await t.inventoryCount.findFirstOrThrow({ where: { id: c.id }, select: SELECCION_CONTEO })
