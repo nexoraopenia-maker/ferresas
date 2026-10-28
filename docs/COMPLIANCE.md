@@ -339,3 +339,7 @@ La serie de una nota empieza por la **misma letra** que la serie del comprobante
 ### Estado de un comprobante en un negocio real
 
 Con la facturación electrónica activa (real o en pausa) **ningún estado se declara a mano**: ni Enviado, ni Aceptado, ni Rechazado, ni Observado. Lo fija solo la respuesta del proveedor, por la cola fiscal o por «Consultar» (sincronización explícita). El servicio lo rechaza y la lista no lo ofrece. Solo la demo y el ensayo, que no hablan con un proveedor real, conservan el cambio manual. Una nota de crédito exige además que el original lleve el identificador (`externalId`) que le dio el proveedor.
+
+## 11. Reportes, registros y conciliación (Fase 5) ⚠️
+
+Los registros de ventas y de compras y la conciliación fiscal son **herramientas de trabajo para el contador, no el formato oficial**: no generan PLE y no asignan códigos del catálogo de comprobantes de SUNAT. Las reglas de qué estados suman, el trato de las notas, la fecha de las compras y los umbrales de 24 h / 72 h son criterios de producto aprobados por el dueño y están **pendientes de validar con el contador** (lista completa en `docs/FASE5-CIERRE.md`, sección 4). Los comprobantes de ensayo (`isTrial`) y las notas de venta nunca entran a estos registros.

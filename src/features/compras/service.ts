@@ -184,7 +184,9 @@ export async function crearBorrador(db: TenantPrismaClient, ctx: TenantContext, 
       await exigirFacturaLibre(t, cab.supplierId, referencia)
       const tot = totales(lineas)
       const n = await claimNextNumber(t, ctx.tenantId, 'PURCHASE', serie.series)
-      const number = `${n.prefix}-${String(n.correlativo).padStart(8, '0')}`
+      // Prefijo + SERIE de la sucursal, como las ventas, cotizaciones y transferencias («P001-00000007»): sin la serie, dos sucursales numerarían «P-00000001» y
+      // la segunda chocaría con el índice único (negocio, número). Las compras anteriores conservan su número «P-0000000N».
+      const number = `${n.prefix}${n.series}-${String(n.correlativo).padStart(8, '0')}`
 
       const c = await t.purchase.create({
         data: {

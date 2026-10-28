@@ -966,3 +966,8 @@ Lógica pura; **no cambia el comportamiento de la venta**: `registerSale` valida
 - **Ensayo y demostración:** un negocio sin facturación real (modo ENSAYO) o en DEMO no tiene comprobantes con valor fiscal: sus hallazgos **nunca pasan de INFO** y el resultado es «Sin comprobantes reales que conciliar en este periodo.» (estado calmado, sin alerta). Los comprobantes de prueba (`isTrial`) no entran a ninguna comprobación real, ni al cálculo independiente.
 - **Límites conocidos:** no distingue un rechazado ya resuelto con otro comprobante (solo advierte); el estado «ANULADO» de un comprobante viene del proveedor y no se cruza con la venta; la numeración se revisa sobre toda la historia de la serie, no por periodo; los envíos pendientes se leen hasta 2000 comprobantes abiertos.
 - **Pruebas:** `conciliacion-calculo` (67), `conciliacion-servicio` (54, base y script real en consola), `conciliacion-pantallas` (25).
+
+### F5.8: cierre de la Fase 5
+
+- **Identidades entre reportes** (`tests/fase5-identidades.ts`) y **revisión de coherencia y seguridad** (`tests/fase5-seguridad.ts`): ver `docs/FASE5-CIERRE.md` (qué se comprueba, ⚠️ para el contador y lista de QA en producción).
+- **Corrección:** la numeración de compras ahora lleva la serie de la sucursal (`P001-00000007`); antes era `P-00000007` y la primera compra de una segunda sucursal chocaba con el índice único (negocio, número). Las compras anteriores conservan su número; sin migración. Regresión en `tests/compras-documento.ts`.

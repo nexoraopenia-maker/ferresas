@@ -47,4 +47,6 @@ Fase 1 (SUNAT real) se divide: **1A** (sin dependencias externas) y **1B** (perf
 | 1A.4 | Comunicación de baja y resumen diario | Pendiente |
 | 1A.5 | Guías de remisión por la misma cola (solo remitente; la de transportista queda fuera) | Pendiente |
 
+**Fase 5 (reportes y SUNAT): cerrada** — F5.1–F5.5 y F5.7 hechas; F5.4 incluye la migración del documento de compra; **F5.6 (PLE) bloqueada** hasta tener la especificación oficial y la validación del contador. Detalle, definiciones, pendientes ⚠️ y lista de QA en `docs/FASE5-CIERRE.md`.
+
 Fases 2 a 9: ver el plan aprobado. Nada se publica hasta que la suite completa esté en verde y se dé la orden.

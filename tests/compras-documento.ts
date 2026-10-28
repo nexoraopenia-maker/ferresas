@@ -141,6 +141,14 @@ async function cuerpo() {
   check('y el mismo documento se puede volver a registrar', (await code(nuevo({ docType: 'FACTURA', docSeries: 'A001', docNumber: '5', issueDate: '2026-10-20' }))) === null)
   check('la fecha de hoy en la zona del negocio es la que usa el servidor', hoyEnZona('America/Lima').length === 10)
 
+  console.log('\nF2) Dos sucursales numeran sus compras sin chocar')
+  const B2 = await crearSucursalConAlmacen(A.t.id, { almacenCode: 'ALM2', seriesNumber: 2, branchCode: 'B2', establishmentCode: '0002' })
+  const dueno2: TenantContext = { ...O, branchId: B2.branch.id, branchIds: [A.b1.branch.id, B2.branch.id] }
+  const enB2 = await crearBorrador(getTenantPrisma(dueno2), dueno2, crearBorradorSchema.parse({ idempotencyKey: randomUUID(), warehouseId: B2.warehouse.id, supplierId: prov.id, items: [{ productId: prod.id, enteredQuantity: 1, unitCost: 5 }] }))
+  const enB1 = await nuevo({})
+  check('>>> la primera compra de la sucursal 2 NO choca con las de la 1: números distintos, con la serie de cada sucursal (P001-… y P002-…)', /^P001-\d{8}$/.test(enB1.number) && /^P002-\d{8}$/.test(enB2.number) && enB1.number !== enB2.number, `${enB1.number} / ${enB2.number}`)
+  check('y las dos sucursales pueden seguir comprando (el correlativo de cada serie avanza por separado)', await (async () => { const a = await crearBorrador(getTenantPrisma(dueno2), dueno2, crearBorradorSchema.parse({ idempotencyKey: randomUUID(), warehouseId: B2.warehouse.id, supplierId: prov.id, items: [{ productId: prod.id, enteredQuantity: 1, unitCost: 5 }] })); return /^P002-\d{8}$/.test(a.number) && a.number > enB2.number })())
+
   console.log('\nG) La migración es aditiva')
   const mig = readFileSync('prisma/migrations/20261113100000_compras_documento/migration.sql', 'utf8').replace(/--[^\n]*/g, '')
   check('>>> solo añade: 4 columnas SIN NOT NULL, un tipo, un índice y dos CHECK; no borra, no cambia datos', (mig.match(/ADD COLUMN/g) ?? []).length === 4 && !/ADD COLUMN[^\n]*NOT NULL/.test(mig) && !/DROP |DELETE |UPDATE |TRUNCATE |ALTER COLUMN|RENAME/i.test(mig) && /CREATE TYPE "PurchaseDocType"/.test(mig) && /CREATE INDEX "purchases_tenantId_issueDate_idx"/.test(mig) && (mig.match(/ADD CONSTRAINT/g) ?? []).length === 2)
