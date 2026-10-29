@@ -100,6 +100,8 @@ async function main() {
     'src/features/inventory/reposicion-reporte.ts',
     // Borrador de compra desde la reposición (F6.6c): copia el ÚLTIMO costo conocido a las líneas del borrador, que exige `compras.registrar` (quien ya teclea y ve costos); no lo devuelve al navegador.
     'src/features/inventory/reposicion-acciones.ts',
+    // Listas de precio (F6.7a): lee el costo SOLO para contar cuántos precios quedan bajo el costo (nunca devuelve cifras), y la columna de costo de la cuadrícula solo existe con productos.ver_costo (lo prueba `precios-servicio`).
+    'src/features/precios/service.ts',
     'src/features/inventory/stock-service.ts',
     'src/features/inventory/product-service.ts',
     'src/features/inventory/import-service.ts',

@@ -87,6 +87,13 @@ enum AccessLevel {
   BLOCKED
 }
 
+/// De dónde salió el precio unitario de una línea vendida (F6.7).
+enum PriceSource {
+  BASE
+  LISTA
+  VOLUMEN
+}
+
 enum UnitType {
   UNIDAD
   KILOGRAMO
@@ -517,6 +524,9 @@ model Tenant {
   inventoryCounts       InventoryCount[]
   inventoryCountItems   InventoryCountItem[]
   inventoryCountEntries InventoryCountEntry[]
+  priceLists            PriceList[]
+  priceListEntries      PriceListEntry[]
+  priceTiers            PriceTier[]
 }
 
 // ============================================================================
@@ -870,6 +880,10 @@ model Customer {
   /// cuenta, bajo bloqueo de la fila; una auditoría la compara con la suma real. Nunca se escribe suelta.
   creditBalance Decimal @default(0) @db.Decimal(14, 2)
 
+  /// Lista de precios por defecto del cliente (F6.7). NULL = Base/Minorista. Se aplica sola al asociarlo a un carrito; el cajero puede cambiarla.
+  priceListId String?
+  priceList   PriceList? @relation(fields: [tenantId, priceListId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
   isActive  Boolean   @default(true)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -947,6 +961,8 @@ model Product {
   variants      ProductVariant[]
   codes         ProductCode[]
   presentations ProductPresentation[]
+  priceListEntries PriceListEntry[]
+  priceTiers       PriceTier[]
   stocks        Stock[]
   guideItems    DispatchGuideItem[]
   movements     StockMovement[]
@@ -1169,6 +1185,10 @@ model Sale {
   customerId String?
   customer   Customer? @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
 
+  /// Lista de precios con la que se armó la venta (F6.7). NULL = Base. Solo trazabilidad: nada de esto viaja a un comprobante.
+  priceListId String?
+  priceList   PriceList? @relation(fields: [tenantId, priceListId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
 
@@ -1251,6 +1271,10 @@ model SaleItem {
   /// SIEMPRE en la unidad BASE del producto: es lo que mueve el stock.
   quantity  Decimal @db.Decimal(14, 4)
   unitPrice Decimal @db.Decimal(12, 4)
+  /// De dónde salió el precio unitario (F6.7); NULL en las ventas anteriores. Solo trazabilidad: no viaja a ningún comprobante.
+  priceSource     PriceSource?
+  /// El tramo de volumen aplicado (su cantidad mínima, en unidades base). Solo con priceSource = VOLUMEN.
+  tierMinQuantity Decimal?     @db.Decimal(14, 4)
 
   // --- Presentación (caja, saco…) con la que se vendió. Las tres columnas van juntas o ninguna (CHECK en la migración).
   presentationId     String?
@@ -1555,6 +1579,10 @@ model Quote {
 
   customerId String?
   customer   Customer? @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  /// Lista de precios con la que se armó la cotización (F6.7). NULL = Base.
+  priceListId String?
+  priceList   PriceList? @relation(fields: [tenantId, priceListId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
 
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
@@ -3110,4 +3138,97 @@ model InventoryCountEntry {
   @@index([tenantId, itemId])
   @@index([tenantId, countId, createdAt])
   @@map("inventory_count_entries")
+}
+
+// ============================================================================
+//  LISTAS DE PRECIO Y PRECIO POR VOLUMEN (F6.7)
+// ============================================================================
+
+/// Lista de precios del negocio (Constructor, Mayorista, Instalador…). La Base/Minorista NO es una fila: es `priceListId = NULL` y su precio es `Product.salePrice`
+/// (más los tramos con `priceListId` NULL). Baja lógica: una lista con ventas, cotizaciones o clientes no se borra.
+model PriceList {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name String
+  /// Clave estable para importar por CSV (futuro). Única por negocio cuando existe.
+  code String?
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  entries   PriceListEntry[]
+  tiers     PriceTier[]
+  customers Customer[]
+  sales     Sale[]
+  quotes    Quote[]
+
+  // OJO: el nombre es único sin distinguir mayúsculas entre las listas NO borradas. Eso no se puede escribir aquí; lo hace el índice parcial de la migración:
+  //   CREATE UNIQUE INDEX price_lists_name_uniq ON price_lists ("tenantId", lower("name")) WHERE "deletedAt" IS NULL;
+  @@unique([tenantId, id])
+  @@unique([tenantId, code])
+  @@index([tenantId, isActive])
+  @@map("price_lists")
+}
+
+/// El precio de UN producto en UNA lista: un precio plano opcional (con IGV incluido, como `Product.salePrice`) y/o tramos de volumen. Que exista la fila es lo que hace
+/// que la lista «tenga entrada» para el producto; sin ella, la venta hereda la Base completa.
+model PriceListEntry {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  priceListId String
+  priceList   PriceList @relation(fields: [tenantId, priceListId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  productId String
+  product   Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  /// Precio plano unitario por unidad base, CON IGV. NULL = solo tramos (el plano es el `salePrice` base).
+  price Decimal? @db.Decimal(12, 4)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tiers PriceTier[]
+
+  @@unique([tenantId, priceListId, productId])
+  @@index([tenantId, productId])
+  @@map("price_list_entries")
+}
+
+/// Un tramo de volumen: «desde `minQuantity` unidades BASE, el precio unitario es `unitPrice`». Con `priceListId` NULL es un tramo de la lista Base.
+model PriceTier {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  priceListId String?
+  priceList   PriceList? @relation(fields: [tenantId, priceListId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  productId String
+  product   Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  /// El tramo de una lista cuelga de la ENTRADA de esa lista para el producto (si se borra la entrada, se van sus tramos). En la Base (priceListId NULL) no hay entrada.
+  entry PriceListEntry? @relation(fields: [tenantId, priceListId, productId], references: [tenantId, priceListId, productId], onDelete: Cascade, onUpdate: NoAction)
+
+  /// Cantidad mínima en unidades BASE (> 0).
+  minQuantity Decimal @db.Decimal(14, 4)
+  /// Precio unitario por unidad base a partir de esa cantidad, CON IGV.
+  unitPrice   Decimal @db.Decimal(12, 4)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // OJO: con `priceListId` NULL (tramos de la Base) PostgreSQL trata cada NULL como distinto y este @@unique NO impide dos tramos iguales. Lo impide el índice parcial de la migración:
+  //   CREATE UNIQUE INDEX price_tiers_base_uniq ON price_tiers ("tenantId", "productId", "minQuantity") WHERE "priceListId" IS NULL;
+  @@unique([tenantId, priceListId, productId, minQuantity])
+  @@index([tenantId, productId])
+  @@map("price_tiers")
 }

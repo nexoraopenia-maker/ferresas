@@ -64,6 +64,10 @@ export const PERMISOS = [
   // Crear el borrador de compra es `compras.registrar`; pedir una transferencia, `stock.transferir_solicitar`.
   'reposicion.ver',
   'reposicion.configurar',
+  // Listas de precio y precio por volumen (F6.7): gestionarlas (crear listas, fijar precios y tramos, asignar la lista de un cliente) y vender por debajo del costo promedio.
+  // Elegir una lista al vender no es un permiso aparte: quien vende o cotiza las ve todas.
+  'precios.gestionar',
+  'ventas.bajo_costo',
   'comprobantes.emitir',
   'comprobantes.anular',
   'comprobantes.estado_manual',
@@ -273,6 +277,8 @@ export const ETIQUETAS: Record<Permiso, string> = {
   'conteo.gestionar': 'Crear, iniciar, cerrar y cancelar tomas de inventario',
   'reposicion.ver': 'Ver qué productos reponer y cuánto',
   'reposicion.configurar': 'Fijar los stocks mínimos y máximos de reposición',
+  'precios.gestionar': 'Gestionar listas de precio, precios por volumen y la lista de cada cliente',
+  'ventas.bajo_costo': 'Vender por debajo del costo promedio',
   'comprobantes.emitir': 'Emitir boletas y facturas',
   'comprobantes.anular': 'Emitir notas de crédito',
   'comprobantes.estado_manual': 'Cambiar a mano el estado tributario de un comprobante',

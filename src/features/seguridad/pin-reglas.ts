@@ -43,6 +43,9 @@ export const PERMISOS_FUERA_DEL_PIN: readonly Permiso[] = [
   'conteo.gestionar',
   // Fijar mínimos y máximos decide cuándo y cuánto se compra: es de supervisión, un PIN de 4 cifras no la abre. Ver la reposición (`reposicion.ver`) SÍ se puede con PIN (F6.6).
   'reposicion.configurar',
+  // Los precios y vender bajo el costo son decisiones del dueño: un PIN de 4 cifras no las abre (F6.7).
+  'precios.gestionar',
+  'ventas.bajo_costo',
 ]
 
 export type ErrorPin = 'FORMATO' | 'FACIL'
