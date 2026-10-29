@@ -15,3 +15,4 @@ src/generated/
 # Artefactos locales
 tsconfig.tsbuildinfo
 .DS_Store
+.vercel
