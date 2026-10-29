@@ -101,7 +101,7 @@ export const ACCIONES: Readonly<Record<string, { categoria: Categoria; etiqueta:
 }
 
 /** Cadenas `action: '…'` del código que NO son registros de auditoría (estados de suscripción, parámetros…): el test de completitud las ignora. */
-export const ACCIONES_QUE_NO_SON_AUDITORIA: readonly string[] = ['ACTIVATE', 'CANCEL', 'MARK_PAST_DUE', 'NOOP', 'SYNC', 'action']
+export const ACCIONES_QUE_NO_SON_AUDITORIA: readonly string[] = ['ACTIVATE', 'CANCEL', 'MARK_PAST_DUE', 'NOOP', 'SYNC', 'action', 'append' /* dónde inserta la firma xml-crypto, no una acción de auditoría */]
 
 export function describirAccion(codigo: string): { categoria: Categoria; etiqueta: string } {
   return ACCIONES[codigo] ?? { categoria: 'Otros', etiqueta: codigo }
