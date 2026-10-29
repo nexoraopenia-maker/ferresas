@@ -1,3 +1,5 @@
+> **Documento histórico.** El intermediario (PSE) fue retirado por completo en S3–S6; ver `docs/SUNAT-DIRECTO-DISENO.md`. Las columnas `Tenant.pse*` ya no existen.
+
 # Fase 1B: elegir un PSE y montar su sandbox
 
 Preparación, sin código ni credenciales. Parte de `docs/PSE-CONTRATO.md` (lo que `providers/pse-rest.ts` espera) y de

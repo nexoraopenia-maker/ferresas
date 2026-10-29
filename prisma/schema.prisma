@@ -420,13 +420,6 @@ model Tenant {
   currency String @default("PEN")
   timezone String @default("America/Lima")
 
-  /// Cuenta de demostración: datos ficticios, sin cobros reales ni envío a SUNAT.
-  /// URL base del PSE (https). La configura el dueño; el servidor la valida contra SSRF.
-  pseEndpointUrl           String?
-  /// Token del PSE CIFRADO con AES-256-GCM (clave maestra en PSE_MASTER_KEY, atado a este tenant).
-  /// Nunca sale de la base en claro ni llega al navegador.
-  pseTokenEnc              String?
-  pseConfiguredAt          DateTime?
   /**
    * Facturación electrónica REAL habilitada. NULL (apagado) por defecto: mientras
    * esté apagado un negocio emite y numera comprobantes, pero NINGUNO sale hacia un

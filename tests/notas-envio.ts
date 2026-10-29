@@ -102,7 +102,7 @@ async function main() {
   const plan = await prisma.plan.findUniqueOrThrow({ where: { code: 'pro' } })
   async function negocio(tag: string) {
     const taxId = completarRuc(`20${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`)
-    const t = await prisma.tenant.create({ data: { slug: `nv-${tag}-${randomUUID().slice(0, 6)}`, name: `Notas ${tag}`, legalName: `NOTAS ${tag.toUpperCase()} SAC`, taxId, planId: plan.id, pseConfiguredAt: new Date(), realBillingEnabledAt: new Date(Date.now() - 86_400_000) } })
+    const t = await prisma.tenant.create({ data: { slug: `nv-${tag}-${randomUUID().slice(0, 6)}`, name: `Notas ${tag}`, legalName: `NOTAS ${tag.toUpperCase()} SAC`, taxId, planId: plan.id, realBillingEnabledAt: new Date(Date.now() - 86_400_000) } })
     await prisma.subscription.create({ data: { tenantId: t.id, planId: plan.id, provider: 'STRIPE', status: 'ACTIVE', externalSubscriptionId: `sub_${randomUUID().slice(0, 8)}`, externalCustomerId: 'cus_nv' } })
     const { branch, warehouse: w } = await crearSucursalConAlmacen(t.id)
     const u = await prisma.user.create({ data: { tenantId: t.id, email: `o-${randomUUID()}@x.com`, name: 'Dueño', role: 'OWNER' } })

@@ -48,7 +48,7 @@ async function mkNegocio(tag: string, modo: 'REAL' | 'PAUSADO' | 'ENSAYO' | 'DEM
   const t = await prisma.tenant.create({
     data: {
       slug: `cf-${tag}-${randomUUID().slice(0, 6)}`, name: `Cola ${tag}`, legalName: `COLA ${tag.toUpperCase()} SAC`, taxId, planId: plan.id,
-      pseConfiguredAt: new Date(), isDemo: modo === 'DEMO',
+      isDemo: modo === 'DEMO',
       ...(modo === 'REAL' || modo === 'PAUSADO' ? { realBillingEnabledAt: new Date(Date.now() - 5 * 86_400_000) } : {}),
       ...(modo === 'PAUSADO' ? { realBillingPausedAt: new Date(Date.now() - 3_600_000) } : {}),
     },
@@ -442,7 +442,14 @@ async function main() {
     check('>>> con el secreto correcto y SIN trabajo: 200 (el programador no debe reintentar por eso)', ok1.status === 200 && j1.ok === true && j1.procesados === 0 && j1.restante === false)
     check('también por la cabecera x-worker-secret', (await workerPOST(req({ 'x-worker-secret': SECRETO }))).status === 200)
     check('la respuesta trae el resumen y NO filtra el secreto', typeof j1.duracionMs === 'number' && j1.workerId && !JSON.stringify(j1).includes(SECRETO))
-    check('un GET no ejecuta nada: 405', (await workerGET()).status === 405)
+    const rGet = (cab: Record<string, string> = {}) => workerGET(req(cab, 'GET'))
+    check('>>> un GET SIN secreto no ejecuta nada: 401 (un rastreador o un prefetch no lo dispara)', (await rGet()).status === 401 && (await rGet({ authorization: 'Bearer nope' })).status === 401)
+    const okGet = await rGet({ authorization: `Bearer ${SECRETO}` })
+    check('>>> el GET del Cron de Vercel con el secreto en la cabecera SÍ procesa la cola: 200 con su resumen', okGet.status === 200 && (await okGet.json()).ok === true)
+    check('el secreto en la URL NO vale (se registra en los logs)', (await workerGET(new NextRequest(`http://localhost/api/fiscal/worker?secret=${SECRETO}`, { method: 'GET' }))).status === 401)
+    process.env.FISCAL_WORKER_SECRET = 'corto'
+    check('>>> el GET también se NIEGA sin secreto válido configurado: 503', (await rGet({ authorization: 'Bearer corto' })).status === 503)
+    process.env.FISCAL_WORKER_SECRET = SECRETO
     check('tres llamadas SIMULTÁNEAS sin trabajo: todas 200', (await Promise.all([1, 2, 3].map(() => workerPOST(req({ authorization: `Bearer ${SECRETO}` }))))).every((r) => r.status === 200))
 
     console.log('\n17) Lotes acotados por tiempo y por tamaño')

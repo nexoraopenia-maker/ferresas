@@ -5,6 +5,10 @@
     {
       "path": "/api/cron/expire-trials",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/fiscal/worker",
+      "schedule": "* * * * *"
     }
   ]
 }

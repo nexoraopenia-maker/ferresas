@@ -26,10 +26,6 @@ interface Lector {
     findMany(a: { select: Record<string, true> }): Promise<{ id: string; tenantId: string; pfxEnc: string; pfxPasswordEnc: string; solPasswordEnc: string }[]>
     update(a: { where: { id: string }; data: Record<string, string> }): Promise<unknown>
   }
-  tenant: {
-    findMany(a: { where: Record<string, unknown>; select: Record<string, true> }): Promise<{ id: string; pseTokenEnc: string | null }[]>
-    update(a: { where: { id: string }; data: Record<string, string> }): Promise<unknown>
-  }
   user: {
     findMany(a: { where: Record<string, unknown>; select: Record<string, true> }): Promise<{ id: string; mfaSecretEnc: string | null }[]>
     update(a: { where: { id: string }; data: Record<string, string> }): Promise<unknown>
@@ -55,9 +51,6 @@ export async function recifrarSecretos(db: Lector, opciones: { aplicar?: boolean
     for (const campo of ['pfxEnc', 'pfxPasswordEnc', 'solPasswordEnc'] as const) {
       await tratar('sunat_credentials', c.id, campo, c[campo], c.tenantId, (n) => db.sunatCredential.update({ where: { id: c.id }, data: { [campo]: n } }))
     }
-  }
-  for (const t of await db.tenant.findMany({ where: { pseTokenEnc: { not: null } }, select: { id: true, pseTokenEnc: true } })) {
-    await tratar('tenants', t.id, 'pseTokenEnc', t.pseTokenEnc, t.id, (n) => db.tenant.update({ where: { id: t.id }, data: { pseTokenEnc: n } }))
   }
   for (const u of await db.user.findMany({ where: { mfaSecretEnc: { not: null } }, select: { id: true, mfaSecretEnc: true } })) {
     await tratar('users', u.id, 'mfaSecretEnc', u.mfaSecretEnc, aadMfa(u.id), (n) => db.user.update({ where: { id: u.id }, data: { mfaSecretEnc: n } }))

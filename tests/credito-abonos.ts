@@ -35,7 +35,7 @@ async function negocio(tag: string, o: { real?: boolean } = {}) {
   const taxId = completarRuc(`20${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`)
   const t = await prisma.tenant.create({ data: {
     slug: `ca-${tag}-${randomUUID().slice(0, 6)}`, name: `Abonos ${tag}`, legalName: `ABONOS ${tag.toUpperCase()} SAC`, taxId, planId: plan.id,
-    ...(o.real ? { pseConfiguredAt: new Date(), realBillingEnabledAt: new Date(Date.now() - 86_400_000) } : {}),
+    ...(o.real ? { realBillingEnabledAt: new Date(Date.now() - 86_400_000) } : {}),
   } })
   await prisma.subscription.create({ data: { tenantId: t.id, planId: plan.id, provider: 'STRIPE', status: 'ACTIVE', externalSubscriptionId: `sub_${randomUUID().slice(0, 8)}`, externalCustomerId: 'cus_ca' } })
   const b1 = await crearSucursalConAlmacen(t.id)

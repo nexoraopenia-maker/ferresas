@@ -7,10 +7,11 @@ import { ejecutarWorker } from '@/features/cola-fiscal/worker'
  *
  * ─── QUIÉN LO LLAMA ──────────────────────────────────────────────────────
  *
- * Un programador EXTERNO (QStash, n8n con cron, cualquiera que sepa hacer un POST cada minuto).
- * NO depende del cron de Vercel. La ruta es pública para el proxy (no hay sesión) y se autentica con
- * un SECRETO COMPARTIDO: `Authorization: Bearer <FISCAL_WORKER_SECRET>` o la cabecera
- * `x-worker-secret`. (La validación de firmas de QStash queda para más adelante.)
+ * El Cron de Vercel, CADA MINUTO (vercel.json), y cualquier programador externo (QStash, n8n…) que sepa hacer una llamada.
+ * Vercel Cron solo sabe hacer GET y manda `Authorization: Bearer $CRON_SECRET`: para que lo acepte, CRON_SECRET se configura con
+ * el MISMO valor que FISCAL_WORKER_SECRET. La ruta es pública para el proxy (no hay sesión) y se autentica con ese
+ * SECRETO COMPARTIDO: `Authorization: Bearer <FISCAL_WORKER_SECRET>` o la cabecera `x-worker-secret` (nunca en la URL, que se
+ * registra). GET y POST hacen exactamente lo mismo y exigen el mismo secreto. (La validación de firmas de QStash queda para más adelante.)
  *
  * ─── GARANTÍAS ───────────────────────────────────────────────────────────
  *
@@ -37,7 +38,7 @@ function secretoRecibido(req: NextRequest): string {
   return bearer ?? req.headers.get('x-worker-secret') ?? ''
 }
 
-export async function POST(req: NextRequest) {
+async function ejecutar(req: NextRequest) {
   const esperado = process.env.FISCAL_WORKER_SECRET
   if (!esperado || esperado.length < LONGITUD_MINIMA_SECRETO) {
     // Sin detalles al exterior: solo que el servicio no está disponible.
@@ -56,7 +57,11 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** Un GET con efectos secundarios es una trampa (prefetch, rastreadores): solo POST. */
-export async function GET() {
-  return NextResponse.json({ ok: false, error: 'method not allowed' }, { status: 405, headers: { Allow: 'POST' } })
-}
+/** POST: programadores externos. */
+export const POST = ejecutar
+
+/**
+ * GET: el Cron de Vercel. Un GET con efectos es una trampa (prefetch, rastreadores), por eso SIN el secreto en la cabecera no hace nada: 503 si
+ * no hay secreto configurado y 401 si no coincide. Un rastreador o un prefetch jamás lo trae.
+ */
+export const GET = ejecutar

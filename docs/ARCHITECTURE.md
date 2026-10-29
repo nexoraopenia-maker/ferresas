@@ -484,7 +484,9 @@ dueño/administrador lo libera. Cada uso, fallo, bloqueo y desbloqueo se audita
 (sin el PIN). Un PIN son pocas cifras: el bloqueo y el límite por conexión son
 lo que lo protege, no el hash.
 
-### PSE, credenciales cifradas y padrón en vivo
+### PSE (HISTÓRICO, retirado en S3–S6), credenciales cifradas y padrón en vivo
+
+> Esta sección describe el modelo anterior: los comprobantes ya NO van por un PSE sino directo a SUNAT (secciones «SUNAT directo») y las columnas `Tenant.pse*` ya no existen.
 
 Los comprobantes se firman y envían por un **PSE** (REST), no con certificado del
 negocio. `Tenant.pseEndpointUrl` (host público, validado contra SSRF) y
@@ -1313,3 +1315,10 @@ Detalle en `docs/SUNAT-DIRECTO-DISENO.md` §16. Sin migración (usa `sunat_crede
 - **Cola:** en plazo → PENDIENTE con intentos en cero; fuera de plazo → AGOTADO retenido con motivo (se crea la fila si faltaba, para que `adoptarHuerfanos` no lo envíe); el envío manual lo reabre a propósito. Bajas pendientes → intentos nuevos.
 - **Pantalla:** en «Gestionar ⋮» del SuperAdmin: «Pasar SUNAT a producción» (con previsualización; no confirma si falta algo) y «Volver SUNAT a pruebas»; la tabla muestra «SUNAT real / en pruebas».
 - **Pruebas:** `sunat-produccion` (48): cada comprobación por separado, concurrencia, el flujo de lo pendiente de punta a punta contra el SUNAT falso, el camino de vuelta, y que solo el SuperAdmin escribe el ambiente.
+
+## SUNAT directo, fase S6: worker en Vercel Cron y retiro del PSE
+
+Detalle en `docs/SUNAT-DIRECTO-DISENO.md` §17. Migración destructiva `20261128100000_retirar_pse`.
+
+- **`/api/fiscal/worker`**: `GET` (Vercel Cron, cada minuto) y `POST` (programadores externos) son el mismo manejador; ambos exigen `FISCAL_WORKER_SECRET` por cabecera. `CRON_SECRET` debe valer lo mismo para que Vercel Cron lo envíe.
+- **PSE**: columnas `Tenant.pse*` eliminadas, `validarUrlPse`/`PSE_ALLOWED_HOSTS` fuera, el re-cifrado ya no toca `tenants`. Pruebas: `retirar-pse` (16).

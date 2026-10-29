@@ -20,7 +20,7 @@ const plan = () => prisma.plan.findUniqueOrThrow({ where: { code: 'pro' } })
 async function negocio(tag: string, o: { demo?: boolean } = {}) {
   const p = await plan()
   const taxId = completarRuc(`20${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`)
-  const t = await prisma.tenant.create({ data: { slug: `nct-${tag}-${randomUUID().slice(0, 6)}`, name: `NC ${tag}`, legalName: `NC ${tag.toUpperCase()} SAC`, taxId, planId: p.id, pseConfiguredAt: new Date(), isDemo: !!o.demo, ...(o.demo ? {} : { realBillingEnabledAt: new Date(Date.now() - 86_400_000) }) } })
+  const t = await prisma.tenant.create({ data: { slug: `nct-${tag}-${randomUUID().slice(0, 6)}`, name: `NC ${tag}`, legalName: `NC ${tag.toUpperCase()} SAC`, taxId, planId: p.id, isDemo: !!o.demo, ...(o.demo ? {} : { realBillingEnabledAt: new Date(Date.now() - 86_400_000) }) } })
   await prisma.subscription.create({ data: { tenantId: t.id, planId: p.id, provider: 'STRIPE', status: 'ACTIVE', externalSubscriptionId: `sub_${randomUUID().slice(0, 8)}`, externalCustomerId: 'cus_nct' } })
   const { branch, warehouse: w } = await crearSucursalConAlmacen(t.id)
   const mk = (role: 'OWNER' | 'VENDEDOR') => prisma.user.create({ data: { tenantId: t.id, email: `${role}-${randomUUID()}@x.com`, name: role, role } })

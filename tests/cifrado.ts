@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { CifradoInvalido, ClaveMaestraAusente, cifrar, descifrar, hayClaveMaestra, leerClave, necesitaRecifrado, recifrar, versionDeClave } from '../src/lib/cifrado'
-import { UrlNoPermitida, esIpInterna, validarFormaUrl, validarUrlPse } from '../src/features/invoicing/url-segura'
+import { UrlNoPermitida, esIpInterna, validarFormaUrl } from '../src/features/invoicing/url-segura'
 import { construirTramaQr, llevaQr, qrSvg } from '../src/features/invoicing/qr'
 
 let pass = 0, fail = 0
@@ -13,7 +13,7 @@ const lanzaAsync = async (f: () => Promise<unknown>) => { try { await f(); retur
 
 const K1 = randomBytes(32).toString('base64')
 const K2 = randomBytes(32).toString('hex')
-const antes = { k: process.env.PSE_MASTER_KEY, p: process.env.PSE_MASTER_KEY_PREVIOUS, h: process.env.PSE_ALLOWED_HOSTS, c: process.env.SECRETOS_CLAVES, a: process.env.SECRETOS_CLAVE_ACTUAL }
+const antes = { k: process.env.PSE_MASTER_KEY, p: process.env.PSE_MASTER_KEY_PREVIOUS, c: process.env.SECRETOS_CLAVES, a: process.env.SECRETOS_CLAVE_ACTUAL }
 delete process.env.SECRETOS_CLAVES; delete process.env.SECRETOS_CLAVE_ACTUAL
 
 async function main() {
@@ -101,10 +101,6 @@ async function main() {
     '172.32.0.1': false, '8.8.8.8': false, '1.1.1.1': false, '::1': true, 'fe80::1': true, 'fd00::1': true, '::ffff:10.0.0.1': true, '::ffff:8.8.8.8': false }
   check('>>> clasifica bien IPs internas y públicas', Object.entries(ips).every(([ip, interna]) => esIpInterna(ip) === interna),
     Object.entries(ips).filter(([ip, i]) => esIpInterna(ip) !== i).map(([ip]) => ip).join())
-  process.env.PSE_ALLOWED_HOSTS = 'proveedor.pe, otro.com'
-  check('>>> con lista de permitidos, solo esos', !mala('https://api.proveedor.pe/') && !mala('https://proveedor.pe/') && mala('https://api.malvado.com/') && mala('https://noproveedor.pe/'))
-  delete process.env.PSE_ALLOWED_HOSTS
-  check('>>> un nombre que no resuelve se rechaza', await lanzaAsync(() => validarUrlPse('https://no-existe-ferresaas-xyz.invalid/')))
 
   console.log('\n4) Trama del QR (puro)')
   const base = { ruc: '20131312955', tipoComprobante: '03' as const, serie: 'B001', correlativo: 12, igv: 10.04, total: 65.8, fecha: '2026-10-20', tipoDocCliente: '1', numDocCliente: '41235678', hash: 'AbC123+/=' }
@@ -120,8 +116,8 @@ async function main() {
   check('>>> el SVG no contiene los datos en claro (solo módulos del QR)', !svg.includes('20131312955') && !svg.includes('AbC123'))
   check('es determinista', svg === (await qrSvg(construirTramaQr(base))))
 
-  Object.assign(process.env, { PSE_MASTER_KEY: antes.k, PSE_MASTER_KEY_PREVIOUS: antes.p, PSE_ALLOWED_HOSTS: antes.h, SECRETOS_CLAVES: antes.c, SECRETOS_CLAVE_ACTUAL: antes.a })
-  for (const k of ['PSE_MASTER_KEY', 'PSE_MASTER_KEY_PREVIOUS', 'PSE_ALLOWED_HOSTS', 'SECRETOS_CLAVES', 'SECRETOS_CLAVE_ACTUAL'] as const) if (process.env[k] === undefined || process.env[k] === 'undefined') delete process.env[k]
+  Object.assign(process.env, { PSE_MASTER_KEY: antes.k, PSE_MASTER_KEY_PREVIOUS: antes.p, SECRETOS_CLAVES: antes.c, SECRETOS_CLAVE_ACTUAL: antes.a })
+  for (const k of ['PSE_MASTER_KEY', 'PSE_MASTER_KEY_PREVIOUS', 'SECRETOS_CLAVES', 'SECRETOS_CLAVE_ACTUAL'] as const) if (process.env[k] === undefined || process.env[k] === 'undefined') delete process.env[k]
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
   process.exit(fail === 0 ? 0 : 1)

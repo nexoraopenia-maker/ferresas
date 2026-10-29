@@ -1,17 +1,10 @@
-import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
 
 /**
- * Validación de la URL del PSE, que la escribe el DUEÑO DEL NEGOCIO y el
- * SERVIDOR consulta: es el caso clásico de SSRF. Sin esto, cualquiera con
- * acceso a la configuración haría que nuestro servidor pidiera
- * `http://169.254.169.254/` (metadatos de la nube) o un servicio interno, y
- * leyera la respuesta en el «mensaje del proveedor».
+ * Validación de URLs que el SERVIDOR consulta por orden de otro sistema o de un usuario (p. ej. el padrón de RUC/DNI): es el caso clásico de SSRF. Sin esto
+ * se haría que nuestro servidor pidiera `http://169.254.169.254/` (metadatos de la nube) o un servicio interno.
  *
- * Reglas: solo https; sin usuario ni contraseña en la URL; sin IP literal ni
- * `localhost`; y el nombre, ya resuelto, no puede apuntar a una red privada.
- * Opcionalmente `PSE_ALLOWED_HOSTS` (sufijos separados por coma) limita a los
- * proveedores que decidas contratar.
+ * Reglas: solo https; sin usuario ni contraseña en la URL; sin IP literal ni `localhost`; y el nombre, ya resuelto, no puede apuntar a una red privada.
  */
 
 export class UrlNoPermitida extends Error {
@@ -53,23 +46,5 @@ export function validarFormaUrl(valor: string): URL {
   }
   if (isIP(host)) throw new UrlNoPermitida('Usa el nombre del proveedor, no una dirección IP.')
   if (!host.includes('.')) throw new UrlNoPermitida('Esa dirección no es pública.')
-
-  const permitidos = (process.env.PSE_ALLOWED_HOSTS ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
-  if (permitidos.length > 0 && !permitidos.some((s) => host === s || host.endsWith(`.${s.replace(/^\./, '')}`))) {
-    throw new UrlNoPermitida('Ese proveedor no está en la lista de proveedores permitidos.')
-  }
-  return u
-}
-
-/** Forma + resolución DNS: ningún registro puede ser una IP interna. */
-export async function validarUrlPse(valor: string): Promise<URL> {
-  const u = validarFormaUrl(valor)
-  let dir: { address: string }[]
-  try { dir = await lookup(u.hostname.replace(/^\[|\]$/g, ''), { all: true }) } catch {
-    throw new UrlNoPermitida('No se pudo resolver el nombre del proveedor.')
-  }
-  if (dir.length === 0 || dir.some((d) => esIpInterna(d.address))) {
-    throw new UrlNoPermitida('Esa dirección apunta a una red privada.')
-  }
   return u
 }
