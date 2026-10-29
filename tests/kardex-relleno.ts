@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, abrirTurno } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -48,6 +48,7 @@ async function cuerpo() {
     u[role] = { tenantId: t.id, userId: x.id, role, access: 'FULL', branchId: b1.branch.id, branchIds: [b1.branch.id], permisosExtra: [] }
   }
   const O = u.OWNER!, AL = u.ALMACENERO!
+  await abrirTurno(t.id, O.userId, b1.branch.id)
   const db = (c: TenantContext) => getTenantPrisma(c)
   const W = b1.warehouse.id
   const P = await prisma.product.create({ data: { tenantId: t.id, sku: 'R1', name: 'Cemento', unitType: 'UNIDAD', salePrice: 20, costPrice: 0 } })

@@ -92,6 +92,7 @@ async function cuerpo() {
   check('>>> 6 carreras: el cierre congela EXACTAMENTE las devoluciones enlazadas a su turno; o la devolución entró antes (y está en el cierre) o la rechazó el cierre (CASH_REQUIRED); nunca queda a medias', coherentes === 6 && devueltaYcerrada + rechazadaPorCierre === 6, `coherentes ${coherentes} · entró antes ${devueltaYcerrada} · rechazada ${rechazadaPorCierre}`)
 
   console.log('\nC) Venta fiada: devolución contra un ABONO a la vez')
+  if (!(await prisma.cashSession.findFirst({ where: { tenantId: t.id, status: 'ABIERTA' } }))) await openCashSession(db, O, openCashSchema.parse({ openingAmount: 0 }))   // F6.8b: se cobra y se abona en el turno propio
   let unGanador = 0, balanceOk = true
   for (let i = 0; i < 5; i++) {
     const v = await vender([{ productId: P3.id, quantity: 2 }], [{ method: 'CREDITO', amount: 200 }], { customerId: cliente.id })

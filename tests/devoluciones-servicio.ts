@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { abrirTurno, asignarSucursal, cajaLibre, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -45,10 +45,12 @@ async function negocio(tag: string, modo: Modo = 'REAL') {
   const b2 = await crearSucursalConAlmacen(t.id, { almacenCode: 'ALM2', seriesNumber: 2, branchCode: 'B2', establishmentCode: '0002' })
   const todas = [b1.branch.id, b2.branch.id]
   const u: Record<string, TenantContext> = {}
-  for (const role of ['OWNER', 'ADMIN', 'CONTADOR', 'CAJERO', 'VENDEDOR', 'ALMACENERO'] as Role[]) {
-    const x = await prisma.user.create({ data: { tenantId: t.id, email: `${role}-${randomUUID()}@x.com`.toLowerCase(), name: role, role } })
+  // OWNER2: F6.8b — una persona tiene un solo turno, así que la sucursal 2 la lleva otro dueño con el suyo.
+  for (const clave of ['OWNER', 'OWNER2', 'ADMIN', 'CONTADOR', 'CAJERO', 'VENDEDOR', 'ALMACENERO']) {
+    const role = (clave === 'OWNER2' ? 'OWNER' : clave) as Role
+    const x = await prisma.user.create({ data: { tenantId: t.id, email: `${clave}-${randomUUID()}@x.com`.toLowerCase(), name: clave, role } })
     for (const b of todas) await asignarSucursal(t.id, x.id, b)
-    u[role] = { tenantId: t.id, userId: x.id, role, access: 'FULL', branchId: b1.branch.id, branchIds: todas, permisosExtra: [] }
+    u[clave] = { tenantId: t.id, userId: x.id, role, access: 'FULL', branchId: b1.branch.id, branchIds: todas, permisosExtra: [] }
   }
   const prod = (sku: string, o: Record<string, unknown> = {}) => prisma.product.create({ data: { tenantId: t.id, sku, name: `Prod ${sku}`, unitType: 'UNIDAD', salePrice: 100, costPrice: 60, ...o } })
   const P1 = await prod('P1'), P2 = await prod('P2', { name: 'Servicio de corte', trackStock: false, costPrice: 0 }), P3 = await prod('P3', { salePrice: 33.33, costPrice: 17.77 })
@@ -56,12 +58,12 @@ async function negocio(tag: string, modo: Modo = 'REAL') {
   const cliente = await prisma.customer.create({ data: { tenantId: t.id, name: 'Constructora SAC', docType: 'RUC', docNumber: ruc(), creditLimit: 5000 } })
   const db = (c: TenantContext) => getTenantPrisma(c)
   const O = u.OWNER!
-  const sedes = { b1: { ctx: O, w: b1.warehouse.id }, b2: { ctx: { ...O, branchId: b2.branch.id } as TenantContext, w: b2.warehouse.id } }
+  const sedes = { b1: { ctx: O, w: b1.warehouse.id }, b2: { ctx: { ...u.OWNER2!, branchId: b2.branch.id } as TenantContext, w: b2.warehouse.id } }
   const vender = (items: unknown[], payments: unknown[], over: Record<string, unknown> = {}, sede: 'b1' | 'b2' = 'b1', ctx?: TenantContext) => {
     const s = sedes[sede], c = ctx ?? s.ctx
     return registerSale(db(c), c, registerSaleSchema.parse({ warehouseId: s.w, items, payments, documentType: 'NOTA_VENTA', allowNegativeStock: false, idempotencyKey: randomUUID(), ...over }) as never)
   }
-  const abrir = (monto: number, sede: 'b1' | 'b2' = 'b1') => openCashSession(db(sedes[sede].ctx), sedes[sede].ctx, openCashSchema.parse({ openingAmount: monto }))
+  const abrir = async (monto: number, sede: 'b1' | 'b2' = 'b1') => openCashSession(db(sedes[sede].ctx), sedes[sede].ctx, openCashSchema.parse({ openingAmount: monto, ...(await cajaLibre(t.id, sedes[sede].ctx.branchId!)) }))
   const L = (productId: string, quantity: number, extra: Record<string, unknown> = {}) => ({ productId, quantity, discount: 0, ...extra })
   const stock = async (productId: string, w = b1.warehouse.id) => num((await prisma.stock.findFirstOrThrow({ where: { tenantId: t.id, productId, warehouseId: w } })).quantity)
   let corr = 0
@@ -150,14 +152,18 @@ async function cuerpo() {
 
   console.log('\nC) Sin caja abierta')
   const C = await negocio('sin-caja')
+  const tC = await C.abrir(0)
   const sc = await C.vender([C.L(C.P1.id, 1)], [{ method: 'EFECTIVO', amount: 100 }])
+  const sc2 = await C.vender([C.L(C.P1.id, 1)], [{ method: 'YAPE', amount: 100 }])
+  await closeCashSession(C.db(C.O), C.O, closeCashSchema.parse({ sessionId: tC.id, countedAmount: 100 }))   // F6.8b: quien devuelve necesita SU turno abierto
   const fc = await C.foto(sc.saleId)
   const ec = await err(C.devolver(sc.saleId))
-  check('>>> devolver efectivo del cajón sin turno abierto → CASH_REQUIRED, con el camino, y NADA cambia', ec?.code === 'CASH_REQUIRED' && ec.message.includes('turno de caja abierto') && JSON.stringify(await C.foto(sc.saleId)) === JSON.stringify(fc), `${ec?.code} ${ec?.message?.slice(0, 80)}`)
+  check('>>> devolver efectivo del cajón sin turno propio → CASH_REQUIRED, con el camino, y NADA cambia', ec?.code === 'CASH_REQUIRED' && ec.message.includes('turno de caja abierto') && JSON.stringify(await C.foto(sc.saleId)) === JSON.stringify(fc))
+  check('>>> F6.8b: devolver por OTRO medio (Yape, transferencia) también mueve dinero: sin turno propio, CASH_REQUIRED', await code(C.devolver(sc.saleId, { refunds: [{ mode: 'EXTERNO', method: 'TRANSFERENCIA', amount: 100 }] })) === 'CASH_REQUIRED' && await code(C.devolver(sc2.saleId)) === 'CASH_REQUIRED')
+  await C.abrir(0)
   const rc = await C.devolver(sc.saleId, { refunds: [{ mode: 'EXTERNO', method: 'TRANSFERENCIA', amount: 100 }] })
-  check('…pero por otro medio no necesita caja: se devuelve y el stock vuelve', rc.status === 'DEVUELTA' && (await C.stock(C.P1.id)) === 100)
-  const sc2 = await C.vender([C.L(C.P1.id, 1)], [{ method: 'YAPE', amount: 100 }])
-  check('una venta pagada solo por Yape se devuelve sin caja (por defecto sale como Yape)', (await C.devolver(sc2.saleId)).refunds[0]!.mode === 'EXTERNO')
+  check('…con su turno abierto se devuelve por otro medio y el stock vuelve', rc.status === 'DEVUELTA' && (await C.stock(C.P1.id)) === 99)
+  check('una venta pagada solo por Yape se devuelve (por defecto sale como Yape)', (await C.devolver(sc2.saleId)).refunds[0]!.mode === 'EXTERNO')
 
   console.log('\nD) Un turno CERRADO no cambia: el dinero sale en el turno de hoy')
   const D = await negocio('turno-cerrado')
@@ -288,7 +294,9 @@ async function cuerpo() {
 
   console.log('\nJ) Permisos, sucursales y cuenta')
   const J = await negocio('permisos')
-  await J.abrir(0)
+  await J.abrir(0); await J.abrir(0, 'b2')
+  // F6.8b: quien devuelve saca de SU caja: el administrador y el cajero con el permiso también tienen turno.
+  await abrirTurno(J.t.id, J.u.ADMIN!.userId, J.b1.branch.id); await abrirTurno(J.t.id, J.u.CAJERO!.userId, J.b1.branch.id)
   const probar = async (c: TenantContext) => { const v = await J.vender([J.L(J.P1.id, 1)], [{ method: 'YAPE', amount: 100 }]); return code(J.devolver(v.saleId, {}, c)) }
   for (const r of ['OWNER', 'ADMIN']) check(`>>> ${r} puede anular/devolver`, (await probar(J.u[r]!)) === null)
   for (const r of ['CONTADOR', 'CAJERO', 'VENDEDOR', 'ALMACENERO']) check(`>>> ${r} NO puede (FORBIDDEN_ROLE)`, (await probar(J.u[r]!)) === 'FORBIDDEN_ROLE')

@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { abrirTurno, asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -55,9 +55,11 @@ async function negocio(tag: string) {
     for (const b of todas) await asignarSucursal(t.id, u.id, b)
     return u
   }
-  const owner = await mk('OWNER'), cajero = await mk('CAJERO')
+  const owner = await mk('OWNER'), owner2 = await mk('OWNER'), cajero = await mk('CAJERO')
   const ctx = (u: { id: string }, role: Role, branchId: string, branchIds = todas): TenantContext => ({ tenantId: t.id, userId: u.id, role, access: 'FULL', branchId, branchIds, permisosExtra: [] })
-  const O1 = ctx(owner, 'OWNER', b1.branch.id), O2 = ctx(owner, 'OWNER', b2.branch.id)
+  const O1 = ctx(owner, 'OWNER', b1.branch.id), O2 = ctx(owner2, 'OWNER', b2.branch.id)
+  // F6.8b: cada sucursal la cobra y devuelve su propia persona con su turno abierto.
+  await abrirTurno(t.id, owner.id, b1.branch.id); await abrirTurno(t.id, owner2.id, b2.branch.id)
   const prod = (sku: string, o: Record<string, unknown>) => prisma.product.create({ data: { tenantId: t.id, sku, name: `Prod ${sku}`, unitType: 'UNIDAD', ...o } })
   const P1 = await prod('P1', { salePrice: 100, costPrice: 60 }), P2 = await prod('P2', { salePrice: 2.5, costPrice: 0, taxRate: 0 })
   const P3 = await prod('P3', { salePrice: 33.33, costPrice: 17.77 }), P4 = await prod('P4', { salePrice: 0.35, costPrice: 0.1 })
@@ -84,7 +86,9 @@ async function negocio(tag: string) {
   const item = (saleId: string, productId: string) => prisma.saleItem.findFirstOrThrow({ where: { saleId, productId } })
   const devolver = async (saleId: string, lines: { saleItemId: string; quantity: number; destination?: 'STOCK' | 'MERMA' }[], refund: { monto?: number; medio?: string } | null, notaEn: string | null) => {
     const dinero = refund?.monto
-    const r = await devolverProductosVenta(getTenantPrisma(O1), O1, devolverProductosSchema.parse({
+    // Quien devuelve es la persona con turno en la sucursal de la venta (F6.8b).
+    const quien = (await prisma.sale.findUniqueOrThrow({ where: { id: saleId }, select: { branchId: true } })).branchId === b2.branch.id ? O2 : O1
+    const r = await devolverProductosVenta(getTenantPrisma(quien), quien, devolverProductosSchema.parse({
       saleId, reason: 'Devolución parcial de prueba', lines, idempotencyKey: randomUUID(),
       ...(dinero ? { refunds: [{ mode: 'EXTERNO', method: refund?.medio ?? 'YAPE', amount: dinero }] } : {}),
     }))

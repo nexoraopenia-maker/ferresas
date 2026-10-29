@@ -9,7 +9,8 @@ import { mensajeAbonoExcede, repartirAbono } from '@/features/credito/reglas'
 
 export interface CuentaAbonable { id: string; venta: string; saldo: number; vence: string; vencida: boolean }
 
-export const MENSAJE_ABONO_SIN_CAJA = 'Abre la caja antes de cobrar un abono en efectivo: ese dinero tiene que entrar a un turno.'
+/** El mismo texto que el servidor (`exigirTurnoPropio`): desde F6.8b todo abono, con cualquier medio, entra al turno propio. */
+export const MENSAJE_ABONO_SIN_CAJA = 'Para registrar un abono hace falta que tengas tu propio turno de caja abierto. Abre tu caja primero.'
 export const MENSAJE_ABONO_SIN_DEUDA = 'El cliente no tiene deuda pendiente.'
 export const MENSAJE_ABONO_ELIGE_CUENTA = 'Elige al menos una cuenta o vuelve a «La más antigua primero».'
 

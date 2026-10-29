@@ -71,6 +71,9 @@ async function main() {
     num(cerrada.expectedAmount) === 350 && num(cerrada.difference) === 0, `${cerrada.expectedAmount} / ${cerrada.difference}`)
   check('el vuelto total del turno es el real: 10 + 0 + 45 + 0 = 55', num(cerrada.changeTotal) === 55, String(cerrada.changeTotal))
 
+  // F6.8b: sin turno propio no se cobra: el resto de la prueba trabaja en un turno nuevo.
+  await openCashSession(db, ctx, openCashSchema.parse({ openingAmount: 0 }))
+
   console.log('\n2) Lo que no cuadra se rechaza SIN escribir nada')
   const foto = async () => ({
     ventas: await prisma.sale.count({ where: { tenantId: t.id } }), pagos: await prisma.payment.count({ where: { tenantId: t.id } }),

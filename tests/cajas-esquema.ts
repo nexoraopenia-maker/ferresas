@@ -119,8 +119,8 @@ async function main() {
   const cajero2 = await prisma.user.create({ data: { tenantId: t.id, email: `c2-${randomUUID()}@x.com`, name: 'C2', role: 'CAJERO' } })
   const ctx = (u: { id: string }): TenantContext => ({ tenantId: t.id, userId: u.id, role: 'CAJERO', access: 'FULL', branchId: bJ.id, branchIds: [bJ.id] })
   const abierto = await openCashSession(getTenantPrisma(ctx(cajero1)), ctx(cajero1), { openingAmount: 50 })
-  check('>>> openCashSession abre un turno (sin caja todavía: el nulo es la transición)', (await sesion(abierto.id)).status === 'ABIERTA' && (await sesion(abierto.id)).registerId === null)
-  check('>>> y un segundo cajero en la misma sucursal sigue recibiendo «ya hay una caja abierta» (el índice de los turnos sin caja)', await code(openCashSession(getTenantPrisma(ctx(cajero2)), ctx(cajero2), { openingAmount: 10 })) === 'DUPLICATE_CODE')
+  check('>>> F6.8b: openCashSession abre el turno EN una caja (la única de la sucursal)', (await sesion(abierto.id)).status === 'ABIERTA' && (await sesion(abierto.id)).registerId !== null)
+  check('>>> y un segundo cajero en la misma sucursal sigue recibiendo «esa caja ya tiene un turno» (el índice por caja)', await code(openCashSession(getTenantPrisma(ctx(cajero2)), ctx(cajero2), { openingAmount: 10 })) === 'DUPLICATE_CODE')
 
   await prisma.tenant.delete({ where: { id: ajeno.id } })
   await prisma.tenant.delete({ where: { id: t.id } })

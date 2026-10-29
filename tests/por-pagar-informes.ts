@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, abrirTurno } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { prisma } from '../src/lib/prisma'
@@ -45,6 +45,7 @@ async function negocio(tag: string) {
   ctxs.ALMACENERO_CON_COMPRAS = { ...ctxs.ALMACENERO!, permisosExtra: ['compras.registrar'] }
   const dbOf = (c: TenantContext) => getTenantPrisma(c)
   const O = ctxs.OWNER!
+  await abrirTurno(t.id, O.userId, b1.branch.id)
   const tz = (await prisma.tenant.findUniqueOrThrow({ where: { id: t.id } })).timezone
   const hoy = hoyEnZona(tz)
   const dia = (offset: number) => iso(sumarDias(hoy, offset))

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { NextRequest } from 'next/server'
 import { SyntaxKind } from 'ts-morph'
 import { ficheros, proyecto, RAIZ, rel } from './ast'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, abrirTurno } from './fixtures'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
 import { completarRuc } from '../src/lib/documentos'
@@ -58,6 +58,7 @@ async function mkNegocio(tag: string, modo: 'REAL' | 'PAUSADO' | 'ENSAYO' | 'DEM
   const u = await prisma.user.create({ data: { tenantId: t.id, email: `o-${randomUUID()}@x.com`, name: 'Dueño', role: 'OWNER' } })
   await asignarSucursal(t.id, u.id, branch.id)
   const ctx: TenantContext = { tenantId: t.id, userId: u.id, role: 'OWNER', access: 'FULL', branchId: branch.id, branchIds: [branch.id] }
+  await abrirTurno(t.id, u.id, branch.id)
   const db = getTenantPrisma(ctx)
   const p = await prisma.product.create({ data: { tenantId: t.id, sku: 'P', name: 'Cemento Sol', salePrice: 11.8 } })
   await prisma.stock.create({ data: { tenantId: t.id, productId: p.id, warehouseId: w.id, quantity: 100_000 } })

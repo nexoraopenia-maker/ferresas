@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { abrirTurno, asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { prisma } from '../src/lib/prisma'
@@ -53,6 +53,7 @@ async function negocio(tag: string, o: { real?: boolean } = {}) {
   const O1 = ctxDe(owner, 'OWNER', b1.branch.id), O2 = ctxDe(owner2, 'OWNER', b2.branch.id)
   const Caj = ctxDe(cajeroU, 'CAJERO', b1.branch.id), Alm = ctxDe(almU, 'ALMACENERO', b1.branch.id), Vend = ctxDe(vendU, 'VENDEDOR', b1.branch.id)
   const dbOf = (c: TenantContext) => getTenantPrisma(c)
+  if (o.real) await abrirTurno(t.id, owner.id, b1.branch.id)   // F6.8b: el negocio «real» cobra con el turno propio del dueño
   const prod = await prisma.product.create({ data: { tenantId: t.id, sku: 'P1', name: 'Producto', salePrice: 100 } })
   for (const w of [b1.warehouse, b2.warehouse]) await prisma.stock.create({ data: { tenantId: t.id, productId: prod.id, warehouseId: w.id, quantity: 1000 } })
   let dni = 41300000
@@ -93,6 +94,7 @@ async function main() {
   check('anular exige motivo (3+ caracteres)', !anularAbonoSchema.safeParse({ paymentId: 'p', motivo: 'ab' }).success && !anularCuentaSchema.safeParse({ receivableId: 'r', motivo: '' }).success && !descartarRevisionSchema.safeParse({ receivableId: 'r', nota: ' ' }).success)
 
   console.log('\nB) Reparto: lo más antiguo primero')
+  const caja1 = await openCashSession(dbOf(O1), O1, openCashSchema.parse({ openingAmount: 100 }))   // F6.8b: fiar y abonar exigen el turno propio
   const A = await cliente()
   await plazo(A.id, 60); const v1 = await fiar(S1, A.id, 300)    // creada primero, vence MÁS TARDE
   await plazo(A.id, 10); const v2 = await fiar(S1, A.id, 200)    // vence primero
@@ -127,17 +129,16 @@ async function main() {
 
   console.log('\nD) Efectivo y caja')
   const F = await cliente(); const fV = await fiar(S1, F.id, 400)
-  check('>>> abono en EFECTIVO sin turno de caja abierto → rechazado con un mensaje claro', await code(abonar(O1, F.id, 50, { method: 'EFECTIVO' })) === 'INVALID_DOCUMENT')
-  const caja1 = await openCashSession(dbOf(O1), O1, openCashSchema.parse({ openingAmount: 100 }))
+  check('>>> F6.8b: un abono, en efectivo o por Yape, de quien NO tiene turno propio (la sucursal 2 aún no abrió) → CASH_REQUIRED con un mensaje claro', await code(abonar(O2, F.id, 50, { method: 'EFECTIVO' })) === 'CASH_REQUIRED' && await code(abonar(O2, F.id, 50)) === 'CASH_REQUIRED')
   const efe = await abonar(O1, F.id, 50, { method: 'EFECTIVO' })
   check('>>> con turno abierto, el efectivo se enlaza a ESE turno', (await prisma.customerPayment.findUniqueOrThrow({ where: { id: efe.paymentId } })).cashSessionId === caja1.id)
   const yape = await abonar(O1, F.id, 50)
   check('un abono por Yape con turno abierto también queda enlazado (para el reporte del turno)', (await prisma.customerPayment.findUniqueOrThrow({ where: { id: yape.paymentId } })).cashSessionId === caja1.id)
-  const yape2 = await abonar(O2, F.id, 50)
-  check('y desde una sucursal SIN turno abierto el Yape se acepta, sin turno', (await prisma.customerPayment.findUniqueOrThrow({ where: { id: yape2.paymentId } })).cashSessionId === null && (await deuda(F.id)) === 250)
+  check('y desde una sucursal SIN turno abierto el Yape ya NO se acepta sin turno: la deuda no se movió', (await deuda(F.id)) === 300)
 
   console.log('\nE) Permisos')
   const G = await cliente(); await fiar(S1, G.id, 200)
+  await abrirTurno(E.t.id, Caj.userId, E.b1.branch.id)   // F6.8b: el cajero abona en SU turno
   const cajA = await abonar(Caj, G.id, 20)
   check('>>> el CAJERO registra abonos (credito.cobrar viene de fábrica)', cajA.monto === 20)
   check('>>> el ALMACENERO y el VENDEDOR no', await code(abonar(Alm, G.id, 10)) === 'FORBIDDEN_ROLE' && await code(abonar(Vend, G.id, 10)) === 'FORBIDDEN_ROLE')
@@ -159,6 +160,7 @@ async function main() {
   check('>>> y con una clave NUEVA enviada 4 veces a la vez: se cobra una sola vez (400 → 350)', simult2.every((r) => r.status === 'fulfilled') && (await deuda(H.id)) === 350 && (await prisma.customerPayment.count({ where: { customerId: H.id } })) === 2)
 
   console.log('\nG) CONCURRENCIA: varios abonos y un fiado a la vez sobre la misma deuda')
+  const caja2 = await openCashSession(dbOf(O2), O2, openCashSchema.parse({ openingAmount: 50 }))   // F6.8b: la sucursal 2 cobra con su propio turno
   const J = await cliente({ creditLimit: 5000 })
   await Promise.all([fiar(S1, J.id, 100), fiar(S1, J.id, 100), fiar(S1, J.id, 100)])
   const rs = await Promise.allSettled([1, 2, 3, 4, 5, 6].map((i) => abonar(i % 2 ? O1 : O2, J.id, 100)))
@@ -188,7 +190,6 @@ async function main() {
 
   console.log('\nI) UN TURNO CERRADO ES INMUTABLE')
   const M = await cliente(); const mV = await fiar(S2, M.id, 200)
-  const caja2 = await openCashSession(dbOf(O2), O2, openCashSchema.parse({ openingAmount: 50 }))
   const mAb = await abonar(O2, M.id, 80, { method: 'EFECTIVO' })
   const aun = await anularAbono(dbOf(O2), O2, anularAbonoSchema.parse({ paymentId: mAb.paymentId, motivo: 'Me equivoqué de cliente' }))
   check('>>> con el turno ABIERTO el abono en efectivo sí se anula (deuda 120 → 200)', aun.deudaDespues === 200)
@@ -196,7 +197,7 @@ async function main() {
   await closeCashSession(dbOf(O2), O2, closeCashSchema.parse({ sessionId: caja2.id, countedAmount: 130 }))
   const antes = await foto()
   const cerrado = await anularAbono(dbOf(O2), O2, anularAbonoSchema.parse({ paymentId: mAb2.paymentId, motivo: 'Ya cerré caja' })).then(() => null, (e) => e)
-  check('>>> con el turno CERRADO y SIN caja abierta hoy no se anula: CASH_REQUIRED que dice que la compensación sale de la caja abierta, y no se escribe nada', cerrado?.code === 'CASH_REQUIRED' && /caja abierta/.test(cerrado.message) && JSON.stringify(antes) === JSON.stringify(await foto()))
+  check('>>> con el turno CERRADO y SIN caja abierta hoy no se anula: CASH_REQUIRED que dice que la compensación sale de TU caja abierta, y no se escribe nada', cerrado?.code === 'CASH_REQUIRED' && /tu caja/.test(cerrado.message) && JSON.stringify(antes) === JSON.stringify(await foto()))
   const caja3 = await openCashSession(dbOf(O2), O2, openCashSchema.parse({ openingAmount: 20 }))
   const okTarde = await anularAbono(dbOf(O2), O2, anularAbonoSchema.parse({ paymentId: mAb2.paymentId, motivo: 'Ya cerré caja' }))
   check('>>> con caja abierta SÍ se anula: la deuda vuelve (120 → 200) y el dinero sale de la caja de hoy como compensación', okTarde.deudaDespues === 200 && okTarde.compensacion?.cashSessionId === caja3.id && okTarde.compensacion.efectivo)

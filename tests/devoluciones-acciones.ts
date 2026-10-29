@@ -1,7 +1,7 @@
 import './guard'
 import { readFileSync } from 'node:fs'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { abrirTurno, asignarSucursal, cajaLibre, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -35,10 +35,12 @@ async function negocio(tag: string) {
   const b2 = await crearSucursalConAlmacen(t.id, { almacenCode: 'ALM2', seriesNumber: 2, branchCode: 'B2', establishmentCode: '0002' })
   const todas = [b1.branch.id, b2.branch.id]
   const u: Record<string, TenantContext> = {}
-  for (const role of ['OWNER', 'ADMIN', 'CONTADOR', 'CAJERO', 'VENDEDOR', 'ALMACENERO'] as Role[]) {
-    const x = await prisma.user.create({ data: { tenantId: t.id, email: `${role}-${randomUUID()}@x.com`.toLowerCase(), name: role, role } })
+  // OWNER2: F6.8b — una persona tiene un solo turno, así que la sucursal 2 la lleva otro dueño con el suyo.
+  for (const clave of ['OWNER', 'OWNER2', 'ADMIN', 'CONTADOR', 'CAJERO', 'VENDEDOR', 'ALMACENERO']) {
+    const role = (clave === 'OWNER2' ? 'OWNER' : clave) as Role
+    const x = await prisma.user.create({ data: { tenantId: t.id, email: `${clave}-${randomUUID()}@x.com`.toLowerCase(), name: clave, role } })
     for (const b of todas) await asignarSucursal(t.id, x.id, b)
-    u[role] = { tenantId: t.id, userId: x.id, role, access: 'FULL', branchId: b1.branch.id, branchIds: todas, permisosExtra: [] }
+    u[clave] = { tenantId: t.id, userId: x.id, role, access: 'FULL', branchId: b1.branch.id, branchIds: todas, permisosExtra: [] }
   }
   const solo = await prisma.user.create({ data: { tenantId: t.id, email: `solo-${randomUUID()}@x.com`, name: 'Solo B2', role: 'CAJERO' } })
   await asignarSucursal(t.id, solo.id, b2.branch.id)
@@ -47,12 +49,12 @@ async function negocio(tag: string) {
   for (const w of [b1.warehouse, b2.warehouse]) await prisma.stock.create({ data: { tenantId: t.id, productId: P1.id, warehouseId: w.id, quantity: 500 } })
   const db = (c: TenantContext) => getTenantPrisma(c)
   const O = u.OWNER!
-  const sedes = { b1: { ctx: O, w: b1.warehouse.id }, b2: { ctx: { ...O, branchId: b2.branch.id } as TenantContext, w: b2.warehouse.id } }
+  const sedes = { b1: { ctx: O, w: b1.warehouse.id }, b2: { ctx: { ...u.OWNER2!, branchId: b2.branch.id } as TenantContext, w: b2.warehouse.id } }
   const vender = (monto: number, sede: 'b1' | 'b2' = 'b1', metodo = 'EFECTIVO') => {
     const s = sedes[sede]
     return registerSale(db(s.ctx), s.ctx, registerSaleSchema.parse({ warehouseId: s.w, items: [{ productId: P1.id, quantity: monto / 100, discount: 0 }], payments: [{ method: metodo, amount: monto }], documentType: 'NOTA_VENTA', allowNegativeStock: false, idempotencyKey: randomUUID() }) as never)
   }
-  const abrir = (monto: number, sede: 'b1' | 'b2' = 'b1') => openCashSession(db(sedes[sede].ctx), sedes[sede].ctx, openCashSchema.parse({ openingAmount: monto }))
+  const abrir = async (monto: number, sede: 'b1' | 'b2' = 'b1') => openCashSession(db(sedes[sede].ctx), sedes[sede].ctx, openCashSchema.parse({ openingAmount: monto, ...(await cajaLibre(t.id, sedes[sede].ctx.branchId!)) }))
   const cerrar = (id: string, contado: number, sede: 'b1' | 'b2' = 'b1') => closeCashSession(db(sedes[sede].ctx), sedes[sede].ctx, closeCashSchema.parse({ sessionId: id, countedAmount: contado }))
   const devolver = (saleId: string, ctx: TenantContext = O, over: Record<string, unknown> = {}) => anularOdevolverVenta(db(ctx), ctx, anularOdevolverVentaSchema.parse({ saleId, kind: 'DEVOLUCION', reason: 'Cliente devolvió', idempotencyKey: randomUUID(), ...over }))
   return { t, b1, b2, u, O, db, vender, abrir, cerrar, devolver }
@@ -83,6 +85,7 @@ async function cuerpo() {
   console.log('\nB) Quién puede anular, a nivel de servicio')
   const A = await negocio('a')
   const t1 = await A.abrir(100)
+  const tAdmin = await abrirTurno(A.t.id, A.u.ADMIN!.userId, A.b1.branch.id, { fondo: 20 })   // F6.8b: quien devuelve saca el efectivo de SU caja
   const s1 = await A.vender(200)
   for (const rol of ['ADMIN', 'CAJERO', 'CONTADOR', 'VENDEDOR', 'ALMACENERO'] as const) {
     const c = A.u[rol]!
@@ -102,12 +105,11 @@ async function cuerpo() {
   console.log('\nC) Ticket de cierre de caja')
   const abierto = await code(getTicketCierre(A.db(A.O), A.O, t1.id))
   check('>>> un turno ABIERTO no se imprime (NOT_FOUND)', abierto === 'NOT_FOUND')
-  const dev = await A.devolver(s1.saleId, A.u.ADMIN!).catch(() => null)
-  void dev
-  // El turno 1 sigue abierto: la devolución de s1 (ya hecha por ADMIN arriba) salió de su cajón.
-  const cierre = await A.cerrar(t1.id, 200)
+  // La devolución de s1 la hizo ADMIN arriba y salió de SU cajón, no del turno del dueño donde se cobró: el turno 1 cierra con todo el efectivo cobrado.
+  const cierre = await A.cerrar(t1.id, 400)
   const tk = await getTicketCierre(A.db(A.O), A.O, t1.id)
-  check('>>> el ticket trae lo congelado: fondo 100, cobrado 300 (dos ventas), devoluciones del cajón 200, esperado 200, contado 200, cuadra', tk.fondoInicial === 100 && tk.cobradoEfectivo === 300 && tk.devolucionesCajon === 200 && tk.devolucionesOtrosMedios === 0 && tk.esperado === cierre.expectedAmount && tk.contado === 200 && tk.diferencia === 0 && /^CC-\d{8}-[A-Z0-9]{6}$/.test(tk.numero))
+  check('>>> el ticket trae lo congelado: fondo 100, cobrado 300 (dos ventas), devoluciones del cajón 0 (la sacó ADMIN de SU caja), esperado 400, contado 400, cuadra', tk.fondoInicial === 100 && tk.cobradoEfectivo === 300 && tk.devolucionesCajon === 0 && tk.devolucionesOtrosMedios === 0 && tk.esperado === cierre.expectedAmount && tk.esperado === 400 && tk.contado === 400 && tk.diferencia === 0 && /^CC-\d{8}-[A-Z0-9]{6}$/.test(tk.numero))
+  check('>>> el efectivo de esa devolución salió del turno de ADMIN (200)', Number((await prisma.saleReturnRefund.aggregate({ where: { cashSessionId: tAdmin, mode: 'CAJA' }, _sum: { amount: true } }))._sum.amount ?? 0) === 200)
   check('>>> el ticket no contiene costos ni utilidad', !/cost|utilidad|margen/i.test(JSON.stringify(tk)))
   check('(estable) la reimpresión es idéntica', JSON.stringify(await getTicketCierre(A.db(A.O), A.O, t1.id)) === JSON.stringify(tk))
   for (const [rol, esperado] of [['OWNER', null], ['ADMIN', null], ['CONTADOR', null], ['VENDEDOR', 'FORBIDDEN_ROLE'], ['ALMACENERO', 'FORBIDDEN_ROLE']] as const) {
@@ -118,7 +120,7 @@ async function cuerpo() {
   const t2 = await A.abrir(0)   // el dueño abre y cierra este otro turno
   await A.cerrar(t2.id, 0)
   check('>>> el cajero (sin caja.arqueo) NO ve el cierre de un turno que abrió y cerró OTRA persona', (await code(getTicketCierre(A.db(cajero), cajero, t2.id))) === 'NOT_FOUND')
-  const t3 = await openCashSession(A.db(cajero), cajero, openCashSchema.parse({ openingAmount: 50 }))
+  const t3 = await openCashSession(A.db(cajero), cajero, openCashSchema.parse({ openingAmount: 50, ...(await cajaLibre(A.t.id, cajero.branchId!)) }))
   await closeCashSession(A.db(cajero), cajero, closeCashSchema.parse({ sessionId: t3.id, countedAmount: 50 }))
   check('>>> pero SÍ ve el de su propio turno', (await code(getTicketCierre(A.db(cajero), cajero, t3.id))) === null)
   const B = await negocio('b')

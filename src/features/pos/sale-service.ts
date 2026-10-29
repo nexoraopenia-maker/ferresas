@@ -4,7 +4,7 @@ import { redondearCentimos } from '@/lib/dinero'
 import { topeDescuento, validarDescuentoLinea } from '@/lib/descuentos'
 import { requireBranch, type TenantContext } from '@/lib/tenant-context'
 import {
-  cargarSucursalOperativa, serieDe, turnoAbiertoId,
+  cargarSucursalOperativa, serieDe, exigirTurnoPropio, bloquearTurnoPropio,
 } from '@/features/branches/queries'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { applyStockMovement } from '@/features/inventory/stock-service'
@@ -185,44 +185,20 @@ export async function registerSale(
   await ensureCounter(db, ctx.tenantId, branchId, 'SALE', serie.series, serie.prefix)
 
   /*
-   * El turno de caja se busca FUERA de la transacción, y es deliberado.
-   *
-   * La numeración sin huecos serializa las transacciones de la misma serie,
-   * así que cada consulta que viva dentro de ese bloque se paga una vez por
-   * venta EN FILA. Tenerla dentro costó un timeout de 30 s en la prueba de 12
-   * comprobantes simultáneos: la sección serializada no aguanta ni una ida y
-   * vuelta extra a Neon.
-   *
-   * La carrera que esto abre es benigna y acotada: si el turno se cierra
-   * entre esta consulta y el INSERT, la venta queda sellada con un turno ya
-   * cerrado cuyos totales están congelados. No corrompe nada —el arqueo sigue
-   * siendo la foto de lo que había al cerrar— y queda detectable, porque la
-   * suma de ventas del turno dejaría de cuadrar con su `salesTotal`.
-   *
-   * La alternativa (dentro de la transacción) cambiaría ese desajuste
-   * detectable por ventas que fallan en hora punta. No es un buen canje.
+   * Turno PROPIO obligatorio (F6.8b): todo cobro —efectivo, Yape, Plin, tarjeta, transferencia o fiado— entra al turno abierto de QUIEN lo ejecuta, en esta sucursal.
+   * Sin él no se cobra (`CASH_REQUIRED`): ese dinero no entraría a ningún arqueo. Aquí solo se busca el id (fallar rápido, sin tocar nada); dentro de la transacción se
+   * bloquea la fila del turno ANTES de numerar, así que un cierre simultáneo espera, lo ve cerrado y la venta no se cuela en un turno ya congelado.
    */
-  const cashSessionId = await turnoAbiertoId(db, branchId)
-
-  /*
-   * Caja obligatoria (opcional por negocio): el efectivo solo se cobra dentro
-   * de un turno abierto. Sin turno, ese dinero no entra en ningún arqueo y es
-   * justo el que se «pierde». Solo se consulta el ajuste cuando NO hay turno
-   * abierto, que es el caso raro: la venta normal no paga una consulta más.
-   */
-  if (!cashSessionId && input.payments.some((p) => p.method === 'EFECTIVO')) {
-    const ajustes = await db.tenant.findFirst({ select: { cashRequired: true } })
-    if (ajustes?.cashRequired) {
-      throw new BusinessError(
-        'INVALID_DOCUMENT',
-        'Abre la caja antes de cobrar en efectivo. Declara el monto con el que empiezas el turno.',
-      )
-    }
-  }
+  const cashSessionId = await exigirTurnoPropio(db, ctx, branchId, 'cobrar')
 
   try {
   return await db.$transaction(async (tx) => {
       const t = tx as unknown as TenantPrismaClient
+
+      // El turno propio, bloqueado y firme, ANTES de cualquier otra cosa (y de la numeración serializada): ver arriba.
+      if ((await bloquearTurnoPropio(t, ctx, branchId, 'cobrar')) !== cashSessionId) {
+        throw new BusinessError('CASH_REQUIRED', 'Tu turno de caja cambió mientras cobrabas. Vuelve a intentarlo.')
+      }
 
       /*
        * El almacén tiene que ser DE ESTA SUCURSAL. El aislamiento por tenant

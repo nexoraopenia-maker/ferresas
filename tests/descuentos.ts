@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { crearSucursal, asignarSucursal } from './fixtures'
+import { crearSucursal, asignarSucursal, abrirTurno } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -62,6 +62,7 @@ async function main() {
   }
   const owner = await mk('OWNER', 'dueno'), admin = await mk('ADMIN', 'admin'), vend = await mk('VENDEDOR', 'vendedor')
   const cajero = await mk('CAJERO', 'cajero'), conta = await mk('CONTADOR', 'contador')
+  for (const u of [owner, admin, vend, cajero, conta]) await abrirTurno(t.id, u.id, bA.id)
   const prod = await prisma.product.create({ data: { tenantId: t.id, sku: 'P1', name: 'Cemento', salePrice: 100 } })
   await prisma.stock.create({ data: { tenantId: t.id, productId: prod.id, warehouseId: wA.id, quantity: 1000 } })
   const ctx = (u: { id: string }) => resolveTenantContext(u.id)

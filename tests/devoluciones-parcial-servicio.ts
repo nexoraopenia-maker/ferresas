@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { abrirTurno, asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -256,21 +256,26 @@ async function cuerpo() {
 
   console.log('\nG) Caja')
   const K = await negocio('caja')
+  const tK0 = await K.abrir(0)
   const sK = await K.vender([K.L(K.P1.id, 2)], [{ method: 'EFECTIVO', amount: 200 }])
+  await closeCashSession(K.db(K.O), K.O, closeCashSchema.parse({ sessionId: tK0.id, countedAmount: 200 }))   // F6.8b: quien devuelve necesita SU turno abierto
   const iK = await K.item(sK.saleId)
   const fK = await K.foto(sK.saleId)
   const eK = await err(K.devolver(sK.saleId, [{ saleItemId: iK.id, quantity: 1 }]))
-  check('>>> efectivo desde el cajón SIN turno abierto → CASH_REQUIRED y no cambia NADA (ni stock, ni contador)', eK?.code === 'CASH_REQUIRED' && JSON.stringify(await K.foto(sK.saleId)) === JSON.stringify(fK))
+  check('>>> efectivo desde el cajón SIN turno propio abierto → CASH_REQUIRED y no cambia NADA (ni stock, ni contador)', eK?.code === 'CASH_REQUIRED' && JSON.stringify(await K.foto(sK.saleId)) === JSON.stringify(fK))
+  const eExt0 = await err(K.devolver(sK.saleId, [{ saleItemId: iK.id, quantity: 1 }], { refunds: [{ mode: 'EXTERNO', method: 'YAPE', amount: 100, reference: 'OP-123' }] }))
+  check('>>> F6.8b: devolverlo por Yape (EXTERNO) también mueve dinero: sin turno propio, CASH_REQUIRED y no cambia nada', eExt0?.code === 'CASH_REQUIRED' && JSON.stringify(await K.foto(sK.saleId)) === JSON.stringify(fK))
+  await K.abrir(0)
   const eExt = await K.devolver(sK.saleId, [{ saleItemId: iK.id, quantity: 1 }], { refunds: [{ mode: 'EXTERNO', method: 'YAPE', amount: 100, reference: 'OP-123' }] })
-  check('>>> el mismo efectivo devuelto por Yape (EXTERNO) sí se permite sin turno', eExt.refunds[0]!.mode === 'EXTERNO' && eExt.refunds[0]!.method === 'YAPE')
+  check('>>> con su turno abierto, el mismo efectivo devuelto por Yape (EXTERNO) sí se permite', eExt.refunds[0]!.mode === 'EXTERNO' && eExt.refunds[0]!.method === 'YAPE')
   const eSin = await err(K.devolver(sK.saleId, [{ saleItemId: iK.id, quantity: 1 }], { refunds: [{ mode: 'SIN_SALIDA', amount: 100 }] }))
   check('SIN_SALIDA exige un motivo', !!eSin && /motivo/i.test(eSin.message))
   const eSuma = await err(K.devolver(sK.saleId, [{ saleItemId: iK.id, quantity: 1 }], { refunds: [{ mode: 'EXTERNO', method: 'YAPE', amount: 60 }] }))
   check('>>> los reembolsos deben sumar exactamente lo que se devuelve en dinero (100.00)', !!eSuma && /deben coincidir/.test(eSuma.message))
-  const turnoK = await K.abrir(0)
+  const turnoK = { id: (await prisma.cashSession.findFirstOrThrow({ where: { tenantId: K.t.id, status: 'ABIERTA' }, select: { id: true } })).id }
   const sK2 = await K.vender([K.L(K.P1.id, 1)], [{ method: 'YAPE', amount: 100 }])
   const rK2 = await K.devolver(sK2.saleId, [{ saleItemId: (await K.item(sK2.saleId)).id, quantity: 1 }])
-  check('>>> una venta por Yape se devuelve por Yape (EXTERNO) y el turno lo anota como «otro medio», sin tocar el cajón', rK2.refunds[0]!.mode === 'EXTERNO' && rK2.refunds[0]!.method === 'YAPE' && await (async () => { const x = await totalesDelTurno(K.db(K.O), turnoK.id); return x.refundsCashTotal === 0 && x.refundsOtherTotal === 100 })())
+  check('>>> una venta por Yape se devuelve por Yape (EXTERNO) y el turno lo anota como «otro medio», sin tocar el cajón', rK2.refunds[0]!.mode === 'EXTERNO' && rK2.refunds[0]!.method === 'YAPE' && await (async () => { const x = await totalesDelTurno(K.db(K.O), turnoK.id); return x.refundsCashTotal === 0 && x.refundsOtherTotal === 200 /* la anterior por Yape + esta */ })())
 
   console.log('\nH) Comprobante: nota de crédito parcial con sus líneas')
   const N = await negocio('notas')
@@ -347,6 +352,7 @@ async function cuerpo() {
   console.log('\nI) Permisos, solo lectura y sucursal')
   const P = await negocio('permisos')
   await P.abrir(0)
+  await abrirTurno(P.t.id, P.u.ADMIN!.userId, P.b1.branch.id)   // F6.8b: quien devuelve saca de SU caja
   const sP = await P.vender([P.L(P.P1.id, 2)], [{ method: 'YAPE', amount: 200 }])
   const iP = await P.item(sP.saleId)
   const fP = await P.foto(sP.saleId)

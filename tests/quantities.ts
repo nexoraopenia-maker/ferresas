@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, abrirTurno } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -80,6 +80,7 @@ async function main() {
   const ctx: TenantContext = {
     tenantId: t.id, userId: owner.id, role: 'OWNER', access: 'FULL', branchId: branch.id,
   }
+  await abrirTurno(t.id, owner.id, branch.id)
   const db = getTenantPrisma(ctx)
   const parse = (i: unknown) => registerSaleSchema.parse(i)
 

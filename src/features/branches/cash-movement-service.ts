@@ -11,7 +11,7 @@ import {
   CATEGORIA_COMPENSACION, type CategoriaDeMovimiento, type TipoMovimiento,
 } from './cash-movement-reglas'
 import type { AnularMovimientoCajaInput, RegistrarMovimientoCajaInput } from './cash-movement-schemas'
-import { bloquearTurno } from './queries'
+import { bloquearTurno, bloquearTurnoPropio } from './queries'
 
 /**
  * Movimientos manuales de caja (F6.3a): ingresos y egresos de EFECTIVO dentro del turno ABIERTO. Diseño: ver docs/ARCHITECTURE.md.
@@ -79,10 +79,9 @@ export async function registrarMovimientoCaja(db: TenantPrismaClient, ctx: Tenan
   try {
     return await db.$transaction(async (tx) => {
       const t = tx as unknown as TenantPrismaClient
-      const abierto = await t.cashSession.findFirst({ where: { branchId, status: 'ABIERTA' }, select: { id: true, openingAmount: true } })
-      if (!abierto) throw new BusinessError('CASH_REQUIRED', 'Para registrar un movimiento de caja hace falta un turno abierto en esta sucursal. Abre la caja primero.')
-      // Si el cierre de este turno ya empezó, espera aquí y lo ve cerrado.
-      if ((await bloquearTurno(t, abierto.id)).status !== 'ABIERTA') throw new BusinessError('CASH_REQUIRED', 'El turno de caja ya se cerró: abre uno nuevo para registrar el movimiento.')
+      // Siempre el turno PROPIO (F6.8b). Si el cierre de este turno ya empezó, espera aquí y lo ve cerrado.
+      const abiertoId = await bloquearTurnoPropio(t, ctx, branchId, 'registrar un movimiento de caja')
+      const abierto = await t.cashSession.findFirstOrThrow({ where: { id: abiertoId }, select: { id: true, openingAmount: true } })
       const repetido = await porClave(t, input.idempotencyKey)
       if (repetido) return repetido
 
@@ -178,13 +177,9 @@ export async function compensarAbonoEn(
   ctx: TenantContext,
   p: { paymentId: string; branchId: string; method: string; amount: number; turnoCerradoId: string; motivo: string },
 ): Promise<CompensacionDeAbono> {
-  const abierto = await t.cashSession.findFirst({ where: { branchId: p.branchId, status: 'ABIERTA' }, select: { id: true, openingAmount: true } })
-  if (!abierto) {
-    throw new BusinessError('CASH_REQUIRED', 'Este abono es de un turno de caja que ya cerró: su anulación se compensa con un egreso en la caja abierta de hoy y no hay ninguna abierta en la sucursal del abono. Abre la caja y vuelve a intentarlo.')
-  }
-  if ((await bloquearTurno(t, abierto.id)).status !== 'ABIERTA') {
-    throw new BusinessError('CASH_REQUIRED', 'La caja de hoy se cerró mientras tanto: abre una nueva y vuelve a intentarlo.')
-  }
+  // La compensación sale de la caja de QUIEN anula (F6.8b): su turno propio en la sucursal del abono. Sin él, no se anula nada.
+  const abiertoId = await bloquearTurnoPropio(t, ctx, p.branchId, 'anular este abono (que es de un turno ya cerrado y se compensa con un egreso en tu caja)')
+  const abierto = await t.cashSession.findFirstOrThrow({ where: { id: abiertoId }, select: { id: true, openingAmount: true } })
   const efectivo = p.method === 'EFECTIVO'
   const montoCent = Math.round(p.amount * 100)
   const excede = efectivo && excedeEfectivo('EGRESO', montoCent, Math.round(efectivoEsperado(num(abierto.openingAmount), await totalesDelTurno(t, abierto.id)) * 100))

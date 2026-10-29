@@ -6,7 +6,7 @@ import { getTenantPrisma, type TenantPrismaClient } from '@/lib/tenant-prisma'
 import { requireTenantContext } from '@/lib/session'
 import { requireBranch, type TenantContext } from '@/lib/tenant-context'
 import { isBusinessError, type ActionResult } from '@/lib/errors'
-import { turnoAbiertoId } from '@/features/branches/queries'
+import { turnoPropioId } from '@/features/branches/queries'
 import {
   anularAbono as runAnularAbono, anularCuenta as runAnularCuenta, configurarCredito as runConfigurarCredito,
   descartarRevision as runDescartarRevision, infoCreditoCliente as runInfoCreditoCliente, registrarAbono as runRegistrarAbono,
@@ -55,9 +55,9 @@ export async function infoCreditoCliente(customerId: string): Promise<ActionResu
   return conTenant('infoCreditoCliente', (db, ctx) => runInfoCreditoCliente(db, ctx, customerId))
 }
 
-/** ¿Hay un turno de caja abierto en mi sucursal? Para avisar ANTES de intentar un abono en efectivo. Solo lectura. */
+/** ¿Tengo MI turno de caja abierto en esta sucursal? Para avisar ANTES de intentar un abono o un pago. Solo lectura. */
 export async function cajaAbiertaParaAbonos(): Promise<ActionResult<{ abierta: boolean }>> {
-  return conTenant('cajaAbiertaParaAbonos', async (db, ctx) => ({ abierta: (await turnoAbiertoId(db, requireBranch(ctx))) !== null }))
+  return conTenant('cajaAbiertaParaAbonos', async (db, ctx) => ({ abierta: (await turnoPropioId(db, ctx.userId, requireBranch(ctx))) !== null }))
 }
 
 /** Registra un abono. La clave de idempotencia es obligatoria: un reintento devuelve el mismo abono. */

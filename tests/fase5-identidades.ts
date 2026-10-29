@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { abrirTurno, asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -58,13 +58,14 @@ async function cuerpo() {
     for (const b of todas) await asignarSucursal(t.id, u.id, b)
     return u
   }
-  const owner = await mk('OWNER'), cajero = await mk('CAJERO')
+  const owner = await mk('OWNER'), owner2 = await mk('OWNER'), cajero = await mk('CAJERO')
   const ctx = (u: { id: string }, role: Role, branchId: string, branchIds = todas): TenantContext => ({ tenantId: t.id, userId: u.id, role, access: 'FULL', branchId, branchIds, permisosExtra: [] })
-  const O1 = ctx(owner, 'OWNER', b1.branch.id), O2 = ctx(owner, 'OWNER', b2.branch.id), C1 = ctx(cajero, 'CAJERO', b1.branch.id)
+  const O1 = ctx(owner, 'OWNER', b1.branch.id), O2 = ctx(owner2, 'OWNER', b2.branch.id), C1 = ctx(cajero, 'CAJERO', b1.branch.id)
   const OALL = O1, OB1 = { ...O1, branchIds: [b1.branch.id] } as TenantContext
   const db = getTenantPrisma(O1), dbB2 = getTenantPrisma(O2), dbC = getTenantPrisma(C1)
   await openCashSession(db, O1, openCashSchema.parse({ openingAmount: 100 }))
-  await openCashSession(dbB2, O2, openCashSchema.parse({ openingAmount: 100 })).catch(() => undefined)
+  await openCashSession(dbB2, O2, openCashSchema.parse({ openingAmount: 100 }))   // F6.8b: cada persona, su turno
+  await abrirTurno(t.id, cajero.id, b1.branch.id)
 
   const prod = (sku: string, o: Record<string, unknown>) => prisma.product.create({ data: { tenantId: t.id, sku, name: `Prod ${sku}`, unitType: 'UNIDAD', ...o } })
   const P1 = await prod('P1', { salePrice: 100, costPrice: 60 }), P2 = await prod('P2', { salePrice: 2.5, costPrice: 0, taxRate: 0 })
@@ -149,7 +150,7 @@ async function cuerpo() {
   check('>>> y el mismo número de ventas en las tres vistas', vp.datos.totales.ventas === real.n && vv.datos.totales.ventas === real.n)
   check('>>> el IGV y los descuentos del periodo = los de la base', cent(vp.datos.totales.igv) === real.igv && cent(vp.datos.totales.descuentos) === real.desc, `${vp.datos.totales.igv} / ${real.igv / 100}`)
   check('>>> por medio: lo pagado (neto de vuelto, con el fiado como medio) cuadra con las ventas, sin ventas descuadradas', cent(vm.datos.totalMedios) === real.total && vm.datos.descuadradas.ventas === 0)
-  check('>>> los días suman el total (7 días sin huecos) y por vendedor hay dos personas', vp.datos.filas.length === 7 && vp.datos.filas.reduce((a, f) => a + cent(f.total), 0) === real.total && vv.datos.filas.length === 2)
+  check('>>> los días suman el total (7 días sin huecos) y por vendedor hay tres personas (el dueño de la sucursal 1, el de la 2 y el cajero: cada uno con su turno)', vp.datos.filas.length === 7 && vp.datos.filas.reduce((a, f) => a + cent(f.total), 0) === real.total && vv.datos.filas.length === 3)
   const fiado = cent(500)
   check('>>> cobros = ventas − lo fiado (no entró dinero) − vuelto: el fiado de 500.00 está fuera de los cobros del día de la venta', cent(vc.datos.totales.contado) === real.total - fiado && vc.datos.totales.abonos === 0 && cent(vc.datos.totales.total) === real.total - fiado)
 
@@ -198,7 +199,10 @@ async function cuerpo() {
 
   console.log('\nG) Después de DEVOLVER una venta con comprobante real (F6.1): las identidades se mantienen')
   const antesDev = await sumas()
-  const dev = await anularOdevolverVenta(db, O1, anularOdevolverVentaSchema.parse({ saleId: ids[2]!, kind: 'DEVOLUCION', reason: 'Devolución de la caja de pintura', idempotencyKey: randomUUID() }))
+  // F6.8b: devuelve quien tiene turno abierto en la sucursal de la venta.
+  const quienDe = async (saleId: string) => ((await prisma.sale.findUniqueOrThrow({ where: { id: saleId }, select: { branchId: true } })).branchId === b2.branch.id ? O2 : O1)
+  const qDev = await quienDe(ids[2]!)
+  const dev = await anularOdevolverVenta(getTenantPrisma(qDev), qDev, anularOdevolverVentaSchema.parse({ saleId: ids[2]!, kind: 'DEVOLUCION', reason: 'Devolución de la caja de pintura', idempotencyKey: randomUUID() }))
   await prisma.taxDocument.update({ where: { id: dev.creditNote!.id }, data: { issuedAt: new Date('2026-11-02T15:00:00Z') } })   // la nota nace «hoy», después del periodo que se concilia
   const realG = await sumas()
   const [gp, gv, gm] = [await informeVentasPorPeriodo(db, OALL, PV, AHORA), await informeVentasPorVendedor(db, OALL, PV, AHORA), await informeVentasPorMedio(db, OALL, PV, AHORA)]
@@ -225,7 +229,8 @@ async function cuerpo() {
     return { n: a._count, total: cent(n0(a._sum.total)) - cent(n0(d._sum.returnTotal)), subtotal: cent(n0(a._sum.subtotal)) - cent(n0(di._sum.subtotal)), igv: cent(n0(a._sum.taxTotal)) - cent(n0(di._sum.taxAmount)), devuelto: cent(n0(d._sum.returnTotal)) }
   }
   const parcial = async (saleId: string, lines: { saleItemId: string; quantity: number; destination?: 'STOCK' | 'MERMA' }[], monto: number, notaEn: string | null) => {
-    const r = await devolverProductosVenta(db, O1, devolverProductosSchema.parse({ saleId, reason: 'Devolución parcial', lines, idempotencyKey: randomUUID(), refunds: [{ mode: 'EXTERNO', method: 'YAPE', amount: monto }] }))
+    const qP = await quienDe(saleId)
+    const r = await devolverProductosVenta(getTenantPrisma(qP), qP, devolverProductosSchema.parse({ saleId, reason: 'Devolución parcial', lines, idempotencyKey: randomUUID(), refunds: [{ mode: 'EXTERNO', method: 'YAPE', amount: monto }] }))
     if (notaEn && r.creditNote) await prisma.taxDocument.update({ where: { id: r.creditNote.id }, data: { issuedAt: new Date(notaEn), status: 'ACEPTADO' } })
     return r
   }

@@ -10,7 +10,8 @@ import { repartirAbono } from '@/features/credito/reglas'
 
 export interface CuentaPagable { id: string; compra: string; saldo: number; vence: string; vencida: boolean }
 
-export const MENSAJE_PAGO_SIN_CAJA = 'Abre la caja antes de pagar en efectivo: ese dinero sale de un turno. Si pagas por transferencia o Yape no hace falta.'
+/** El mismo texto que el servidor (`exigirTurnoPropio`): desde F6.8b todo pago a proveedor, con cualquier medio, sale del turno propio. */
+export const MENSAJE_PAGO_SIN_CAJA = 'Para registrar un pago a proveedor hace falta que tengas tu propio turno de caja abierto. Abre tu caja primero.'
 export const MENSAJE_PAGO_SIN_DEUDA = 'No le debes nada a este proveedor.'
 export const MENSAJE_PAGO_ELIGE_CUENTA = 'Elige al menos una cuenta o vuelve a «La más antigua primero».'
 

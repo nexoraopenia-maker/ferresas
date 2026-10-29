@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { abrirTurno, asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -76,8 +76,8 @@ async function cuerpo() {
   const E = await negocio('a')
   const { O, db } = E
   const C1 = await E.cliente()
+  const T1 = await E.abrir(100)   // F6.8b: fiar también exige el turno propio
   await E.fiar(500, C1.id)
-  const T1 = await E.abrir(100)
   const efe = await E.abonar(C1.id, 120, 'EFECTIVO'), yape = await E.abonar(C1.id, 80, 'YAPE')
   await E.cerrar(T1.id, 220)
   const congelado = JSON.stringify(await E.sesion(T1.id))
@@ -95,7 +95,7 @@ async function cuerpo() {
 
   console.log('\nC) Sin caja abierta en la sucursal del abono no hay compensación posible')
   const eSin = await err(E.anular(efe.paymentId))
-  check('>>> sin ninguna caja abierta: CASH_REQUIRED, con el mensaje que dice qué hacer, y no se anula NADA (el abono, la deuda y el turno quedan igual)', eSin?.code === 'CASH_REQUIRED' && /Abre la caja/.test(eSin.message) && JSON.stringify(await antes()) === JSON.stringify(f0))
+  check('>>> sin ninguna caja abierta: CASH_REQUIRED, con el mensaje que dice qué hacer, y no se anula NADA (el abono, la deuda y el turno quedan igual)', eSin?.code === 'CASH_REQUIRED' && /Abre tu caja/.test(eSin.message) && JSON.stringify(await antes()) === JSON.stringify(f0))
   const T2b = await E.abrir(50, { ...O, branchId: E.b2.branch.id })
   check('>>> una caja abierta en OTRA sucursal no sirve, ni siquiera anulando desde ahí: la compensación va en la sucursal DEL ABONO', (await code(E.anular(efe.paymentId))) === 'CASH_REQUIRED' && (await code(E.anular(efe.paymentId, { ...O, branchId: E.b2.branch.id }))) === 'CASH_REQUIRED' && JSON.stringify(await antes()) === JSON.stringify(f0))
   await E.cerrar(T2b.id, 50)
@@ -114,9 +114,10 @@ async function cuerpo() {
   check('>>> la auditoría deja la anulación del abono (con su compensación y el turno cerrado) y el movimiento de caja (con `credito.castigar` como permiso)', !!a1 && JSON.stringify(a1.after).includes(mov.id) && JSON.stringify(a1.after).includes('"salioDelCajon":true') && !!a2 && JSON.stringify(a2.after).includes('"permiso":"credito.castigar"') && a2.reason === 'El cliente pagó dos veces')
 
   console.log('\nE) Abono por YAPE: se registra pero no mueve el efectivo')
+  const TA = await abrirTurno(E.t.id, E.u.ADMIN!.userId, E.b1.branch.id)   // F6.8b: la compensación sale de la caja de QUIEN anula
   const rY = await E.anular(yape.paymentId, E.u.ADMIN!, 'Yape duplicado')
   const movY = await prisma.cashMovement.findFirstOrThrow({ where: { relatedPaymentId: yape.paymentId } })
-  check('>>> compensación con SU medio (YAPE), 80.00, en el turno de hoy; no cuenta como efectivo', movY.method === 'YAPE' && num(movY.amount) === 80 && movY.category === 'COMPENSACION_ABONO' && !rY.compensacion!.efectivo && movY.userId === E.u.ADMIN!.userId)
+  check('>>> compensación con SU medio (YAPE), 80.00, en el turno de quien anula (el administrador); no cuenta como efectivo', movY.cashSessionId === TA && movY.method === 'YAPE' && num(movY.amount) === 80 && movY.category === 'COMPENSACION_ABONO' && !rY.compensacion!.efectivo && movY.userId === E.u.ADMIN!.userId)
   const tot = await totalesDelTurno(db(O), T2.id)
   check('>>> el turno de hoy suma SOLO los 120 en efectivo como egreso manual; el efectivo esperado sigue en 180', tot.manualOutTotal === 120 && tot.manualInTotal === 0 && (await currentCashSession(db(O), O))!.expectedAmount === 180)
   check('>>> la deuda vuelve también por el Yape (420 → 500) y el turno cerrado sigue intacto', (await E.deuda(C1.id)) === 500 && JSON.stringify(await E.sesion(T1.id)) === congelado)
@@ -175,8 +176,8 @@ async function cuerpo() {
   console.log('\nK) Las devoluciones bloqueadas por abonos quedan destrabadas')
   const K = await negocio('k')
   const cliente = await K.cliente()
-  const venta = await K.fiar(300, cliente.id)
   const TK1 = await K.abrir(0)
+  const venta = await K.fiar(300, cliente.id)   // F6.8b: fiar exige el turno propio
   const abK = await K.abonar(cliente.id, 100, 'EFECTIVO')
   await K.cerrar(TK1.id, 100)
   const itemK = await prisma.saleItem.findFirstOrThrow({ where: { saleId: venta.saleId } })
@@ -190,8 +191,8 @@ async function cuerpo() {
   const ok = await devTotal()
   check('>>> anulado el abono (con su compensación), la MISMA devolución total prospera: cuenta cancelada y deuda 0', ok.status === 'DEVUELTA' && (await K.deuda(cliente.id)) === 0 && ok.receivableVoidedAmount === 300)
   const K2 = await negocio('k2')
-  const cli2 = await K2.cliente(); const v2 = await K2.fiar(300, cli2.id)
-  const Tk = await K2.abrir(0); const ab2 = await K2.abonar(cli2.id, 100, 'EFECTIVO'); await K2.cerrar(Tk.id, 100)
+  const cli2 = await K2.cliente(); const Tk = await K2.abrir(0); const v2 = await K2.fiar(300, cli2.id)
+  const ab2 = await K2.abonar(cli2.id, 100, 'EFECTIVO'); await K2.cerrar(Tk.id, 100)
   await K2.abrir(0); await K2.anular(ab2.paymentId, K2.O, 'Para devolver')
   const i2 = await prisma.saleItem.findFirstOrThrow({ where: { saleId: v2.saleId } })
   const parcialOk = await devolverProductosVenta(K2.db(K2.O), K2.O, devolverProductosSchema.parse({ saleId: v2.saleId, reason: 'Devuelve todo', lines: [{ saleItemId: i2.id, quantity: 3 }], idempotencyKey: randomUUID() }))

@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, abrirTurno } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { completarRuc } from '../src/lib/documentos'
@@ -107,6 +107,7 @@ async function main() {
   const ctx: TenantContext = {
     tenantId: t.id, userId: owner.id, role: 'OWNER', access: 'FULL', branchId: branch.id,
   }
+  await abrirTurno(t.id, owner.id, branch.id)
   const db = getTenantPrisma(ctx)
 
   // Afecto al 18%, a granel (para probar cantidades decimales).

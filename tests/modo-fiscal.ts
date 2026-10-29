@@ -6,7 +6,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { SyntaxKind } from 'ts-morph'
 import { abrir, ficheros, proyecto, RAIZ, rel } from './ast'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, abrirTurno } from './fixtures'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
 import { completarRuc } from '../src/lib/documentos'
@@ -81,6 +81,7 @@ async function main() {
       const u = await prisma.user.create({ data: { tenantId: t.id, email: `o-${randomUUID()}@x.com`, name: 'Dueño', role: 'OWNER' } })
       await asignarSucursal(t.id, u.id, branch.id)
       const ctx: TenantContext = { tenantId: t.id, userId: u.id, role: 'OWNER', access: 'FULL', branchId: branch.id, branchIds: [branch.id] }
+      await abrirTurno(t.id, u.id, branch.id)
       const db = getTenantPrisma(ctx)
       const p = await prisma.product.create({ data: { tenantId: t.id, sku: 'P', name: 'Cemento Sol', salePrice: 30 } })
       await prisma.stock.create({ data: { tenantId: t.id, productId: p.id, warehouseId: w.id, quantity: 10_000 } })

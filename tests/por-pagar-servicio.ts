@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { abrirTurno, asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { prisma } from '../src/lib/prisma'
@@ -78,6 +78,7 @@ async function main() {
   // ─── A) Pago y reparto ────────────────────────────────────────────────────────────────────────────────────────────
   console.log('\nA) Pago y reparto (la más antigua primero)')
   const e = await negocio('uno')
+  await e.abrirCaja(0) // F6.8b: todo pago, también por transferencia, entra al turno propio
   const s1 = await e.proveedor()
   const a = await e.credito(s1.id, 100, '2027-01-10'), b = await e.credito(s1.id, 200, '2027-02-10'), c3 = await e.credito(s1.id, 300, '2027-03-10')
   check('(preparación) deuda 600 en 3 cuentas', (await e.deuda(s1.id)) === 600)
@@ -87,7 +88,7 @@ async function main() {
   check('>>> las cuentas: PAGADA cerrada, ABIERTA con 50 pagados, y la 3.ª intacta', ca.status === 'PAGADA' && ca.closedAt !== null && num(ca.paidAmount) === 100 && cb.status === 'ABIERTA' && num(cb.paidAmount) === 50 && num(cc.paidAmount) === 0)
   check('>>> baja la deuda del proveedor en el mismo monto (600 → 450) y el resultado lo dice', (await e.deuda(s1.id)) === 450 && p1.deudaAntes === 600 && p1.deudaDespues === 450)
   const f1 = await prisma.supplierPayment.findUniqueOrThrow({ where: { id: p1.paymentId }, include: { allocations: true } })
-  check('>>> el pago guarda método, referencia, quién y la suma de sus repartos = su monto', f1.method === 'TRANSFERENCIA' && f1.reference === 'OP-123' && f1.userId === e.O.userId && f1.allocations.reduce((x, y) => x + num(y.amount), 0) === 150 && f1.cashSessionId === null)
+  check('>>> el pago guarda método, referencia, quién y la suma de sus repartos = su monto', f1.method === 'TRANSFERENCIA' && f1.reference === 'OP-123' && f1.userId === e.O.userId && f1.allocations.reduce((x, y) => x + num(y.amount), 0) === 150 && f1.cashSessionId !== null)
   const au = await prisma.auditLog.findFirst({ where: { tenantId: e.t.id, action: 'proveedor.pago', entityId: p1.paymentId } })
   check('>>> queda en la auditoría con la deuda antes y después', JSON.stringify(au?.after).includes('"deudaAntes":600') && JSON.stringify(au?.after).includes('"deudaDespues":450'))
 
@@ -133,8 +134,8 @@ async function main() {
   const e2 = await negocio('caja')
   const sc = await e2.proveedor()
   for (const m of [400, 300, 250, 200]) await e2.credito(sc.id, m)
-  check('>>> pago en EFECTIVO sin turno abierto → rechazado (nada que pagar con el cajón cerrado)', await code(e2.pagar(sc.id, 50, 'EFECTIVO')) === 'INVALID_DOCUMENT' && (await e2.deuda(sc.id)) === 1150)
-  check('>>> pago por TRANSFERENCIA sin turno sí se puede (no toca el cajón)', await code(e2.pagar(sc.id, 50, 'TRANSFERENCIA')) === null)
+  check('>>> pago en EFECTIVO sin turno propio abierto → CASH_REQUIRED (nada que pagar con el cajón cerrado)', await code(e2.pagar(sc.id, 50, 'EFECTIVO')) === 'CASH_REQUIRED' && (await e2.deuda(sc.id)) === 1150)
+  check('>>> F6.8b: tampoco por TRANSFERENCIA: todo pago pasa por el turno de quien lo ejecuta', await code(e2.pagar(sc.id, 50, 'TRANSFERENCIA')) === 'CASH_REQUIRED' && (await e2.deuda(sc.id)) === 1150)
   const turno = await e2.abrirCaja(500)
   const pe = await e2.pagar(sc.id, 300, 'EFECTIVO')
   const fe = await prisma.supplierPayment.findUniqueOrThrow({ where: { id: pe.paymentId } })
@@ -176,7 +177,7 @@ async function main() {
     const antes8 = { d: await e8.deuda(sx.id), n: await prisma.supplierPayment.count({ where: { tenantId: e8.t.id } }) }
     const r8 = await registrarPagoProveedor(conCierreEntreMedias, e8.O, registrarPagoSchema.parse({ supplierId: sx.id, amount: 100, method: 'EFECTIVO', idempotencyKey: randomUUID() })).then(() => null).catch((x) => ({ code: x.code as string, message: (x as Error).message }))
     check('>>> el turno se cerró de verdad en ese hueco', cerrado && (await prisma.cashSession.findUniqueOrThrow({ where: { id: t8.id } })).status === 'CERRADA')
-    check('>>> el pago en efectivo se rechaza con el mensaje de «abre la caja» (no con un error cualquiera) y no escribe nada', r8?.code === 'INVALID_DOCUMENT' && (r8?.message ?? '').includes('Abre la caja') && (await e8.deuda(sx.id)) === antes8.d && (await prisma.supplierPayment.count({ where: { tenantId: e8.t.id } })) === antes8.n, JSON.stringify(r8))
+    check('>>> el pago en efectivo se rechaza con el mensaje de «abre la caja» (no con un error cualquiera) y no escribe nada', r8?.code === 'CASH_REQUIRED' && (r8?.message ?? '').includes('turno de caja') && (await e8.deuda(sx.id)) === antes8.d && (await prisma.supplierPayment.count({ where: { tenantId: e8.t.id } })) === antes8.n, JSON.stringify(r8))
   }
 
   console.log('\nF) Dos pagos en efectivo a la vez')
@@ -195,7 +196,7 @@ async function main() {
   check('>>> el esperado congelado RESTA el efectivo pagado (500 − 300 = 200) y la diferencia sale de ahí', num(ft.expectedAmount) === 200 && num(ft.difference) === 0 && cierre.expectedAmount === 200)
   const auC = await prisma.auditLog.findFirst({ where: { tenantId: e3.t.id, action: 'cash.close', entityId: t3.id } })
   check('>>> la auditoría del cierre guarda los pagos a proveedores', JSON.stringify(auC?.after).includes('"pagosProveedorEfectivo":300'))
-  check('>>> tras el cierre, un pago en efectivo ya no encuentra turno (sin caja abierta)', await code(e3.pagar(sd.id, 10, 'EFECTIVO')) === 'INVALID_DOCUMENT')
+  check('>>> tras el cierre, un pago en efectivo ya no encuentra turno (sin caja abierta)', await code(e3.pagar(sd.id, 10, 'EFECTIVO')) === 'CASH_REQUIRED')
   const idEf = (await prisma.supplierPayment.findFirstOrThrow({ where: { cashSessionId: t3.id, method: 'EFECTIVO' } })).id
   check('>>> un pago de un turno CERRADO no se anula (el arqueo firmado no se reescribe)', await code(e3.anular(idEf)) === 'INVALID_DOCUMENT' && !(await prisma.supplierPayment.findUniqueOrThrow({ where: { id: idEf } })).voidedAt)
   check('>>> y lo congelado sigue igual después del intento', num((await prisma.cashSession.findUniqueOrThrow({ where: { id: t3.id } })).supplierCashPaymentsTotal) === 300)
@@ -236,6 +237,7 @@ async function main() {
   if (sec('I')) try {
   console.log('\nI) Con las compras (F4.3)')
   const e6 = await negocio('compras')
+  await e6.abrirCaja(0)
   const sg = await e6.proveedor(); const y1 = await e6.credito(sg.id, 100)
   const pagoY = await e6.pagar(sg.id, 40)
   const anularC = () => anularCompra(e6.dbOf(e6.O), e6.O, anularCompraSchema.parse({ purchaseId: y1.compra.id, motivo: 'Me equivoqué' }))
@@ -249,13 +251,14 @@ async function main() {
   // ─── J) Permisos y aislamiento ────────────────────────────────────────────────────────────────────────────────────
   console.log('\nJ) Permisos y aislamiento')
   const e7 = await negocio('permisos')
+  await e7.abrirCaja(0); await abrirTurno(e7.t.id, e7.ctxs.ADMIN!.userId, e7.b1.branch.id)
   const sh = await e7.proveedor(); await e7.credito(sh.id, 1000)
   for (const r of ['CAJERO', 'VENDEDOR', 'ALMACENERO', 'ALMACENERO_CON_COMPRAS', 'ALMACENERO_CON_TODO', 'CONTADOR']) {
     check(`>>> ${r} no puede pagar a un proveedor`, await code(e7.pagar(sh.id, 10, 'TRANSFERENCIA', {}, e7.ctxs[r]!)) === 'FORBIDDEN_ROLE')
   }
   check('>>> el ADMIN sí paga (de fábrica)', await code(e7.pagar(sh.id, 10, 'TRANSFERENCIA', {}, e7.ctxs.ADMIN!)) === null)
   check('>>> la vista previa también exige el permiso', await code(previsualizarPago(e7.dbOf(e7.ctxs.CAJERO!), e7.ctxs.CAJERO!, previsualizarPagoSchema.parse({ supplierId: sh.id, amount: 5 }))) === 'FORBIDDEN_ROLE')
-  const aj = await negocio('ajeno'); const sAj = await aj.proveedor(); const cAj = await aj.credito(sAj.id, 100)
+  const aj = await negocio('ajeno'); await aj.abrirCaja(0); const sAj = await aj.proveedor(); const cAj = await aj.credito(sAj.id, 100)
   const pAj = await aj.pagar(sAj.id, 10)
   check('>>> el proveedor de OTRO negocio no existe: ni pagarle, ni previsualizar, ni anular sus pagos', (await Promise.all([e7.pagar(sAj.id, 5), previsualizarPago(e7.dbOf(e7.O), e7.O, previsualizarPagoSchema.parse({ supplierId: sAj.id, amount: 5 })), e7.anular(pAj.paymentId)].map(code))).every((x) => x === 'NOT_FOUND' || x === 'TENANT_MISMATCH'))
   check('>>> una cuenta de OTRO negocio no se puede elegir', await code(e7.pagar(sh.id, 5, 'TRANSFERENCIA', { payableIds: [cAj.cxp.id] })) === 'INVALID_DOCUMENT')
@@ -271,8 +274,8 @@ async function main() {
   const cuerpo = (src: string, n: string) => { const i = src.indexOf(`function ${n}(`); const j = src.indexOf('\nexport ', i + 10); return src.slice(i, j < 0 ? undefined : j) }
   const reg = cuerpo(pag, 'registrarPagoProveedor'), anu = cuerpo(pag, 'anularPagoProveedor')
   check('>>> registrar y anular BLOQUEAN al proveedor antes que al turno, y al turno antes de escribir; sin SQL crudo',
-    [reg, anu].every((c) => c.indexOf('bloquearProveedor(t,') > 0 && c.indexOf('bloquearProveedor(t,') < c.indexOf('bloquearTurno(')) && reg.indexOf('bloquearTurno(') < reg.indexOf('supplierPayment.create') && !/\$queryRaw|\$executeRaw/.test(pag))
-  check('>>> el límite de efectivo se calcula con el MISMO esperado del cierre (efectivoEsperado + totalesDelTurno), con el turno ya bloqueado', reg.indexOf('bloquearTurno(') < reg.indexOf('efectivoEsperado(') && reg.includes('totalesDelTurno(t,'))
+    reg.indexOf('bloquearProveedor(t,') > 0 && reg.indexOf('bloquearProveedor(t,') < reg.indexOf('bloquearTurnoPropio(') && anu.indexOf('bloquearProveedor(t,') > 0 && anu.indexOf('bloquearProveedor(t,') < anu.indexOf('bloquearTurno(') && reg.indexOf('bloquearTurnoPropio(') < reg.indexOf('supplierPayment.create') && !/\$queryRaw|\$executeRaw/.test(pag))
+  check('>>> el límite de efectivo se calcula con el MISMO esperado del cierre (efectivoEsperado + totalesDelTurno), con el turno ya bloqueado', reg.indexOf('bloquearTurnoPropio(') < reg.indexOf('efectivoEsperado(') && reg.includes('totalesDelTurno(t,'))
   check('>>> el reparto usa la misma función pura que la vista previa (repartirAbono)', reg.includes('repartirAbono(') && cuerpo(pag, 'previsualizarPago').includes('repartirAbono('))
   check('>>> la deuda del proveedor solo se escribe con decrement (pagar) e increment (anular)', /payableBalance: \{ decrement: deCentimos\(M\) \}/.test(reg) && /payableBalance: \{ increment: deCentimos\(restituido\) \}/.test(anu) && (pag.replace(/payableBalance: true/g, '').match(/payableBalance:/g) ?? []).length === 2)
   check('>>> pagar exige proveedores.pagar; anular también; la vista previa también', [reg, anu, cuerpo(pag, 'previsualizarPago')].every((c) => c.includes("exigir(ctx, 'proveedores.pagar')")))

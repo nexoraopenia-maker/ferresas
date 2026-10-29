@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, abrirTurno } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -54,6 +54,7 @@ async function cuerpo() {
     u[role] = { tenantId: t.id, userId: x.id, role, access: 'FULL', branchId: b1.branch.id, branchIds: [b1.branch.id], permisosExtra: [] }
   }
   const O = u.OWNER!, AD = u.ADMIN!, AL = u.ALMACENERO!, CA = u.CAJERO!
+  await abrirTurno(t.id, O.userId, b1.branch.id)
   const x2 = await prisma.user.create({ data: { tenantId: t.id, email: `AL2-${randomUUID()}@x.com`.toLowerCase(), name: 'ALMACENERO2', role: 'ALMACENERO' } })
   await asignarSucursal(t.id, x2.id, b1.branch.id)
   const AL2: TenantContext = { ...AL, userId: x2.id }

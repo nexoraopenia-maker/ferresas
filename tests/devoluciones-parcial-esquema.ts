@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { abrirTurno, asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -38,8 +38,12 @@ async function cuerpo() {
     const p = await prisma.product.create({ data: { tenantId: t.id, sku: 'P1', name: 'Prod', unitType: 'UNIDAD', salePrice: 100, costPrice: 60 } })
     for (const w of [b1.warehouse, b2.warehouse]) await prisma.stock.create({ data: { tenantId: t.id, productId: p.id, warehouseId: w.id, quantity: 100 } })
     const O: TenantContext = { tenantId: t.id, userId: x.id, role: 'OWNER', access: 'FULL', branchId: b1.branch.id, branchIds: [b1.branch.id, b2.branch.id], permisosExtra: [] }
+    // F6.8b: una persona tiene un solo turno; la sucursal 2 la cobra otra persona con el suyo.
+    const x2 = await prisma.user.create({ data: { tenantId: t.id, email: `o2-${randomUUID()}@x.com`.toLowerCase(), name: 'Dueño 2', role: 'OWNER' } })
+    await asignarSucursal(t.id, x2.id, b2.branch.id)
+    await abrirTurno(t.id, x.id, b1.branch.id); await abrirTurno(t.id, x2.id, b2.branch.id)
     const vender = async (b: typeof b1, branchId: string) => {
-      const ctx = { ...O, branchId }
+      const ctx = { ...O, userId: branchId === b2.branch.id ? x2.id : x.id, branchId }
       const v = await registerSale(getTenantPrisma(ctx), ctx, registerSaleSchema.parse({ warehouseId: b.warehouse.id, items: [{ productId: p.id, quantity: 3, discount: 0 }], payments: [{ method: 'YAPE', amount: 300 }], documentType: 'NOTA_VENTA', allowNegativeStock: false, idempotencyKey: randomUUID() }) as never)
       const li = await prisma.saleItem.findFirstOrThrow({ where: { saleId: v.saleId } })
       return { v, li }

@@ -6,7 +6,7 @@ import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
 import { completarRuc } from '../src/lib/documentos'
 import { redondearCentimos as cent } from '../src/lib/dinero'
-import { crearSucursalConAlmacen, asignarSucursal } from './fixtures'
+import { crearSucursalConAlmacen, asignarSucursal, abrirTurno } from './fixtures'
 import { registerSale } from '../src/features/pos/sale-service'
 import { registerSaleSchema } from '../src/features/pos/schemas'
 import { crearPresentacion } from '../src/features/inventory/presentaciones-service'
@@ -29,6 +29,7 @@ async function main() {
   const owner = await prisma.user.create({ data: { tenantId: t.id, email: `o-${randomUUID()}@x.com`, name: 'o', role: 'OWNER' } })
   await asignarSucursal(t.id, owner.id, branch.id)
   const ctx: TenantContext = { tenantId: t.id, userId: owner.id, role: 'OWNER', access: 'FULL', branchId: branch.id, branchIds: [branch.id] }
+  await abrirTurno(t.id, owner.id, branch.id)
   const db = getTenantPrisma(ctx)
   const prod = await prisma.product.create({ data: { tenantId: t.id, sku: 'TUB', name: 'Tubo', unitType: 'UNIDAD', salePrice: 7.35, costPrice: 3 } })
   await prisma.stock.create({ data: { tenantId: t.id, productId: prod.id, warehouseId: w.id, quantity: 100000, minStock: 0 } })

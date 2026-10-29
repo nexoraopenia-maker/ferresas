@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { crearSucursal, asignarSucursal } from './fixtures'
+import { abrirTurno, crearSucursal, asignarSucursal } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -49,6 +49,7 @@ async function main() {
   const cV = ctxDe(vend, 'VENDEDOR', bA.id), cV2 = ctxDe(vend2, 'VENDEDOR', bA.id)
   const cC1 = ctxDe(c1, 'CAJERO', bA.id), cC2 = ctxDe(c2, 'CAJERO', bA.id), cCB = ctxDe(cB, 'CAJERO', bB.id)
   const cAd = ctxDe(admin, 'ADMIN', bA.id, [bA.id, bB.id]), cCo = ctxDe(conta, 'CONTADOR', bA.id)
+  await abrirTurno(t.id, c1.id, bA.id, { fondo: 100 })   // F6.8b: quien cobra un pedido necesita su turno propio
   const g = (c: TenantContext) => getTenantPrisma(c)
 
   const prod = await prisma.product.create({ data: { tenantId: t.id, sku: 'P1', name: 'Cemento', salePrice: 30 } })
@@ -176,7 +177,6 @@ async function main() {
 
   console.log('\n10) >>> Vencen al cerrar la caja')
   const nuevoDia = new Date('2026-10-22T15:00:00Z')
-  await openCashSession(g(cC1), cC1, openCashSchema.parse({ openingAmount: 100 }))
   await openCashSession(g(cCB), cCB, openCashSchema.parse({ openingAmount: 50 }))
   const pa = await crearPedido(g(cV), cV, input(wA.id, 1), nuevoDia)
   const pb = await crearPedido(g(cCB), cCB, input(wB.id, 1), nuevoDia)

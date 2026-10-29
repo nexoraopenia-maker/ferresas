@@ -1,5 +1,6 @@
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { BusinessError } from '@/lib/errors'
+import type { TenantContext } from '@/lib/tenant-context'
 import { serieDeSucursal, type CounterScope } from './series'
 
 /** Lo mínimo que un servicio necesita saber de la sucursal en la que opera. */
@@ -93,6 +94,41 @@ export async function turnoAbiertoId(
     select: { id: true },
   })
   return t?.id ?? null
+}
+
+/** El turno ABIERTO de ESTA persona en la sucursal (F6.8b): el único donde puede entrar dinero que ella mueve. `null` si no tiene uno ahí. */
+export async function turnoPropioId(db: TenantPrismaClient, userId: string, branchId: string): Promise<string | null> {
+  const t = await db.cashSession.findFirst({ where: { branchId, openedById: userId, status: 'ABIERTA' }, select: { id: true } })
+  return t?.id ?? null
+}
+
+/**
+ * El turno propio de quien ejecuta, o `CASH_REQUIRED`. Toda operación que mueve dinero (cobros de cualquier medio, abonos, pagos a proveedor, movimientos,
+ * compensaciones y devoluciones que sacan dinero) entra por aquí: el dinero va al turno de QUIEN lo ejecuta, no al de «quien abrió la caja del local».
+ * `que` completa el mensaje («cobrar», «registrar un abono»…). Distingue «no tienes turno» de «tu turno está en otra sucursal» para que el cajero sepa qué hacer.
+ */
+export async function exigirTurnoPropio(db: TenantPrismaClient, ctx: Pick<TenantContext, 'userId'>, branchId: string, que: string): Promise<string> {
+  const id = await turnoPropioId(db, ctx.userId, branchId)
+  if (id) return id
+  const otro = await db.cashSession.findFirst({ where: { openedById: ctx.userId, status: 'ABIERTA' }, select: { id: true } })
+  throw new BusinessError(
+    'CASH_REQUIRED',
+    otro
+      ? `Tu turno de caja está abierto en otra sucursal. Para ${que} aquí, ciérralo allí y abre tu caja en esta sucursal.`
+      : `Para ${que} hace falta que tengas tu propio turno de caja abierto. Abre tu caja primero.`,
+  )
+}
+
+/**
+ * Dentro de la transacción: bloquea el turno propio y lo devuelve YA firme. Si su cierre empezó (o lo cerró un supervisor) mientras tanto, esto espera, lo ve
+ * cerrado y niega con `CASH_REQUIRED`: ni un centavo entra a un turno cuyos totales ya se congelaron. Se bloquea DESPUÉS de cliente/proveedor/venta (orden único).
+ */
+export async function bloquearTurnoPropio(t: TenantPrismaClient, ctx: Pick<TenantContext, 'userId'>, branchId: string, que: string): Promise<string> {
+  const id = await exigirTurnoPropio(t, ctx, branchId, que)
+  if ((await bloquearTurno(t, id)).status !== 'ABIERTA') {
+    throw new BusinessError('CASH_REQUIRED', `Tu turno de caja se cerró mientras tanto: abre uno nuevo para ${que}.`)
+  }
+  return id
 }
 
 /**

@@ -1,7 +1,7 @@
 import './guard'
 import { correr } from './teardown'
 import { randomUUID } from 'node:crypto'
-import { crearSucursal, asignarSucursal } from './fixtures'
+import { abrirTurno, crearSucursal, asignarSucursal } from './fixtures'
 import { prisma } from '@/lib/prisma'
 import { completarRuc } from '../src/lib/documentos'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
@@ -167,7 +167,10 @@ async function main() {
     initialStock: 500, minStock: 20, warehouseId: wMatriz.id,
   }))
 
-  const ctx2: TenantContext = { ...ctx, branchId: suc2.id }
+  // F6.8b: una persona tiene un solo turno abierto y cobra con el suyo: la sucursal 2 la lleva otro dueño.
+  const dueno2 = await prisma.user.create({ data: { tenantId: t.id, email: `dueno2-${M}@x.com`, name: 'Dueño 2', role: 'OWNER' } })
+  const ctx2: TenantContext = { ...ctx, userId: dueno2.id, branchId: suc2.id }
+  const turnoM = await abrirTurno(t.id, ctx.userId, ctx.branchId!), turnoS = await abrirTurno(t.id, dueno2.id, suc2.id)
   const db2 = getTenantPrisma(ctx2)
   // `createBranch` ya asignó la sucursal a quien la creó: no hace falta
   // asignarla otra vez (y la PK compuesta lo rechazaría).
@@ -233,14 +236,16 @@ async function main() {
 
   // ═══════════════════════════════════════════════════════════════════════
   console.log('\n7) TURNO DE CAJA y arqueo')
+  // Los turnos que sirvieron para vender arriba se cierran: el arqueo de esta sección parte de cero.
+  await closeCashSession(db, ctx, closeCashSchema.parse({ sessionId: turnoM, countedAmount: 0 }))
+  await closeCashSession(db2, ctx2, closeCashSchema.parse({ sessionId: turnoS, countedAmount: 0 }))
   const caja = await openCashSession(db, ctx, openCashSchema.parse({ openingAmount: 100 }))
   check('abre con fondo de 100', caja.openingAmount === 100 && caja.status === 'ABIERTA')
   check('>>> no se puede abrir una SEGUNDA caja en la misma sucursal',
     await code(() => openCashSession(db, ctx, openCashSchema.parse({ openingAmount: 50 }))) === 'DUPLICATE_CODE')
   // F6.8: una persona tiene como mucho UN turno abierto en toda la cuenta, así que la caja de la otra sucursal la abre otra persona.
-  const dueno2 = await prisma.user.create({ data: { tenantId: t.id, email: `dueno2-${M}@x.com`, name: 'Dueño 2', role: 'OWNER' } })
   check('otra sucursal SÍ puede tener su propia caja abierta (la abre otra persona)',
-    (await openCashSession(db2, { ...ctx2, userId: dueno2.id }, openCashSchema.parse({ openingAmount: 200 }))).status === 'ABIERTA')
+    (await openCashSession(db2, ctx2, openCashSchema.parse({ openingAmount: 200 }))).status === 'ABIERTA')
 
   // Venta en efectivo: entra al cajón, con vuelto.
   const vCaja = await registerSale(db, ctx, registerSaleSchema.parse({

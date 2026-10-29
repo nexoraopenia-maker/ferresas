@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
 import { completarRuc } from '../src/lib/documentos'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, abrirTurno } from './fixtures'
 import { registerSale } from '../src/features/pos/sale-service'
 import { registerSaleSchema } from '../src/features/pos/schemas'
 import { createStockMovement } from '../src/features/inventory/stock-service'
@@ -35,6 +35,7 @@ async function main() {
   const owner = await mk('OWNER'), alm = await mk('ALMACENERO')
   await asignarSucursal(t.id, owner.id, branch.id); await asignarSucursal(t.id, alm.id, branch.id)
   const ctx: TenantContext = { tenantId: t.id, userId: owner.id, role: 'OWNER', access: 'FULL', branchId: branch.id, branchIds: [branch.id] }
+  await abrirTurno(t.id, owner.id, branch.id)
   const ctxAlm: TenantContext = { ...ctx, userId: alm.id, role: 'ALMACENERO' }
   const db = getTenantPrisma(ctx), dbAlm = getTenantPrisma(ctxAlm)
 

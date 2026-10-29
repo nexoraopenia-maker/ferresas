@@ -162,6 +162,9 @@ export async function registerTenant(
         select: { id: true },
       })
 
+      // La «Caja principal» de la casa matriz (F6.8b): sin una caja no se puede abrir turno ni cobrar.
+      await tx.cashRegister.create({ data: { tenantId: tenant.id, branchId: branch.id, name: 'Caja principal' }, select: { id: true } })
+
       // El OWNER opera su propia casa matriz. Sin esta asignación no podría
       // registrar ni una venta: `requireBranch` lo rechazaría.
       await tx.userBranch.create({

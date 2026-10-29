@@ -169,12 +169,12 @@ async function main() {
   const prev = await previsualizarPago(db, O, previsualizarPagoSchema.parse({ supplierId: sup.id, amount: 120 }))
   const ui = previsualizarPagoUi({ cuentas: prev.reparto.map((r) => ({ id: r.payableId, compra: r.compra, saldo: r.saldo, vence: r.vence, vencida: false })), elegidas: null, texto: '120', metodo: 'TRANSFERENCIA', cajaAbierta: null, deudaTotal: 350 })
   check('>>> la vista previa de la PANTALLA es idéntica a la del SERVIDOR (cuentas, montos, saldos, pagadas)', JSON.stringify(ui.partes.map((p) => [p.id, p.monto, p.saldoDespues, p.pagada])) === JSON.stringify(prev.reparto.map((r) => [r.payableId, r.monto, r.saldoDespues, r.pagada])))
+  const sinCaja = await msg(registrarPagoProveedor(db, O, registrarPagoSchema.parse({ supplierId: sup.id, amount: 10, method: 'EFECTIVO', idempotencyKey: randomUUID() })))
+  const turno = await openCashSession(db, O, openCashSchema.parse({ openingAmount: 300 }))   // F6.8b: pagar, con cualquier medio, exige el turno propio
   const sobra = await msg(registrarPagoProveedor(db, O, registrarPagoSchema.parse({ supplierId: sup.id, amount: 400, method: 'TRANSFERENCIA', idempotencyKey: randomUUID() })))
   check('>>> y cuando pagas de más, pantalla y servidor dicen EXACTAMENTE lo mismo', sobra === previsualizarPagoUi({ cuentas: prev.reparto.map((r) => ({ id: r.payableId, compra: r.compra, saldo: r.saldo, vence: r.vence, vencida: false })), elegidas: null, texto: '400', metodo: 'TRANSFERENCIA', cajaAbierta: null, deudaTotal: 350 }).error, String(sobra))
-  const sinCaja = await msg(registrarPagoProveedor(db, O, registrarPagoSchema.parse({ supplierId: sup.id, amount: 10, method: 'EFECTIVO', idempotencyKey: randomUUID() })))
   check('>>> el texto del rechazo es el que lee la persona: «supera lo que le debes al proveedor (S/ 350.00)»', (sobra ?? '').includes('supera lo que le debes al proveedor (S/ 350.00)') && mensajePagoExcede(10, 5, true).startsWith('El pago (S/ 10.00) supera lo que se debe en las cuentas elegidas'))
   check('>>> el efectivo sin caja: el mensaje del servidor es el de la pantalla', sinCaja === MENSAJE_PAGO_SIN_CAJA)
-  const turno = await openCashSession(db, O, openCashSchema.parse({ openingAmount: 300 }))
   const pEf = await registrarPagoProveedor(db, O, registrarPagoSchema.parse({ supplierId: sup.id, amount: 100, method: 'EFECTIVO', idempotencyKey: randomUUID() }))
   const pTr = await registrarPagoProveedor(db, O, registrarPagoSchema.parse({ supplierId: sup.id, amount: 20, method: 'TRANSFERENCIA', reference: 'OP-77', idempotencyKey: randomUUID() }))
 
@@ -234,7 +234,7 @@ async function main() {
     const b2 = await crearBorrador(db, O, crearBorradorSchema.parse({ idempotencyKey: randomUUID(), warehouseId: b1.warehouse.id, supplierId: sup2.id, paymentCondition: 'CREDITO', vence: hoy, items: [{ productId: pp.id, enteredQuantity: 1, unitCost: 10 }] }))
     const r2 = await recibirCompra(db, O, recibirCompraSchema.parse({ purchaseId: b2.id }))
     const falla = await code(registrarPagoProveedor(db, O, registrarPagoSchema.parse({ supplierId: sup2.id, amount: 10, method: 'EFECTIVO', payableIds: [r2.cuentaPorPagarId!], idempotencyKey: randomUUID() })))
-    return falla === 'INVALID_DOCUMENT' && (await prisma.purchase.findUniqueOrThrow({ where: { id: b2.id } })).status === 'RECIBIDA' && num((await prisma.supplier.findUniqueOrThrow({ where: { id: sup2.id } })).payableBalance) === 10
+    return falla === 'CASH_REQUIRED' && (await prisma.purchase.findUniqueOrThrow({ where: { id: b2.id } })).status === 'RECIBIDA' && num((await prisma.supplier.findUniqueOrThrow({ where: { id: sup2.id } })).payableBalance) === 10
   })())
 
   console.log('\nK) Informe, tarjeta y quién ve qué')

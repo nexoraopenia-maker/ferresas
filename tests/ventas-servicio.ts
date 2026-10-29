@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { abrirTurno, asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -36,10 +36,12 @@ async function negocio(tag: string) {
   const b2 = await crearSucursalConAlmacen(t.id, { almacenCode: 'ALM2', seriesNumber: 2, branchCode: 'B2', establishmentCode: '0002' })
   const todas = [b1.branch.id, b2.branch.id]
   const u: Record<string, TenantContext> = {}
-  for (const role of ['OWNER', 'ADMIN', 'CONTADOR', 'CAJERO', 'VENDEDOR', 'ALMACENERO'] as Role[]) {
-    const x = await prisma.user.create({ data: { tenantId: t.id, email: `${role}-${randomUUID()}@x.com`.toLowerCase(), name: role, role } })
+  // OWNER2: F6.8b — una persona tiene un solo turno abierto, así que la sucursal 2 la cobra otro dueño con el suyo.
+  for (const clave of ['OWNER', 'OWNER2', 'ADMIN', 'CONTADOR', 'CAJERO', 'VENDEDOR', 'ALMACENERO']) {
+    const role = (clave === 'OWNER2' ? 'OWNER' : clave) as Role
+    const x = await prisma.user.create({ data: { tenantId: t.id, email: `${clave}-${randomUUID()}@x.com`.toLowerCase(), name: clave, role } })
     for (const b of todas) await asignarSucursal(t.id, x.id, b)
-    u[role] = { tenantId: t.id, userId: x.id, role, access: 'FULL', branchId: b1.branch.id, branchIds: todas, permisosExtra: [] }
+    u[clave] = { tenantId: t.id, userId: x.id, role, access: 'FULL', branchId: b1.branch.id, branchIds: todas, permisosExtra: [] }
   }
   // Una cajera que solo trabaja en la sucursal 1.
   const solo = await prisma.user.create({ data: { tenantId: t.id, email: `solo-${randomUUID()}@x.com`, name: 'Solo B1', role: 'CAJERO' } })
@@ -51,7 +53,9 @@ async function negocio(tag: string) {
   const cliente = await prisma.customer.create({ data: { tenantId: t.id, name: 'Constructora Andina SAC', docType: 'RUC', docNumber: ruc(), creditLimit: 5000 } })
   const db = (c: TenantContext) => getTenantPrisma(c)
   const O = u.OWNER!
-  const sedes = { b1: { ctx: O, w: b1.warehouse.id }, b2: { ctx: { ...O, branchId: b2.branch.id } as TenantContext, w: b2.warehouse.id } }
+  const turnoO = await abrirTurno(t.id, O.userId, b1.branch.id, { fondo: 50 })
+  await abrirTurno(t.id, u.OWNER2!.userId, b2.branch.id)
+  const sedes = { b1: { ctx: O, w: b1.warehouse.id }, b2: { ctx: { ...u.OWNER2!, branchId: b2.branch.id } as TenantContext, w: b2.warehouse.id } }
   const vender = (items: unknown[], payments: unknown[], over: Record<string, unknown> = {}, sede: 'b1' | 'b2' = 'b1') => {
     const s = sedes[sede]
     return registerSale(db(s.ctx), s.ctx, registerSaleSchema.parse({ warehouseId: s.w, items, payments, documentType: 'NOTA_VENTA', allowNegativeStock: false, idempotencyKey: randomUUID(), ...over }) as never)
@@ -68,7 +72,7 @@ async function negocio(tag: string) {
     } })
   }
   const fechar = (saleId: string, iso: string) => prisma.sale.update({ where: { id: saleId }, data: { completedAt: new Date(iso) } })
-  return { t, b1, b2, u, O, db, P1, P2, cliente, vender, L, doc, fechar }
+  return { t, b1, b2, u, O, db, P1, P2, cliente, vender, L, doc, fechar, turnoO }
 }
 
 async function main() {
@@ -166,14 +170,14 @@ async function cuerpo() {
   const d1 = await obtenerVenta(A.db(O), O, sFac.saleId)
   const r = d1.devoluciones[0]!
   check('>>> DEVUELTA con su registro D001-…, motivo, quién autorizó, fecha y la línea', d1.estado === 'DEVUELTA' && d1.devoluciones.length === 1 && /^D\d{3}-\d{8}$/.test(r.numero) && r.tipo === 'DEVOLUCION' && r.motivo === 'Material equivocado' && r.autorizo.length > 0 && r.lineas === 1)
-  check('>>> el reembolso externo con su medio y referencia; ningún turno afectado', r.reembolsos.length === 1 && r.reembolsos[0]!.modo === 'EXTERNO' && r.reembolsos[0]!.medio === 'YAPE' && r.reembolsos[0]!.referencia === 'OP-778' && r.turno === null)
+  check('>>> el reembolso externo con su medio y referencia; queda anotado en el turno de quien lo ejecutó', r.reembolsos.length === 1 && r.reembolsos[0]!.modo === 'EXTERNO' && r.reembolsos[0]!.medio === 'YAPE' && r.reembolsos[0]!.referencia === 'OP-778' && r.turno?.id === A.turnoO)
   check('>>> el comprobante vinculado y su NOTA DE CRÉDITO (06, devolución) aparecen enlazados', d1.comprobantes.length === 2 && r.notaDeCredito !== null && d1.comprobantes.some((c) => c.tipo === 'NOTA_CREDITO' && c.relacionado === dFac.fullNumber && c.numero === r.notaDeCredito))
   const dg1 = await diagnosticarDevolucion(A.db(O), O, sFac.saleId)
   check('>>> y una venta ya devuelta no se puede devolver otra vez (el diagnóstico lo dice)', !dg1.puede && !!dg1.bloqueo)
   const dAn = await obtenerVenta(A.db(O), O, sCont.saleId)
   check('>>> la anulada en efectivo sin turno abierto: anulada, sin nota (nota de venta) y con su motivo', dAn.estado === 'ANULADA' && dAn.devoluciones[0]?.tipo === 'ANULACION' && dAn.devoluciones[0]?.notaDeCredito === null)
 
-  const turno = await openCashSession(A.db(O), O, openCashSchema.parse({ openingAmount: 50 }))
+  const turno = { id: A.turnoO }   // F6.8b: el turno del dueño está abierto desde el principio
   const sCaja = await A.vender([A.L(A.P1.id, 1)], [{ method: 'EFECTIVO', amount: 100 }])
   const dgCaja = await diagnosticarDevolucion(A.db(O), O, sCaja.saleId)
   check('>>> con turno abierto el diagnóstico lo sabe y propone devolver el efectivo desde el cajón', dgCaja.puede && dgCaja.hayTurnoAbierto && dgCaja.reembolsos.length === 1 && dgCaja.reembolsos[0]!.mode === 'CAJA' && dgCaja.pagadoNeto === 100)

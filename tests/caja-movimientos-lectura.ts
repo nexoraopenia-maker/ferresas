@@ -53,10 +53,12 @@ async function cuerpo() {
   console.log('\nA) La lista del turno')
   const vacia = await listarMovimientosDelTurno(db(C), C, turno.id)
   check('>>> sin movimientos la lista está vacía', vacia.length === 0)
-  const g = await reg(C, { amount: 30 })
-  const r = await reg(A, { kind: 'INGRESO', category: 'REPOSICION_FONDO', amount: 200, description: 'Reposición del fondo' })
-  const ajeno = await reg(A, { kind: 'INGRESO', category: 'OTRO', amount: 10, description: 'Sobrante de caja chica' })
-  const grande = await reg(A, { category: 'RETIRO_DUENO', amount: 300, description: 'Retiro del dueño', reference: 'REC-001' })
+  // F6.8b: un movimiento solo se registra en el turno de quien lo ejecuta. Aquí se prueba la LECTURA de un turno con varios autores: se registran con el dueño (dueño del turno) y se fija quién fue el autor.
+  const regComo = async (c: TenantContext, o: Record<string, unknown>) => { const m = await reg(O, o); await prisma.cashMovement.update({ where: { id: m.id }, data: { userId: c.userId } }); return m }
+  const g = await regComo(C, { amount: 30 })
+  const r = await regComo(A, { kind: 'INGRESO', category: 'REPOSICION_FONDO', amount: 200, description: 'Reposición del fondo' })
+  const ajeno = await regComo(A, { kind: 'INGRESO', category: 'OTRO', amount: 10, description: 'Sobrante de caja chica' })
+  const grande = await regComo(A, { category: 'RETIRO_DUENO', amount: 300, description: 'Retiro del dueño', reference: 'REC-001' })
   const lista0 = await listarMovimientosDelTurno(db(C), C, turno.id)
   const lista = lista0.filter((m) => m.id !== ajeno.id)
   check('>>> el cajero NO puede anular un gasto menor pequeño que registró otra persona (solo el suyo)', lista0.find((m) => m.id === ajeno.id)?.puedeAnular === false)

@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, abrirTurno } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { prisma } from '../src/lib/prisma'
@@ -65,10 +65,12 @@ async function main() {
     for (const b of branches) await asignarSucursal(t.id, u.id, b)
     return u
   }
-  const owner = await mk('OWNER'), cajeroU = await mk('CAJERO')
+  const owner = await mk('OWNER'), owner2 = await mk('OWNER'), cajeroU = await mk('CAJERO')
+  await abrirTurno(t.id, cajeroU.id, b1.branch.id)
+  await abrirTurno(t.id, owner2.id, b2.branch.id) // F6.8b: la sucursal 2 la cobra otra persona con su turno
   const ctxDe = (u: { id: string }, role: Role, branchId: string, extra: TenantContext['permisosExtra'] = []): TenantContext =>
     ({ tenantId: t.id, userId: u.id, role, access: 'FULL', branchId, branchIds: [b1.branch.id, b2.branch.id], permisosExtra: extra })
-  const O1 = ctxDe(owner, 'OWNER', b1.branch.id), O2 = ctxDe(owner, 'OWNER', b2.branch.id)
+  const O1 = ctxDe(owner, 'OWNER', b1.branch.id), O2 = ctxDe(owner2, 'OWNER', b2.branch.id)
   const C1 = ctxDe(cajeroU, 'CAJERO', b1.branch.id), C1fia = ctxDe(cajeroU, 'CAJERO', b1.branch.id, ['credito.otorgar'])
   const dbO1 = getTenantPrisma(O1), dbO2 = getTenantPrisma(O2)
 
@@ -110,7 +112,7 @@ async function main() {
 
   console.log('\nC) Vender a crédito')
   const A = await cliente({ creditLimit: 1000, creditTermDays: 30 })
-  await openCashSession(dbO1, O1, openCashSchema.parse({ openingAmount: 100 }))
+  await abrirTurno(t.id, owner.id, b1.branch.id, { fondo: 100 })
   const caja0 = (await currentCashSession(dbO1, O1))!.expectedAmount
   const stock0 = await stockTotal()
   const v1 = await fiar(S1, A.id, 300)

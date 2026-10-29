@@ -107,8 +107,8 @@ async function main() {
   await cerrar(hoy.id, 0)   // el resto de la prueba sigue sin caja abierta
   await anularCuenta(db, O, anularCuentaSchema.parse({ receivableId: (await prisma.receivable.findFirstOrThrow({ where: { saleId: f1.saleId } })).id, motivo: 'castigo de prueba' }))
   check('>>> castigar una deuda o abonar después NO mueve lo congelado del turno cerrado', JSON.stringify(await sesion(turno.id)) === fotoAntes)
-  check('un abono nuevo sin turno abierto en efectivo → rechazado; con otro medio se registra sin turno', await code(abonar(C2.id, 5)) === 'INVALID_DOCUMENT' && (await abonar(C2.id, 5, 'YAPE')).replayed === false)
-  check('y ese abono por Yape no está enlazado a ningún turno', (await prisma.customerPayment.count({ where: { tenantId: E.t.id, method: 'YAPE', cashSessionId: null } })) === 1)
+  check('>>> F6.8b: un abono sin turno propio se rechaza con CASH_REQUIRED, sea en efectivo o por Yape', await code(abonar(C2.id, 5)) === 'CASH_REQUIRED' && await code(abonar(C2.id, 5, 'YAPE')) === 'CASH_REQUIRED')
+  check('y ningún abono quedó sin turno: todo abono vigente está enlazado a un turno', (await prisma.customerPayment.count({ where: { tenantId: E.t.id, cashSessionId: null } })) === 0)
 
   console.log('\nC) Nada se cuela en un turno que se está cerrando (bloqueo del turno)')
   // Simula un cierre EN MARCHA: otra transacción tiene bloqueado el turno y lo cerrará en 1.5 s.
@@ -123,7 +123,7 @@ async function main() {
   await esperar(400)
   const colado = await code(abonar(D.id, 50))
   await cerrando
-  check('>>> un abono en EFECTIVO que llega mientras el turno se cierra espera, ve el turno cerrado y se RECHAZA (no queda un abono fuera del arqueo)', colado === 'INVALID_DOCUMENT', String(colado))
+  check('>>> un abono en EFECTIVO que llega mientras el turno se cierra espera, ve el turno cerrado y se RECHAZA (no queda un abono fuera del arqueo)', colado === 'CASH_REQUIRED', String(colado))
   check('y no dejó rastro: ningún abono enlazado a ese turno ni deuda movida', (await prisma.customerPayment.count({ where: { cashSessionId: T.id } })) === 0 && num((await prisma.customer.findUniqueOrThrow({ where: { id: D.id } })).creditBalance) === 300)
   // Lo mismo con ANULAR un abono: se abre un turno, se cobra, y mientras "se cierra" la anulación espera y se rechaza.
   const T2 = await abrir(0)
@@ -176,6 +176,7 @@ async function main() {
   check('>>> el turno cerrado del reporte muestra fiado 270, abonos en efectivo 80 y por otros medios 40', mio?.fiado === 270 && mio?.abonosEfectivo === 80 && mio?.abonosOtros === 40, JSON.stringify(mio))
 
   console.log('\nH) El ticket: «Crédito» con su vencimiento')
+  await abrir(0) // F6.8b: se cobra dentro del turno propio
   await configurarCredito(db, O, configurarCreditoSchema.parse({ customerId: C1.id, creditLimit: 5000, creditTermDays: 15, bloqueado: false }))
   const venta = await vender(150, [{ method: 'EFECTIVO', amount: 50 }, { method: 'CREDITO', amount: 100 }], C1.id)
   const cuenta = await prisma.receivable.findFirstOrThrow({ where: { saleId: venta.saleId } })
@@ -200,7 +201,7 @@ async function main() {
   check('>>> cierre y consulta en vivo usan los MISMOS totales y el MISMO esperado', cierreSrc.includes('efectivoEsperado(') && cs.slice(cs.indexOf('export async function currentCashSession')).includes('efectivoEsperado(') && cs.slice(cs.indexOf('export async function currentCashSession')).includes('totalesDelTurno('))
   const cr = readFileSync('src/features/credito/credito-service.ts', 'utf8')
   const abonoSrc = cr.slice(cr.indexOf('export async function registrarAbono'), cr.indexOf('export async function anularAbono'))
-  check('>>> el abono bloquea al cliente y DESPUÉS al turno', abonoSrc.indexOf('bloquearCliente(') > 0 && abonoSrc.indexOf('bloquearCliente(') < abonoSrc.indexOf('bloquearTurno('))
+  check('>>> el abono bloquea al cliente y DESPUÉS al turno', abonoSrc.indexOf('bloquearCliente(') > 0 && abonoSrc.indexOf('bloquearCliente(') < abonoSrc.indexOf('bloquearTurnoPropio('))
   check('>>> anular un abono también bloquea el turno antes de decidir', cr.slice(cr.indexOf('export async function anularAbono'), cr.indexOf('export async function anularCuenta')).includes('bloquearTurno('))
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)

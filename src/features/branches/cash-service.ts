@@ -7,6 +7,8 @@ import type { CloseCashInput, OpenCashInput } from './cash-schemas'
 import { exigir, puede } from '@/lib/puede'
 import { vencerPedidosDeSucursal } from '@/features/pos/pedido-expiracion'
 import { bloquearTurno } from './queries'
+import { desgloseDelTurno } from './cierre-desglose-datos'
+import { asegurarCajaPrincipal } from './cajas-service'
 
 const P2002_UNIQUE = 'P2002'
 const num = (v: unknown): number => Number(v ?? 0)
@@ -200,31 +202,53 @@ export async function openCashSession(
   }
   const branchId = requireBranch(ctx)
 
-  try {
-    const s = await db.cashSession.create({
-      data: {
-        tenantId: ctx.tenantId,
-        branchId,
-        openedById: ctx.userId,
-        status: 'ABIERTA',
-        openingAmount: new Prisma.Decimal(input.openingAmount.toFixed(2)),
-        openingNotes: input.notes ?? null,
-      },
-      select: { id: true, branchId: true, status: true, openingAmount: true, openedAt: true },
-    })
+  // Una persona tiene un solo turno abierto en toda la cuenta: se le dice antes de pedirle que elija caja. La carrera la resuelve igualmente el índice parcial (ver el catch).
+  const propio = await db.cashSession.findFirst({ where: { openedById: ctx.userId, status: 'ABIERTA' }, select: { id: true } })
+  if (propio) throw new BusinessError('DUPLICATE_CODE', 'Ya tienes un turno de caja abierto. Ciérralo antes de abrir otro.')
 
-    await db.auditLog.create({
-      data: {
-        tenantId: ctx.tenantId,
-        actorId: ctx.userId,
-        actorRole: ctx.role,
-        action: 'cash.open',
-        entityType: 'CashSession',
-        entityId: s.id,
-        after: { branchId, openingAmount: input.openingAmount },
-        impersonationId: ctx.impersonationId ?? null,
-      },
-    })
+  try {
+    const s = await db.$transaction(async (tx) => {
+      const t = tx as unknown as TenantPrismaClient
+      // La caja: la que elige la persona; si la sucursal tiene una sola, esa; si no tiene ninguna (sucursal anterior a F6.8), se crea la «Caja principal».
+      let registerId = input.registerId
+      if (!registerId) {
+        const cajas = await t.cashRegister.findMany({ where: { branchId, deletedAt: null, isActive: true }, select: { id: true }, take: 2 })
+        if (cajas.length === 0) registerId = await asegurarCajaPrincipal(t, ctx.tenantId, branchId)
+        else if (cajas.length === 1) registerId = cajas[0]!.id
+        else throw new BusinessError('INVALID_DOCUMENT', 'Esta sucursal tiene varias cajas: elige en cuál vas a trabajar.')
+      }
+      // Se bloquea la fila de la caja: darla de baja a la vez espera aquí y ve el turno (o este ve la baja).
+      const caja = await t.cashRegister.update({ where: { id: registerId }, data: { updatedAt: new Date() }, select: { branchId: true, isActive: true, deletedAt: true } })
+        .catch((e: unknown) => { if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') return null; throw e })
+      if (!caja || caja.branchId !== branchId || caja.deletedAt !== null || !caja.isActive) {
+        throw new BusinessError('NOT_FOUND', 'Esa caja no existe, está dada de baja o no es de esta sucursal.')
+      }
+      const creado = await t.cashSession.create({
+        data: {
+          tenantId: ctx.tenantId,
+          branchId,
+          registerId,
+          openedById: ctx.userId,
+          status: 'ABIERTA',
+          openingAmount: new Prisma.Decimal(input.openingAmount.toFixed(2)),
+          openingNotes: input.notes ?? null,
+        },
+        select: { id: true, branchId: true, status: true, openingAmount: true, openedAt: true },
+      })
+      await t.auditLog.create({
+        data: {
+          tenantId: ctx.tenantId,
+          actorId: ctx.userId,
+          actorRole: ctx.role,
+          action: 'cash.open',
+          entityType: 'CashSession',
+          entityId: creado.id,
+          after: { branchId, registerId, openingAmount: input.openingAmount },
+          impersonationId: ctx.impersonationId ?? null,
+        },
+      })
+      return creado
+    }, { maxWait: 15_000, timeout: 30_000 })
 
     return {
       id: s.id,
@@ -235,9 +259,13 @@ export async function openCashSession(
     }
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === P2002_UNIQUE) {
+      // Los índices parciales hablan: o la persona ya tiene un turno abierto, o la caja ya tiene el suyo.
+      const donde = JSON.stringify(e.meta ?? {})
       throw new BusinessError(
         'DUPLICATE_CODE',
-        'Ya hay una caja abierta en esta sucursal. Ciérrala antes de abrir otra.',
+        donde.includes('por_persona') || donde.includes('openedById')
+          ? 'Ya tienes un turno de caja abierto. Ciérralo antes de abrir otro.'
+          : 'Esa caja ya tiene un turno abierto. Elige otra caja o pide que la cierren.',
       )
     }
     throw e
@@ -311,6 +339,8 @@ export async function closeCashSession(
     const expectedAmount = efectivoEsperado(openingAmount, tot)
     const difference = redondearCentimos(input.countedAmount - expectedAmount)
     const cerrado = new Date()
+    // La foto del desglose (Yape/Plin separados, descuentos, devoluciones…) se congela con el turno bloqueado: una reimpresión sale idéntica (F6.8b).
+    const desglose = await desgloseDelTurno(t, sesion.id)
 
     const s = await t.cashSession.update({
       where: { id: sesion.id },
@@ -335,6 +365,7 @@ export async function closeCashSession(
         manualInTotal: new Prisma.Decimal(manualInTotal.toFixed(2)),
         manualOutTotal: new Prisma.Decimal(manualOutTotal.toFixed(2)),
         closingNotes: input.notes ?? null,
+        closingBreakdown: desglose as unknown as Prisma.InputJsonValue,
       },
       select: { id: true, branchId: true, status: true, openedAt: true },
     })
@@ -413,8 +444,9 @@ export async function currentCashSession(
 ): Promise<(CashSessionResult & { expectedAmount: number; salesCount: number; refundsCashTotal: number; refundsOtherTotal: number; manualInTotal: number; manualOutTotal: number; movimientos: DesgloseMovimientos }) | null> {
   const branchId = requireBranch(ctx)
 
+  // El turno PROPIO (F6.8b): cada persona ve y trabaja el suyo; los de los demás los supervisa quien tiene `caja.cerrar_ajeno`.
   const s = await db.cashSession.findFirst({
-    where: { branchId, status: 'ABIERTA' },
+    where: { branchId, openedById: ctx.userId, status: 'ABIERTA' },
     select: { id: true, branchId: true, status: true, openingAmount: true, openedAt: true },
   })
   if (!s) return null

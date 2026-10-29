@@ -1,4 +1,5 @@
 import { exigirDistritoValido } from '@/features/ubigeo/service'
+import { asegurarCajaPrincipal } from './cajas-service'
 import { Prisma } from '@/generated/prisma/client'
 import { camposDeColision, esColisionUnica } from '@/lib/prisma-errors'
 import { BusinessError } from '@/lib/errors'
@@ -95,6 +96,9 @@ export async function createBranch(
         })
         warehouseId = w.id
       }
+
+      // Toda sucursal nace con su «Caja principal» (F6.8b): sin una caja nadie podría abrir turno ni, por tanto, cobrar.
+      await asegurarCajaPrincipal(t, ctx.tenantId, branch.id)
 
       // Quien la crea queda con acceso: si no, abriría una sucursal en la
       // que no puede entrar y tendría que asignarse a sí mismo acto seguido.

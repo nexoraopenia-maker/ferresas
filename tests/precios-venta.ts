@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { crearSucursal, asignarSucursal } from './fixtures'
+import { crearSucursal, asignarSucursal, abrirTurno } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -35,6 +35,7 @@ async function cuerpo() {
     return u
   }
   const owner = await mk('OWNER', 'dueno'), admin = await mk('ADMIN', 'admin'), cajero = await mk('CAJERO', 'cajero'), vend = await mk('VENDEDOR', 'vendedor')
+  for (const u of [owner, admin, cajero, vend]) await abrirTurno(t.id, u.id, bA.id)
   const g = (c: TenantContext) => getTenantPrisma(c)
   const ctx = (u: { id: string }) => resolveTenantContext(u.id)
   let cOwner = await ctx(owner), cAdmin = await ctx(admin), cCajero = await ctx(cajero), cVend = await ctx(vend)

@@ -51,9 +51,9 @@ async function main() {
   const A = await negocio('A')
   const B = await negocio('B')
 
-  console.log('\n2) Por defecto no cambia nada')
-  check('>>> sin la política, se cobra en efectivo sin turno (comportamiento de siempre)',
-    await code(A.vender(A.cajero, 'EFECTIVO')) === null)
+  console.log('\n2) F6.8b: el turno propio es obligatorio SIEMPRE (el ajuste del negocio ya no decide nada)')
+  check('>>> sin la política, cobrar sin turno propio se rechaza con CASH_REQUIRED, en efectivo o por Yape',
+    await code(A.vender(A.cajero, 'EFECTIVO')) === 'CASH_REQUIRED' && await code(A.vender(A.cajero, 'YAPE')) === 'CASH_REQUIRED')
 
   console.log('\n3) Solo la administración decide')
   check('>>> el CAJERO no puede activarla', await code(configurarCajaObligatoria(A.cajero.db, A.cajero.ctx, true)) === 'FORBIDDEN_ROLE')
@@ -64,23 +64,24 @@ async function main() {
   await configurarCajaObligatoria(A.owner.db, A.owner.ctx, true)
   check('repetirla no duplica la auditoría', (await prisma.auditLog.count({ where: { tenantId: A.t.id, action: 'caja.obligatoria' } })) === 1)
 
-  console.log('\n4) Con la política activa')
+  console.log('\n4) Con la política activa o no, lo mismo')
   const antes = Number((await prisma.stock.findFirstOrThrow({ where: { productId: A.prod.id } })).quantity)
-  check('>>> cobrar en EFECTIVO sin turno abierto se rechaza', await code(A.vender(A.cajero, 'EFECTIVO')) === 'INVALID_DOCUMENT')
+  check('>>> cobrar sin turno propio se rechaza (también con la política activa)', await code(A.vender(A.cajero, 'EFECTIVO')) === 'CASH_REQUIRED')
   check('>>> y no descontó stock', Number((await prisma.stock.findFirstOrThrow({ where: { productId: A.prod.id } })).quantity) === antes)
-  check('cobrar con YAPE sin turno sí (no es efectivo)', await code(A.vender(A.cajero, 'YAPE')) === null)
+  check('>>> por Yape tampoco: ese dinero también tiene que quedar en un turno', await code(A.vender(A.cajero, 'YAPE')) === 'CASH_REQUIRED')
   await openCashSession(A.cajero.db, A.cajero.ctx, openCashSchema.parse({ openingAmount: 50 }))
   const v = await A.vender(A.cajero, 'EFECTIVO')
-  check('>>> con el turno abierto, el efectivo se cobra', !!v.saleId)
+  check('>>> con el turno propio abierto, el efectivo se cobra', !!v.saleId)
   check('y queda dentro del turno', (await prisma.sale.findUniqueOrThrow({ where: { id: v.saleId } })).cashSessionId !== null)
+  check('>>> el turno de otra persona no sirve: el dueño no cobra en el turno del cajero', await code(A.vender(A.owner, 'EFECTIVO')) === 'CASH_REQUIRED')
   const turno = await currentCashSession(A.cajero.db, A.cajero.ctx)
   await closeCashSession(A.cajero.db, A.cajero.ctx, closeCashSchema.parse({ sessionId: turno!.id, countedAmount: 60 }))
-  check('>>> al cerrar el turno vuelve a exigirse', await code(A.vender(A.cajero, 'EFECTIVO')) === 'INVALID_DOCUMENT')
+  check('>>> al cerrar el turno vuelve a exigirse', await code(A.vender(A.cajero, 'EFECTIVO')) === 'CASH_REQUIRED')
 
-  console.log('\n5) Es por negocio')
-  check('>>> el otro negocio no se ve afectado', await code(B.vender(B.cajero, 'EFECTIVO')) === null)
+  console.log('\n5) Es por persona y por negocio')
+  check('>>> el otro negocio tampoco cobra sin turno', await code(B.vender(B.cajero, 'EFECTIVO')) === 'CASH_REQUIRED')
   await configurarCajaObligatoria(A.owner.db, A.owner.ctx, false)
-  check('desactivarla devuelve el comportamiento anterior', await code(A.vender(A.cajero, 'EFECTIVO')) === null)
+  check('>>> desactivar el ajuste no devuelve el comportamiento anterior: el turno propio sigue siendo obligatorio', await code(A.vender(A.cajero, 'EFECTIVO')) === 'CASH_REQUIRED')
 
   await prisma.tenant.deleteMany({ where: { id: { in: [A.t.id, B.t.id] } } })
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)

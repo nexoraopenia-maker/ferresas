@@ -80,3 +80,40 @@ export async function crearSucursalConAlmacen(
   })
   return { branch, warehouse }
 }
+
+/**
+ * El turno de caja PROPIO de una persona en una sucursal (F6.8b). Desde esta fase todo cobro, abono, pago, movimiento o devolución que mueve dinero entra al turno abierto de QUIEN
+ * lo ejecuta, y una persona solo puede tener un turno abierto en toda la cuenta: cada «cajero» de una prueba que cobra necesita el suyo, y dos cajeros de la misma sucursal usan
+ * cajas distintas. Reutiliza la «Caja principal» de la sucursal (o la crea) y, con `caja`, abre en otra de nombre `caja`. Devuelve el id del turno.
+ */
+export async function abrirTurno(
+  tenantId: string,
+  userId: string,
+  branchId: string,
+  opts: { fondo?: number; caja?: string } = {},
+): Promise<string> {
+  // Una caja LIBRE (sin turno abierto) de la sucursal: dos cajeros nunca comparten caja. Si no hay, se crea la siguiente.
+  const cajas = await prisma.cashRegister.findMany({
+    where: { tenantId, branchId, deletedAt: null }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    select: { id: true, name: true, sessions: { where: { status: 'ABIERTA' }, select: { id: true }, take: 1 } },
+  })
+  let caja = opts.caja ? cajas.find((c) => c.name === opts.caja) : cajas.find((c) => c.sessions.length === 0)
+  if (!caja) caja = { ...(await prisma.cashRegister.create({ data: { tenantId, branchId, name: opts.caja ?? (cajas.length === 0 ? 'Caja principal' : `Caja ${cajas.length + 1}`) }, select: { id: true, name: true } })), sessions: [] }
+  const s = await prisma.cashSession.create({
+    data: { tenantId, branchId, registerId: caja.id, openedById: userId, status: 'ABIERTA', openingAmount: opts.fondo ?? 0 },
+    select: { id: true },
+  })
+  return s.id
+}
+
+/**
+ * `{ registerId }` de la primera caja LIBRE de la sucursal (sin turno abierto), para abrir un turno con `openCashSession` cuando ya hay más de una caja: el servicio exige elegir.
+ * Sin ninguna caja libre devuelve `{}` y el servicio decide (crea la principal si no hay cajas, o se rechaza si todas están ocupadas).
+ */
+export async function cajaLibre(tenantId: string, branchId: string): Promise<{ registerId?: string }> {
+  const c = await prisma.cashRegister.findFirst({
+    where: { tenantId, branchId, deletedAt: null, isActive: true, sessions: { none: { status: 'ABIERTA' } } },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { id: true },
+  })
+  return c ? { registerId: c.id } : {}
+}

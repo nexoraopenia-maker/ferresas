@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { abrirTurno, asignarSucursal, cajaLibre, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -64,9 +64,9 @@ async function cuerpo() {
   const turno = await openCashSession(db(O), O, openCashSchema.parse({ openingAmount: 100 }))
   await vender(300)
   check('(preparación) fondo 100 + venta 300 = 400 esperado', (await esperado()) === 400)
-  const e1 = await reg(C, { amount: 30 })
+  const e1 = await reg(O, { amount: 30 })
   check('>>> un egreso de 30 baja el esperado a 370; el movimiento queda en el turno abierto con quién lo hizo y sin marca de exceso', (await esperado()) === 370 && e1.cashSessionId === turno.id && !e1.exceededExpected && !e1.replayed && e1.kind === 'EGRESO' && e1.amount === 30)
-  await reg(A, { kind: 'INGRESO', category: 'REPOSICION_FONDO', amount: 200, description: 'Reposición del fondo de cambio' })
+  await reg(O, { kind: 'INGRESO', category: 'REPOSICION_FONDO', amount: 200, description: 'Reposición del fondo de cambio' })
   check('>>> un ingreso de 200 lo sube a 570', (await esperado()) === 570)
   const tot = await totalesDelTurno(db(O), turno.id)
   check('>>> el turno suma 200 de ingresos y 30 de egresos manuales, sin mezclarlos con ventas ni devoluciones', tot.manualInTotal === 200 && tot.manualOutTotal === 30 && tot.cashTotal === 300 && tot.refundsCashTotal === 0)
@@ -76,6 +76,8 @@ async function cuerpo() {
   check('>>> la auditoría deja `caja.movimiento` con la descripción como motivo, el tipo, la categoría, el monto y el permiso con que se hizo', !!a1 && a1.reason === 'Bolsas para el mostrador' && JSON.stringify(a1.after).includes('"tipo":"EGRESO"') && JSON.stringify(a1.after).includes('"permiso":"caja.movimientos"') && JSON.stringify(a1.after).includes('"superoElEfectivoEsperado":false'))
 
   console.log('\nC) Quién puede registrar qué')
+  // F6.8b: cada quien registra en SU turno; el cajero y el administrador tienen el suyo.
+  const turnoC = await abrirTurno(t.id, C.userId, b1.branch.id, { fondo: 1000 }), turnoA = await abrirTurno(t.id, A.userId, b1.branch.id, { fondo: 1000 })
   const casos: [string, TenantContext, Record<string, unknown>, 'OK' | 'FORBIDDEN_ROLE'][] = [
     ['CAJERO: gasto menor de 100.00 (el tope, incluido)', C, { amount: 100 }, 'OK'],
     ['CAJERO: «otro» de 40.00', C, { category: 'OTRO', amount: 40 }, 'OK'],
@@ -118,12 +120,12 @@ async function cuerpo() {
   // Ahora se cierra el turno y se abre otro con poco efectivo para probar el exceso.
   const cierre0 = await closeCashSession(db(O), O, closeCashSchema.parse({ sessionId: turno.id, countedAmount: 0 }))
   void cierre0
-  const turno2 = await openCashSession(db(O), O, openCashSchema.parse({ openingAmount: 50 }))
+  const turno2 = await openCashSession(db(O), O, openCashSchema.parse({ openingAmount: 50, ...(await cajaLibre(t.id, b1.branch.id)) }))
   const antesEx = await filas()
-  const eEx = await err(reg(A, { amount: 80, category: 'RETIRO_DUENO' }))
+  const eEx = await err(reg(O, { amount: 80, category: 'RETIRO_DUENO' }))
   check('>>> un egreso mayor que el esperado (80 contra 50) se detiene con CASH_EXCEEDS_EXPECTED y no crea nada', eEx?.code === 'CASH_EXCEEDS_EXPECTED' && (await filas()) === antesEx)
   check('>>> el aviso NO revela cuánto espera el sistema (el arqueo es a ciegas)', !/\b50\b/.test(eEx?.message ?? '') && !/\d+\.\d\d/.test(eEx?.message ?? ''))
-  const conf = await reg(A, { amount: 80, category: 'RETIRO_DUENO', confirmaExceso: true })
+  const conf = await reg(O, { amount: 80, category: 'RETIRO_DUENO', confirmaExceso: true })
   check('>>> con la confirmación expresa se registra, queda MARCADO como exceso y el esperado baja a −30', conf.exceededExpected && (await esperado()) === -30)
   const aEx = await prisma.auditLog.findFirst({ where: { tenantId: t.id, action: 'caja.movimiento', entityId: conf.id } })
   check('>>> y la auditoría lo deja dicho (`superoElEfectivoEsperado`)', JSON.stringify(aEx?.after).includes('"superoElEfectivoEsperado":true'))
@@ -136,12 +138,13 @@ async function cuerpo() {
 
   console.log('\nF) Anulaciones')
   const mC = await reg(C, { amount: 20, description: 'Cinta adhesiva', confirmaExceso: true }), mA = await reg(A, { category: 'RETIRO_DUENO', amount: 10, description: 'Retiro chico', confirmaExceso: true })
-  const antesAn = await esperado()
+  const esperadoDe = async (c: TenantContext) => (await currentCashSession(db(c), c))!.expectedAmount   // F6.8b: cada quien ve el esperado de SU turno
+  const antesAn = await esperadoDe(C), totAntesC = (await totalesDelTurno(db(C), turnoC)).manualOutTotal
   check('>>> el cajero NO anula el movimiento de otra persona', (await code(anularMovimientoCaja(db(C), C, anularMovimientoCajaSchema.parse({ movementId: mA.id, reason: 'Me equivoqué' })))) === 'FORBIDDEN_ROLE')
-  check('>>> ni uno suyo de categoría o monto reservado a `caja.ajuste` (el administrador lo registró; aquí uno del cajero pasa del tope por otra vía no existe) — el ajeno sigue vigente', Math.round(((await esperado()) - antesAn) * 100) === 0)
+  check('>>> ni uno suyo de categoría o monto reservado a `caja.ajuste` (el administrador lo registró; aquí uno del cajero pasa del tope por otra vía no existe) — el ajeno sigue vigente', Math.round(((await esperadoDe(C)) - antesAn) * 100) === 0)
   const anuladoC = await anularMovimientoCaja(db(C), C, anularMovimientoCajaSchema.parse({ movementId: mC.id, reason: 'Lo compré con mi dinero' }))
-  check('>>> el cajero SÍ anula el suyo (gasto menor ≤ tope) mientras el turno está abierto: el esperado sube 20 y queda quién, cuándo y por qué', Math.round(((await esperado()) - antesAn) * 100) === 2000 && !!anuladoC.voidedAt && (await prisma.cashMovement.findUniqueOrThrow({ where: { id: mC.id } })).voidReason === 'Lo compré con mi dinero')
-  check('>>> el anulado deja de contar en los totales del turno pero NO se borra', (await prisma.cashMovement.count({ where: { id: mC.id } })) === 1 && (await totalesDelTurno(db(O), turno2.id)).manualOutTotal === 80 + 10 + 20 - 20 + 0)
+  check('>>> el cajero SÍ anula el suyo (gasto menor ≤ tope) mientras el turno está abierto: el esperado sube 20 y queda quién, cuándo y por qué', Math.round(((await esperadoDe(C)) - antesAn) * 100) === 2000 && !!anuladoC.voidedAt && (await prisma.cashMovement.findUniqueOrThrow({ where: { id: mC.id } })).voidReason === 'Lo compré con mi dinero')
+  check('>>> el anulado deja de contar en los totales del turno pero NO se borra', (await prisma.cashMovement.count({ where: { id: mC.id } })) === 1 && (await totalesDelTurno(db(C), turnoC)).manualOutTotal === Math.round((totAntesC - 20) * 100) / 100 && (await totalesDelTurno(db(O), turno2.id)).manualOutTotal === 80)
   check('>>> anular dos veces se rechaza', (await code(anularMovimientoCaja(db(O), O, anularMovimientoCajaSchema.parse({ movementId: mC.id, reason: 'Otra vez' })))) === 'INVALID_DOCUMENT')
   await anularMovimientoCaja(db(A), A, anularMovimientoCajaSchema.parse({ movementId: mA.id, reason: 'Error de digitación' }))
   check('>>> quien tiene `caja.ajuste` anula el de cualquiera', (await prisma.cashMovement.findUniqueOrThrow({ where: { id: mA.id } })).voidedById === A.userId)
@@ -160,7 +163,7 @@ async function cuerpo() {
   // Reintentar un envío ya registrado funciona aunque el mundo haya cambiado (el turno se cerró): se devuelve el mismo movimiento, sin error.
   const repetidoTrasCierre = await reg(O, { kind: 'INGRESO', category: 'OTRO', amount: 12.34, idempotencyKey: k })
   check('>>> reintentar una clave ya usada DESPUÉS de cerrar el turno devuelve el mismo movimiento (replayed), no un error de caja', repetidoTrasCierre.replayed && repetidoTrasCierre.id === r1.id)
-  const turno3 = await openCashSession(db(O), O, openCashSchema.parse({ openingAmount: 0 }))
+  const turno3 = await openCashSession(db(O), O, openCashSchema.parse({ openingAmount: 0, ...(await cajaLibre(t.id, b1.branch.id)) }))
   await reg(O, { kind: 'INGRESO', category: 'CORRECCION_ARQUEO', amount: 77, description: 'Corrige el faltante del turno anterior' })
   const cerradoDespues = await prisma.cashSession.findUniqueOrThrow({ where: { id: turno2.id } })
   check('>>> un movimiento de HOY no cambia ninguna columna del turno cerrado ayer', JSON.stringify(cerradoDespues) === JSON.stringify(cerrado) && (await totalesDelTurno(db(O), turno2.id)).manualInTotal === manualesAntes.manualInTotal)

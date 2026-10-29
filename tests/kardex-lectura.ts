@@ -56,13 +56,15 @@ async function cuerpo() {
   const b2 = await crearSucursalConAlmacen(t.id, { almacenCode: 'ALM2', seriesNumber: 2, branchCode: 'B2', establishmentCode: '0002' })
   const W1 = b1.warehouse.id, W2 = b2.warehouse.id
   const u: Record<string, TenantContext> = {}
-  for (const role of ['OWNER', 'ADMIN', 'CONTADOR', 'ALMACENERO', 'CAJERO', 'VENDEDOR'] as Role[]) {
-    const x = await prisma.user.create({ data: { tenantId: t.id, email: `${role}-${randomUUID()}@x.com`.toLowerCase(), name: role, role } })
+  // OWNER2: F6.8b — una persona tiene un solo turno; la venta de la sucursal 2 la cobra otro dueño con el suyo.
+  for (const clave of ['OWNER', 'OWNER2', 'ADMIN', 'CONTADOR', 'ALMACENERO', 'CAJERO', 'VENDEDOR']) {
+    const role = (clave === 'OWNER2' ? 'OWNER' : clave) as Role
+    const x = await prisma.user.create({ data: { tenantId: t.id, email: `${clave}-${randomUUID()}@x.com`.toLowerCase(), name: clave, role } })
     for (const b of [b1, b2]) await asignarSucursal(t.id, x.id, b.branch.id)
-    u[role] = { tenantId: t.id, userId: x.id, role, access: 'FULL', branchId: b1.branch.id, branchIds: [b1.branch.id, b2.branch.id], permisosExtra: [] }
+    u[clave] = { tenantId: t.id, userId: x.id, role, access: 'FULL', branchId: b1.branch.id, branchIds: [b1.branch.id, b2.branch.id], permisosExtra: [] }
   }
   const O = u.OWNER!, AD = u.ADMIN!, K = u.CONTADOR!, AL = u.ALMACENERO!, CA = u.CAJERO!, VE = u.VENDEDOR!
-  const OB2: TenantContext = { ...O, branchId: b2.branch.id }
+  const OB2: TenantContext = { ...u.OWNER2!, branchId: b2.branch.id }
   const AL1: TenantContext = { ...AL, branchIds: [b1.branch.id] }          // almacenero que solo alcanza la sucursal 1
   const AL2: TenantContext = { ...AL, branchId: b2.branch.id, branchIds: [b2.branch.id] }
   const PIN: TenantContext = { ...O, operadorDe: O.userId, permisosDenegados: permisosDenegadosAlOperador(new Set(PERMISOS)) }
@@ -79,8 +81,9 @@ async function cuerpo() {
   // ─── La historia (14 movimientos en 2 almacenes) ─────────────────────────────────────────────────────────────────
   const c1 = await comprar(10, 5)                                                      // 1
   const c2 = await comprar(10, 7)                                                      // 2  promedio 6
+  await openCashSession(db(O), O, openCashSchema.parse({ openingAmount: 100 }))   // F6.8b: se cobra en el turno propio
+  await openCashSession(db(OB2), OB2, openCashSchema.parse({ openingAmount: 0 }))
   const v1 = await vender(O, W1, 4, 80)                                                // 3
-  await openCashSession(db(O), O, openCashSchema.parse({ openingAmount: 100 }))
   await anularOdevolverVenta(db(O), O, anularOdevolverVentaSchema.parse({ saleId: v1.saleId, kind: 'ANULACION', reason: 'Se equivocó el cajero', idempotencyKey: randomUUID() }))   // 4
   await createStockMovement(db(O), O, createStockMovementSchema.parse({ productId: P.id, warehouseId: W2, type: 'ENTRADA', quantity: 5, unitCost: 9, source: 'MANUAL', reason: '=HYPERLINK("http://x.test","clic")' }))   // 5
   await createStockMovement(db(AL2), AL2, createStockMovementSchema.parse({ productId: P.id, warehouseId: W2, type: 'ENTRADA', quantity: 2, source: 'MANUAL', reason: 'Llegó sin factura' }))                          // 6
@@ -208,7 +211,7 @@ async function cuerpo() {
   const vtaC = lc(kK, (l) => lVenta(l) && l.almacen.id === W1)
   check('>>> la venta sale al promedio vigente: −4 × 6 = −24, con saldo 16 × 6 = 96', vtaC.costoUnitario === 6 && vtaC.valor === -24 && vtaC.saldoValorizado === 96)
   check('>>> el saldo valorizado de CADA línea es el saldo de la consulta (no el de su almacén) × el promedio de ese momento', kK.lineas.filter((l) => l.costos!.costoPromedio !== null).every((l) => cerca(l.costos!.saldoValorizado!, Math.round(l.saldo * l.costos!.costoPromedio! * 100) / 100)) && kK.lineas.some((l) => !cerca(l.saldo, l.saldoAlmacen)))
-  check('>>> el usuario sale por su NOMBRE, no por su correo', kO.lineas.every((l) => ['OWNER', 'ADMIN', 'ALMACENERO', 'CONTADOR'].includes(l.usuario!)))
+  check('>>> el usuario sale por su NOMBRE, no por su correo', kO.lineas.every((l) => ['OWNER', 'OWNER2', 'ADMIN', 'ALMACENERO', 'CONTADOR'].includes(l.usuario!)))
   const sinCosto = kK.lineas.find((l) => l.motivo === 'Llegó sin factura')!
   check('>>> la entrada sin costo: valor NULL, marcada «pendiente» y con alerta de cuántas esperan', sinCosto.costos!.costoUnitario === null && sinCosto.costos!.valor === null && sinCosto.costos!.pendiente && kK.alertas.some((a) => a.codigo === 'COSTO_PENDIENTE' && a.cantidad === 1))
   check('>>> la entrada con costo 9 se valora a 9 (valor 45) sin mover el promedio (6)', (() => { const c = kK.lineas.find((l) => l.motivo?.startsWith('=HYPERLINK'))!.costos!; return c.costoUnitario === 9 && c.valor === 45 && c.costoPromedio === 6 })())

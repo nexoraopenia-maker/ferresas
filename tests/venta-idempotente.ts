@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { abrirTurno, asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { prisma } from '../src/lib/prisma'
@@ -30,6 +30,8 @@ async function negocio(tag: string) {
   await asignarSucursal(t.id, u.id, branch.id)
   const ctx: TenantContext = { tenantId: t.id, userId: u.id, role: 'OWNER', access: 'FULL', branchId: branch.id, branchIds: [branch.id] }
   const db = getTenantPrisma(ctx)
+  // F6.8b: se cobra dentro del turno propio, abierto con un fondo de 50.
+  const turno = await abrirTurno(t.id, u.id, branch.id, { fondo: 50 })
   const prod = await prisma.product.create({ data: { tenantId: t.id, sku: 'P1', name: 'Producto', salePrice: 10 } })
   await prisma.stock.create({ data: { tenantId: t.id, productId: prod.id, warehouseId: w.id, quantity: 100 } })
   const vender = (clave: string | undefined, cantidad = 2, pago = cantidad * 10) =>
@@ -39,7 +41,7 @@ async function negocio(tag: string) {
     ventas: await prisma.sale.count({ where: { tenantId: t.id } }), pagos: await prisma.payment.count({ where: { tenantId: t.id } }),
     movs: await prisma.stockMovement.count({ where: { tenantId: t.id } }), items: await prisma.saleItem.count({ where: { tenantId: t.id } }),
   })
-  return { t, db, ctx, vender, stock, cuenta, w, prod }
+  return { t, db, ctx, vender, stock, cuenta, w, prod, turno }
 }
 
 async function main() {
@@ -95,14 +97,14 @@ async function main() {
   check('>>> la MISMA clave en OTRO negocio crea su propia venta y no devuelve la ajena', !vB.replayed && vB.saleId !== v1.saleId && (await B.cuenta()).ventas === 1)
 
   console.log('\n5) La caja no se cuenta dos veces')
-  const caja = await openCashSession(B.db, B.ctx, openCashSchema.parse({ openingAmount: 50 }))
+  const caja = { id: B.turno }
   const kc = randomUUID()
   await B.vender(kc, 3)
   const esp1 = (await currentCashSession(B.db, B.ctx))!.expectedAmount
   await B.vender(kc, 3); await B.vender(kc, 3)
   const esp2 = (await currentCashSession(B.db, B.ctx))!.expectedAmount
-  check('>>> reintentar un cobro en efectivo NO suma el efectivo otra vez: el esperado del cajón se mantiene (50 + 30)', esp1 === 80 && esp2 === 80, `${esp1} / ${esp2}`)
-  await closeCashSession(B.db, B.ctx, closeCashSchema.parse({ sessionId: caja.id, countedAmount: 80 }))
+  check('>>> reintentar un cobro en efectivo NO suma el efectivo otra vez: el esperado del cajón se mantiene (50 de fondo + 20 de la venta anterior + 30)', esp1 === 100 && esp2 === 100, `${esp1} / ${esp2}`)
+  await closeCashSession(B.db, B.ctx, closeCashSchema.parse({ sessionId: caja.id, countedAmount: 100 }))
   check('y el cierre con el conteo real da diferencia 0', num((await prisma.cashSession.findUniqueOrThrow({ where: { id: caja.id } })).difference) === 0)
 
   console.log('\n6) La base')

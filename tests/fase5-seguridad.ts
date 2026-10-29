@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, abrirTurno } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -223,6 +223,7 @@ async function cuerpo() {
   const itemP = await prisma.saleItem.create({ data: { tenantId: A.t.id, saleId: ventaP.id, productId: dA.prod.id, nameSnapshot: dA.prod.name, skuSnapshot: dA.prod.sku, quantity: 4, unitPrice: 100, taxRate: 0.18, unitCost: COSTO_PRODUCTO, lineTotal: 400 } })
   await prisma.payment.create({ data: { tenantId: A.t.id, saleId: ventaP.id, userId: A.u.OWNER!.userId, method: 'EFECTIVO', amount: 400, receivedAt: new Date('2026-10-23T15:00:00Z') } })
   const dueno = A.u.OWNER!
+  await abrirTurno(A.t.id, dueno.userId, A.b1.branch.id)
   for (const destination of ['STOCK', 'MERMA'] as const) {
     await devolverProductosVenta(db(dueno), dueno, devolverProductosSchema.parse({ saleId: ventaP.id, reason: 'Prueba de seguridad', lines: [{ saleItemId: itemP.id, quantity: 1, destination }], idempotencyKey: randomUUID(), refunds: [{ mode: 'EXTERNO', method: 'YAPE', amount: 100 }] }))
   }

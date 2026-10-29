@@ -142,6 +142,7 @@ async function main() {
   await anularAbono(db, O, anularAbonoSchema.parse({ paymentId: anul.paymentId, motivo: 'error de digitación' }))
   await anularCuenta(db, O, anularCuentaSchema.parse({ receivableId: (await prisma.receivable.findFirstOrThrow({ where: { saleId: f3.saleId } })).id, motivo: 'incobrable' }))
   await cerrar(turno.id, 180)
+  await abrir(0) // F6.8b: se cobra dentro del turno propio
   await vender(50, [{ method: 'EFECTIVO', amount: 50 }])
   const limpioBd = await auditarCoherenciaCredito(db)
   check('>>> tras fiar, abonar, anular un abono, castigar una deuda y cerrar el turno: 0 errores y 0 avisos', limpioBd.errores === 0 && limpioBd.avisos === 0, formatearInformeCredito('a', limpioBd, true))
@@ -151,6 +152,7 @@ async function main() {
 
   console.log('\nC) Se estropea la base a propósito y cada daño se encuentra')
   const O2 = await negocio('b')   // otro negocio, sano: no debe ver nada de lo del primero
+  await O2.abrir(0)               // F6.8b: se cobra dentro del turno propio
   const c2s = await O2.cliente(); await O2.vender(100, [{ method: 'CREDITO', amount: 100 }], c2s.id)
   const cuentaC1 = await prisma.receivable.findFirstOrThrow({ where: { saleId: f1.saleId } })
   const rep = await prisma.paymentAllocation.findFirstOrThrow({ where: { receivable: { id: cuentaC1.id } } })

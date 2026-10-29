@@ -93,6 +93,9 @@ export function validarReembolsos(entrada: readonly ReembolsoEntrada[] | undefin
 
 /** ¿Algún reembolso sale del cajón? Entonces hace falta un turno abierto. */
 export const necesitaCaja = (r: readonly ReembolsoValido[]) => r.some((x) => x.mode === 'CAJA')
+
+/** ¿Alguno de los reembolsos mueve dinero (sale del cajón o se devuelve por otro medio)? Solo `SIN_SALIDA` no lo mueve. Quien lo ejecuta necesita SU turno abierto (F6.8b). */
+export const mueveDinero = (r: readonly ReembolsoValido[]) => r.some((x) => x.mode !== 'SIN_SALIDA')
 export const efectivoDelCajon = (r: readonly ReembolsoValido[]) => redondearCentimos(r.filter((x) => x.mode === 'CAJA').reduce((a, x) => a + x.amount, 0))
 
 // ─── Comprobante ───────────────────────────────────────────────────────────────────────────────────────────────────────────

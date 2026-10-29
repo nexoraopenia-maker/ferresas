@@ -58,7 +58,9 @@ async function negocio(tag: string) {
   const vender = (monto: number, payments: { method: string; amount: number }[], customerId: string, c: TenantContext = O) =>
     registerSale(dbOf(c), c, { warehouseId: b1.warehouse.id, customerId, items: [{ productId: prod.id, quantity: monto / 100, discount: 0 }], payments, documentType: 'NOTA_VENTA', allowNegativeStock: false, idempotencyKey: randomUUID() } as never)
   const linea = (customerId: string, limite: number, dias = 30) => configurarCredito(dbOf(O), O, configurarCreditoSchema.parse({ customerId, creditLimit: limite, creditTermDays: dias, bloqueado: false }))
-  const abrirCaja = () => openCashSession(dbOf(O), O, openCashSchema.parse({ openingAmount: 0 }))
+  // Idempotente: F6.8b exige turno propio para cobrar, así que el negocio nace con el suyo abierto.
+  const abrirCaja = async () => { if ((await prisma.cashSession.count({ where: { tenantId: t.id, openedById: O.userId, status: 'ABIERTA' } })) === 0) await openCashSession(dbOf(O), O, openCashSchema.parse({ openingAmount: 0 })) }
+  await abrirCaja()
   return { t, b1, ctxs, dbOf, prod, vender, linea, abrirCaja, O }
 }
 

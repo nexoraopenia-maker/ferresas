@@ -4,7 +4,7 @@ import { correr } from './teardown'
 import { randomUUID } from 'node:crypto'
 import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from '@/generated/prisma/client'
-import { crearSucursal, asignarSucursal } from './fixtures'
+import { crearSucursal, asignarSucursal, abrirTurno } from './fixtures'
 import { prisma } from '@/lib/prisma'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import {
@@ -50,6 +50,7 @@ async function main() {
   const ctx: TenantContext = {
     tenantId: t.id, userId: owner.id, role: 'OWNER', access: 'FULL', branchId: b.id,
   }
+  await abrirTurno(t.id, owner.id, b.id)
   const db = getTenantPrisma(ctx)
   const prod = await createProductExpress(db, ctx, createProductExpressSchema.parse({
     barcode: `corr${M}`, name: 'Cemento', salePrice: 11.8,
@@ -211,7 +212,11 @@ async function main() {
   const w2 = await prisma.warehouse.create({
     data: { tenantId: t.id, branchId: b2.id, code: 'W2', name: 'W2', isDefault: false },
   })
-  const ctx2: TenantContext = { ...ctx, branchId: b2.id }
+  // F6.8b: una persona tiene un solo turno abierto; la segunda sucursal la cobra otra persona con el suyo.
+  const owner2 = await prisma.user.create({ data: { tenantId: t.id, email: `owner2-${M}@x.com`.toLowerCase(), name: 'Dueño 2', role: 'OWNER' } })
+  await asignarSucursal(t.id, owner2.id, b2.id)
+  await abrirTurno(t.id, owner2.id, b2.id)
+  const ctx2: TenantContext = { ...ctx, userId: owner2.id, branchId: b2.id }
   const db2 = getTenantPrisma(ctx2)
   await createProductExpress(db2, ctx2, createProductExpressSchema.parse({
     barcode: `corr2${M}`, name: 'Fierro', salePrice: 11.8,

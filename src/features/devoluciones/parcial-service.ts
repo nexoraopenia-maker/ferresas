@@ -5,7 +5,7 @@ import { P2002_UNIQUE } from '@/lib/prisma-errors'
 import { exigir } from '@/lib/puede'
 import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
-import { bloquearTurno, cargarSucursalOperativa, serieDe } from '@/features/branches/queries'
+import { bloquearTurno, bloquearTurnoPropio, cargarSucursalOperativa, exigirTurnoPropio, serieDe, turnoPropioId } from '@/features/branches/queries'
 import { reducirCuentaEn } from '@/features/credito/credito-service'
 import { applyStockMovement } from '@/features/inventory/stock-service'
 import { emitirNotaCreditoParcialEn, prepararNotaCreditoParcial, type LineaNotaParcial } from '@/features/invoicing/service'
@@ -15,8 +15,7 @@ import {
   aDiezmilesimas, avisoAntiguedad, contadoRestante, deDiezmilesimas, planDeComprobanteParcial, repartirDeudaYDinero, repartirEnProporcion, resolverLineas, topeDevolvibleCent,
   type EstadoCuenta, type LineaResuelta, type LineaVendida, type PlanComprobanteParcial, type ReparteDeudaDinero,
 } from './parcial'
-import { efectivoDelCajon, necesitaCaja, pagadoNeto, validarReembolsos, type MedioPago, type PagadoNeto, type ReembolsoValido } from './reglas'
-import { turnoAbiertoDe } from './service'
+import { efectivoDelCajon, mueveDinero, necesitaCaja, pagadoNeto, validarReembolsos, type MedioPago, type PagadoNeto, type ReembolsoValido } from './reglas'
 
 /**
  * Devolver PRODUCTOS (parte de las líneas) de una venta COMPLETADA (F6.2a). Una sola transacción. Diseño: docs/F6.2-DISENO.md.
@@ -188,7 +187,7 @@ export async function devolverProductosVenta(db: TenantPrismaClient, ctx: Tenant
 
   // Fuera de la transacción: fallar rápido con el mensaje claro y dejar listo lo que no puede crearse dentro (contadores).
   const previa = await evaluar(db, input)
-  if (necesitaCaja(previa.reembolsos)) await turnoAbiertoDe(db, previa.venta.branchId)
+  if (mueveDinero(previa.reembolsos)) await exigirTurnoPropio(db, ctx, previa.venta.branchId, 'devolver dinero')
   const motivoNota = `Devolución parcial de la venta ${previa.venta.number}: ${input.reason}`.slice(0, 250)
   if (previa.planDoc.accion === 'EMITIR_NOTA') {
     await prepararNotaCreditoParcial(db, ctx, { saleId: input.saleId, reasonDescription: motivoNota, lineas: lineasParaNota(previa.venta, previa.lineas) })
@@ -220,9 +219,12 @@ export async function devolverProductosVenta(db: TenantPrismaClient, ctx: Tenant
       // 3. Caja: el efectivo sale del turno abierto AHORA (bloqueado); los reembolsos por otro medio anotan el turno abierto, si lo hay.
       let turnoId: string | null = null
       if (ev.reembolsos.length > 0) {
-        const abierto = await t.cashSession.findFirst({ where: { branchId: venta.branchId, status: 'ABIERTA' }, select: { id: true } })
-        if (abierto && (await bloquearTurno(t, abierto.id)).status === 'ABIERTA') turnoId = abierto.id
-        if (necesitaCaja(ev.reembolsos) && !turnoId) throw new BusinessError('CASH_REQUIRED', 'Para devolver dinero en efectivo desde el cajón hace falta un turno de caja abierto en la sucursal de la venta. Abre la caja, o elige devolverlo por otro medio.')
+        if (mueveDinero(ev.reembolsos)) {
+          turnoId = await bloquearTurnoPropio(t, ctx, venta.branchId, 'devolver dinero')
+        } else {
+          const propio = await turnoPropioId(t, ctx.userId, venta.branchId)
+          if (propio && (await bloquearTurno(t, propio)).status === 'ABIERTA') turnoId = propio
+        }
       }
 
       // 4. Comprobante: la nota parcial nace en ESTA transacción (o, si la venta queda devuelta del todo, se marca el comprobante de ensayo).
@@ -399,7 +401,7 @@ export async function diagnosticarDevolucionParcial(db: TenantPrismaClient, ctx:
   if (!venta) throw new BusinessError('NOT_FOUND', 'La venta no existe.')
   const zona = (await db.tenant.findFirstOrThrow({ select: { timezone: true } })).timezone
   const { restante, cuenta } = situacionDeDinero(venta)
-  const turno = await db.cashSession.findFirst({ where: { branchId: venta.branchId, status: 'ABIERTA' }, select: { id: true } })
+  const turno = await turnoPropioId(db, ctx.userId, venta.branchId)
   const doc = venta.taxDocuments[0]
   const lineas = venta.items.map((i): LineaDevolvible => {
     const v = lineaVendida(i), pend = v.vendidaM - v.yaDevueltaM

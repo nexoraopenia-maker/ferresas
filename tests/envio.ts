@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, abrirTurno } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -45,6 +45,7 @@ async function negocio(tag: string, opts: { demo?: boolean; fiscal?: boolean } =
     return { ctx, db: getTenantPrisma(ctx) }
   }
   const owner = await mk('OWNER')
+  await abrirTurno(t.id, owner.ctx.userId, branch.id)
   const vendedor = await mk('VENDEDOR')
   const kilo = await prisma.product.create({ data: { tenantId: t.id, sku: 'CLA', name: 'Clavos 3"', salePrice: 7.5, unitType: 'KILOGRAMO' } })
   const bolsa = await prisma.product.create({ data: { tenantId: t.id, sku: 'CEM', name: 'Cemento & Cía', salePrice: 32.9, unitType: 'BOLSA' } })

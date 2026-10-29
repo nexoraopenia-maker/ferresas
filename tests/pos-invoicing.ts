@@ -2,7 +2,7 @@ import './guard'
 import { completarRuc } from '../src/lib/documentos'
 const RUC_CLIENTE = completarRuc('2051234567')
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, abrirTurno } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from '@/generated/prisma/client'
@@ -45,6 +45,7 @@ async function main() {
   const ctx: TenantContext = {
     tenantId: t.id, userId: owner.id, role: 'OWNER', access: 'FULL', branchId: branch.id,
   }
+  await abrirTurno(t.id, owner.id, branch.id)
   const db = getTenantPrisma(ctx)
   const parse = (i: unknown) => registerSaleSchema.parse(i)
 

@@ -78,6 +78,7 @@ async function cuerpo() {
   check('>>> la compra 1 conserva el promedio de SU momento (5): el historial no cambia', num((await mov(m1.id)).costAfter) === 5)
 
   console.log('\nB) Venta: valora al promedio vigente y se enlaza con su venta')
+  await openCashSession(db(O), O, openCashSchema.parse({ openingAmount: 100 }))   // F6.8b: se cobra en el turno propio
   const venta = await registerSale(db(O), O, registerSaleSchema.parse({ warehouseId: W, items: [{ productId: P.id, quantity: 4, discount: 0 }], payments: [{ method: 'EFECTIVO', amount: 80 }], documentType: 'NOTA_VENTA', allowNegativeStock: false, idempotencyKey: randomUUID() }) as never)
   const mv = await ultimo({ source: 'VENTA' })
   const linea = await prisma.saleItem.findFirstOrThrow({ where: { saleId: venta.saleId, productId: P.id } })
@@ -85,7 +86,6 @@ async function cuerpo() {
   check('>>> y queda enlazada: referencia VENTA con el id de la venta (antes era «MANUAL» sin enlace)', mv.referenceType === 'VENTA' && mv.referenceId === venta.saleId)
 
   console.log('\nC) Devoluciones: al costo de la venta original')
-  await openCashSession(db(O), O, openCashSchema.parse({ openingAmount: 100 }))
   // El promedio cambia ENTRE la venta y la devolución (6 → 7): lo devuelto se valora al costo de la VENTA (6), no al promedio de hoy (7).
   await prisma.product.update({ where: { id: P.id }, data: { costPrice: 7 } })
   const anul = await anularOdevolverVenta(db(O), O, anularOdevolverVentaSchema.parse({ saleId: venta.saleId, kind: 'ANULACION', reason: 'Se equivocó el cajero', idempotencyKey: randomUUID() }))

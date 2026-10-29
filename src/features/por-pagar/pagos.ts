@@ -4,7 +4,7 @@ import { P2002_UNIQUE } from '@/lib/prisma-errors'
 import { exigir } from '@/lib/puede'
 import { requireBranch, type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
-import { bloquearTurno, turnoAbiertoId } from '@/features/branches/queries'
+import { bloquearTurno, bloquearTurnoPropio, exigirTurnoPropio } from '@/features/branches/queries'
 import { efectivoEsperado, totalesDelTurno } from '@/features/branches/cash-service'
 import { repartirAbono } from '@/features/credito/reglas'
 import { bloquearProveedor } from '@/features/proveedores/service'
@@ -101,9 +101,8 @@ export async function registrarPagoProveedor(db: TenantPrismaClient, ctx: Tenant
   const previo = await pagoPorClave(db, input.idempotencyKey)
   if (previo) return previo
 
-  const sinCaja = () => invalido(MENSAJE_PAGO_SIN_CAJA)
-  // Aviso rápido, sin bloquear nada; la comprobación de verdad se repite dentro de la transacción, con el turno bloqueado.
-  if (input.method === 'EFECTIVO' && !(await turnoAbiertoId(db, branchId))) throw sinCaja()
+  // Turno PROPIO obligatorio con cualquier medio (F6.8b). Aviso rápido, sin bloquear nada; la comprobación de verdad se repite dentro de la transacción, con el turno bloqueado.
+  await exigirTurnoPropio(db, ctx, branchId, 'registrar un pago a proveedor')
 
   try {
     return await db.$transaction(async (tx) => {
@@ -113,12 +112,9 @@ export async function registrarPagoProveedor(db: TenantPrismaClient, ctx: Tenant
       if (dup) return dup
       if (proveedor.deletedAt) throw noExiste('El proveedor')
 
-      // El turno se bloquea DESPUÉS del proveedor. Si su cierre ya empezó, esperamos y lo vemos CERRADO: un pago en efectivo no puede
-      // colarse en un turno cuyos totales ya se congelaron; uno por otro medio queda sin turno.
-      const candidato = await turnoAbiertoId(t, branchId)
-      const turno = candidato && (await bloquearTurno(t, candidato)).status === 'ABIERTA' ? candidato : null
+      // El turno propio se bloquea DESPUÉS del proveedor. Si su cierre ya empezó, esperamos y lo vemos CERRADO: ningún pago se cuela en un turno cuyos totales ya se congelaron.
+      const turno = await bloquearTurnoPropio(t, ctx, branchId, 'registrar un pago a proveedor')
       if (input.method === 'EFECTIVO') {
-        if (!turno) throw sinCaja()
         // Con el turno bloqueado nada más mueve el cajón: lo esperado es firme. La caja no puede quedar en negativo.
         const s = await t.cashSession.findFirstOrThrow({ where: { id: turno }, select: { openingAmount: true } })
         const esperado = efectivoEsperado(num(s.openingAmount), await totalesDelTurno(t, turno))

@@ -52,8 +52,9 @@ async function cuerpo() {
   const abrir = (f = 0) => openCashSession(db, O, openCashSchema.parse({ openingAmount: f }))
   const cerrar = (id: string) => closeCashSession(db, O, closeCashSchema.parse({ sessionId: id, countedAmount: 0 }))
 
-  const C = await cliente(); await fiar(5000, C.id)
+  const C = await cliente()
   const T1 = await abrir(0)
+  await fiar(5000, C.id)   // F6.8b: fiar exige el turno propio
   const abonos: Awaited<ReturnType<typeof abonar>>[] = []
   for (let i = 0; i < 6; i++) abonos.push(await abonar(C.id, 100))
   await cerrar(T1.id)
@@ -75,8 +76,8 @@ async function cuerpo() {
   console.log('\nC) Anular contra cerrar la caja donde se compensa')
   let coherente = true, det = '', entro = 0, rechazado = 0
   for (let i = 0; i < 4; i++) {
-    const cli = await cliente(); await fiar(300, cli.id)
-    const Tc = await abrir(0); const ab = await abonar(cli.id, 50); await cerrar(Tc.id)
+    const cli = await cliente(); const Tc = await abrir(0); await fiar(300, cli.id)
+    const ab = await abonar(cli.id, 50); await cerrar(Tc.id)
     const Th = await abrir(500)
     const res = await Promise.allSettled([anular(ab.paymentId), cerrar(Th.id)])
     const cerrada = await prisma.cashSession.findUniqueOrThrow({ where: { id: Th.id } })
@@ -93,8 +94,8 @@ async function cuerpo() {
   check('(informativo) hubo carreras reales: la anulación entró o se rechazó según quién llegó primero', entro + rechazado === 4)
 
   console.log('\nD) Anular contra un gasto manual en la misma caja')
-  const cli = await cliente(); await fiar(300, cli.id)
-  const Tx = await abrir(0); const abx = await abonar(cli.id, 70); await cerrar(Tx.id)
+  const cli = await cliente(); const Tx = await abrir(0); await fiar(300, cli.id)
+  const abx = await abonar(cli.id, 70); await cerrar(Tx.id)
   const Ty = await abrir(1000)
   const mix = await Promise.allSettled([
     anular(abx.paymentId),

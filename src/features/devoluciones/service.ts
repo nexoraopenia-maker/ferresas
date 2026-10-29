@@ -4,7 +4,7 @@ import { P2002_UNIQUE } from '@/lib/prisma-errors'
 import { exigir } from '@/lib/puede'
 import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
-import { bloquearTurno, cargarSucursalOperativa, serieDe } from '@/features/branches/queries'
+import { bloquearTurno, bloquearTurnoPropio, cargarSucursalOperativa, exigirTurnoPropio, serieDe, turnoPropioId } from '@/features/branches/queries'
 import { darDeBajaCuentaEn } from '@/features/credito/credito-service'
 import { applyStockMovement } from '@/features/inventory/stock-service'
 import { emitirNotaCreditoTotalEn, prepararNotaCreditoTotal } from '@/features/invoicing/service'
@@ -12,7 +12,7 @@ import { claimNextNumber, ensureCounter } from '@/features/pos/sale-service'
 import type { AnularOdevolverVentaInput } from './schemas'
 import { aDiezmilesimas, acumulado } from './parcial'
 import {
-  CODIGO_NOTA, ESTADO_FINAL, ETIQUETA_TIPO, efectivoDelCajon, necesitaCaja, pagadoNeto, planDeComprobante, planDeCredito, productosDadosDeBaja, validarReembolsos,
+  CODIGO_NOTA, ESTADO_FINAL, ETIQUETA_TIPO, efectivoDelCajon, mueveDinero, necesitaCaja, pagadoNeto, planDeComprobante, planDeCredito, productosDadosDeBaja, validarReembolsos,
   type PlanComprobante, type ReembolsoValido,
 } from './reglas'
 
@@ -122,12 +122,6 @@ async function evaluar(t: TenantPrismaClient, input: AnularOdevolverVentaInput):
   return { venta, reembolsos: r.reembolsos, paidNetCent: pagado.netoCent, planDoc, planCredito, lineasConStock: venta.items.filter((i) => i.product.trackStock) }
 }
 
-export async function turnoAbiertoDe(t: TenantPrismaClient, branchId: string): Promise<string> {
-  const turno = await t.cashSession.findFirst({ where: { branchId, status: 'ABIERTA' }, select: { id: true } })
-  if (!turno) throw new BusinessError('CASH_REQUIRED', 'Para devolver dinero en efectivo desde el cajón hace falta un turno de caja abierto en la sucursal de la venta. Abre la caja, o elige devolverlo por otro medio.')
-  return turno.id
-}
-
 function resultadoDe(r: {
   id: string; number: string; kind: 'ANULACION' | 'DEVOLUCION'; saleId: string; creditNote: { id: string; fullNumber: string } | null
   receivableVoidedAmount: Prisma.Decimal; sale: { number: string }; refunds: { mode: 'CAJA' | 'EXTERNO' | 'SIN_SALIDA'; method: string | null; amount: Prisma.Decimal }[]; _count: { items: number }
@@ -162,7 +156,7 @@ export async function anularOdevolverVenta(db: TenantPrismaClient, ctx: TenantCo
   // Antes de abrir la transacción: fallar rápido con el mensaje claro, y dejar listo lo que no puede crearse DENTRO de ella
   // (los contadores: crearlos dentro haría chocar a dos personas a la vez).
   const previa = await evaluar(db, input)
-  if (necesitaCaja(previa.reembolsos)) await turnoAbiertoDe(db, previa.venta.branchId)
+  if (mueveDinero(previa.reembolsos)) await exigirTurnoPropio(db, ctx, previa.venta.branchId, 'devolver dinero')
   const motivoNota = `${ETIQUETA_TIPO[input.kind]} de la venta ${previa.venta.number}: ${input.reason}`.slice(0, 250)
   if (previa.planDoc.accion === 'EMITIR_NOTA') await prepararNotaCreditoTotal(db, ctx, { saleId: input.saleId, reasonCode: previa.planDoc.codigo, reasonDescription: motivoNota })
   // El contador va al final: un rechazo anterior no deja nada creado.
@@ -201,9 +195,12 @@ export async function anularOdevolverVenta(db: TenantPrismaClient, ctx: TenantCo
       //    otro medio anotan el turno abierto, si lo hay, para que el informe del cierre los cuente; se bloquea por la misma razón.
       let turnoId: string | null = null
       if (ev.reembolsos.length > 0) {
-        const abierto = await t.cashSession.findFirst({ where: { branchId: venta.branchId, status: 'ABIERTA' }, select: { id: true } })
-        if (abierto && (await bloquearTurno(t, abierto.id)).status === 'ABIERTA') turnoId = abierto.id
-        if (necesitaCaja(ev.reembolsos) && !turnoId) throw new BusinessError('CASH_REQUIRED', 'Para devolver dinero en efectivo desde el cajón hace falta un turno de caja abierto en la sucursal de la venta. Abre la caja, o elige devolverlo por otro medio.')
+        if (mueveDinero(ev.reembolsos)) {
+          turnoId = await bloquearTurnoPropio(t, ctx, venta.branchId, 'devolver dinero')
+        } else {
+          const propio = await turnoPropioId(t, ctx.userId, venta.branchId)
+          if (propio && (await bloquearTurno(t, propio)).status === 'ABIERTA') turnoId = propio
+        }
       }
 
       // 4. Comprobante: la nota de crédito total nace en ESTA transacción (o la marca de ensayo).
@@ -325,7 +322,7 @@ export async function diagnosticarDevolucion(db: TenantPrismaClient, ctx: Tenant
   const vacio: DiagnosticoDevolucion = { puede: false, bloqueo: null, pagadoNeto: 0, reembolsos: [], hayTurnoAbierto: false, nota: null, comprobanteDeEnsayo: false, cuentaACancelar: 0 }
   try {
     const ev = await evaluar(db, { saleId, kind: 'DEVOLUCION', reason: 'diagnóstico', idempotencyKey: '00000000-0000-4000-8000-000000000000' })
-    const turno = await db.cashSession.findFirst({ where: { branchId: ev.venta.branchId, status: 'ABIERTA' }, select: { id: true } })
+    const turno = await turnoPropioId(db, ctx.userId, ev.venta.branchId)
     return {
       puede: true, bloqueo: null, pagadoNeto: ev.paidNetCent / 100, reembolsos: ev.reembolsos, hayTurnoAbierto: !!turno,
       nota: ev.planDoc.accion === 'EMITIR_NOTA' ? { comprobante: ev.venta.taxDocuments[0]!.fullNumber } : null,

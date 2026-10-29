@@ -16,6 +16,8 @@ export const openCashSchema = z.object({
    * arqueo le saldría sobrante por el importe del fondo.
    */
   openingAmount: dinero,
+  /** La caja en la que se trabaja (F6.8b). Opcional solo si la sucursal tiene una única caja. */
+  registerId: id.optional(),
   notes: z.string().trim().max(300).optional(),
 })
 

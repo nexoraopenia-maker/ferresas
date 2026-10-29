@@ -5,7 +5,7 @@ import { puede } from '@/lib/puede'
 import { requireBranch, type TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { compensarAbonoEn, type CompensacionDeAbono } from '@/features/branches/cash-movement-service'
-import { bloquearTurno, turnoAbiertoId } from '@/features/branches/queries'
+import { bloquearTurno, bloquearTurnoPropio, exigirTurnoPropio } from '@/features/branches/queries'
 import type { AnularAbonoInput, AnularCuentaInput, ConfigurarCreditoInput, DescartarRevisionInput, RegistrarAbonoInput } from './schemas'
 
 /**
@@ -228,9 +228,8 @@ export async function registrarAbono(db: TenantPrismaClient, ctx: TenantContext,
   const previo = await abonoPorClave(db, input.idempotencyKey)
   if (previo) return previo
 
-  const sinCaja = () => invalido('Abre la caja antes de cobrar un abono en efectivo: ese dinero tiene que entrar a un turno.')
-  // Aviso rápido, sin bloquear nada; la comprobación de verdad se repite dentro de la transacción, con el turno bloqueado.
-  if (input.method === 'EFECTIVO' && !(await turnoAbiertoId(db, branchId))) throw sinCaja()
+  // Turno PROPIO obligatorio con cualquier medio (F6.8b). Aviso rápido, sin bloquear nada; la comprobación de verdad se repite dentro de la transacción, con el turno bloqueado.
+  await exigirTurnoPropio(db, ctx, branchId, 'registrar un abono')
 
   try {
     return await db.$transaction(async (tx) => {
@@ -240,11 +239,8 @@ export async function registrarAbono(db: TenantPrismaClient, ctx: TenantContext,
       if (dup) return dup
       if (cliente.deletedAt) throw noExiste('El cliente')
 
-      // El turno se bloquea DESPUÉS del cliente. Si su cierre ya empezó, esperamos y lo vemos CERRADO: un abono en efectivo no
-      // puede colarse en un turno cuyos totales ya se congelaron; uno por otro medio queda sin turno.
-      const candidato = await turnoAbiertoId(t, branchId)
-      const turno = candidato && (await bloquearTurno(t, candidato)).status === 'ABIERTA' ? candidato : null
-      if (input.method === 'EFECTIVO' && !turno) throw sinCaja()
+      // El turno propio se bloquea DESPUÉS del cliente. Si su cierre ya empezó, esperamos y lo vemos CERRADO: ningún abono se cuela en un turno cuyos totales ya se congelaron.
+      const turno = await bloquearTurnoPropio(t, ctx, branchId, 'registrar un abono')
 
       const abiertas = await t.receivable.findMany({
         where: { customerId: input.customerId, status: 'ABIERTA' },
