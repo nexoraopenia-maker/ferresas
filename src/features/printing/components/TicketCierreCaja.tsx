@@ -1,5 +1,6 @@
 import { formatearFechaLocal } from '@/lib/fecha-local'
 import type { TicketCierre } from '../cierre-caja'
+import { ETIQUETA_METODO, METODOS_REPORTE } from '@/features/branches/cierre-desglose'
 
 /**
  * Ticket de cierre de turno en papel térmico de 80 mm (misma hoja `ticket.css`). Documento INTERNO de caja, no un comprobante. Muestra la
@@ -30,11 +31,24 @@ export function TicketCierreCaja({ ticket: c }: { ticket: TicketCierre }) {
       <div className="t-sep t-sep-doble" aria-hidden />
 
       <Par etiqueta="Sucursal" valor={c.sucursal} />
+      {c.caja && <Par etiqueta="Caja" valor={c.caja} />}
       <Par etiqueta="Abrió" valor={c.abrio} />
       <Par etiqueta="Desde" valor={formatearFechaLocal(c.abiertoEn, c.zonaHoraria, c.locale)} />
       {c.cerro && <Par etiqueta="Cerró" valor={c.cerro} />}
       <Par etiqueta="Hasta" valor={formatearFechaLocal(c.cerradoEn, c.zonaHoraria, c.locale)} />
       <Par etiqueta="Ventas" valor={`${c.ventasCantidad} · ${s(c.ventasTotal)}`} />
+
+      {c.desglose && (
+        <div data-ticket="por-medio">
+          <div className="t-sep" aria-hidden />
+          <p className="t-chico t-fuerte">Ventas por medio de pago</p>
+          {METODOS_REPORTE.filter((m) => c.desglose!.ventasPorMetodo[m].operaciones > 0).map((m) => (
+            <Par key={m} etiqueta={`${ETIQUETA_METODO[m]} (${c.desglose!.ventasPorMetodo[m].operaciones})`} valor={s(c.desglose!.ventasPorMetodo[m].monto)} />
+          ))}
+          {c.desglose.ventas.descuentos.total > 0 && <Par etiqueta="Descuentos otorgados" valor={s(c.desglose.ventas.descuentos.total)} />}
+          {c.desglose.ventas.anuladas.cantidad > 0 && <Par etiqueta={`Anuladas o devueltas (${c.desglose.ventas.anuladas.cantidad})`} valor={s(c.desglose.ventas.anuladas.monto)} />}
+        </div>
+      )}
 
       <div className="t-sep" aria-hidden />
 

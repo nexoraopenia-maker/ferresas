@@ -81,10 +81,12 @@ const fSinCaja = form({ hayTurnoAbierto: false })
 check('>>> reembolso en CAJA sin turno abierto: alerta clara y botón deshabilitado', fSinCaja.includes('data-devolucion="sin-caja"') && /disabled/.test(fSinCaja.slice(fSinCaja.indexOf('data-boton="confirmar-devolucion"') - 200, fSinCaja.indexOf('data-boton="confirmar-devolucion"') + 200)))
 check('con turno abierto no sale esa alerta', !f0.includes('data-devolucion="sin-caja"'))
 const fExt = form({ hayTurnoAbierto: false, reembolsosIniciales: [{ mode: 'EXTERNO', method: 'YAPE', amount: 118, reference: null }] })
-check('>>> reembolso EXTERNO sin turno abierto: permitido (sin alerta de caja)', !fExt.includes('data-devolucion="sin-caja"'))
+check('>>> F6.8c: un reembolso EXTERNO (Yape…) también mueve dinero: sin turno propio, alerta y botón deshabilitado', fExt.includes('data-devolucion="sin-caja"'))
+const fSin = form({ hayTurnoAbierto: false, reembolsosIniciales: [{ mode: 'SIN_SALIDA', method: null, amount: 118, reference: 'Vale de tienda acordado' }] })
+check('>>> y «sin salida de dinero» sí se permite sin turno (no mueve dinero)', !fSin.includes('data-devolucion="sin-caja"'))
 const fRo = form({ puedeOperar: false })
 check('cuenta en solo lectura: lo dice y no deja confirmar', fRo.includes('data-devolucion="solo-lectura"'))
-check('>>> confirmar exige CADA condición: permiso de escribir, caja, motivo, motivo de «sin salida», medio, casilla de confirmación', ['!puedeOperar', 'sinCaja', 'motivoCorto', 'faltaMotivoSinSalida', 'sinMedio', '!confirmo', 'pendiente'].every((c) => new RegExp(`const bloqueado = [^\\n]*${c.replace('!', '!')}`).test(fuente)) && /const motivoCorto = motivo\.trim\(\)\.length < 3/.test(fuente) && /const sinCaja = lineas\.some\(\(l\) => l\.mode === 'CAJA'\) && !hayTurnoAbierto/.test(fuente))
+check('>>> confirmar exige CADA condición: permiso de escribir, caja, motivo, motivo de «sin salida», medio, casilla de confirmación', ['!puedeOperar', 'sinCaja', 'motivoCorto', 'faltaMotivoSinSalida', 'sinMedio', '!confirmo', 'pendiente'].every((c) => new RegExp(`const bloqueado = [^\\n]*${c.replace('!', '!')}`).test(fuente)) && /const motivoCorto = motivo\.trim\(\)\.length < 3/.test(fuente) && /const sinCaja = lineas\.some\(\(l\) => l\.mode !== 'SIN_SALIDA'\) && !hayTurnoAbierto/.test(fuente))
 check('con deuda por cancelar lo anuncia', /deuda/i.test(form({ cuentaACancelar: 118, reembolsosIniciales: [] })))
 check('>>> la clave de idempotencia nace UNA vez al abrir el formulario (useState con crypto.randomUUID)', /useState\(\(\) => \(typeof crypto/.test(fuente) && fuente.includes('crypto.randomUUID()'))
 check('el formulario no envía los importes de las líneas al servidor como verdad: el servidor decide (llama a la acción)', fuente.includes("anularOdevolverVenta") && !/unitCost|costPrice/.test(fuente))
@@ -108,7 +110,7 @@ check('>>> la conciliación enlaza cada venta a /ventas/[id] (ya no a la lista d
 console.log('\nF) Caja: resumen del turno, cierre y ticket')
 const tk: TicketCierre = {
   numero: 'CC-20261027-ABC123', zonaHoraria: 'America/Lima', locale: 'es-PE', emisor: { nombre: 'Ferretería Demo', razonSocial: null, ruc: '20123456789', direccion: null, telefono: null },
-  sucursal: 'Central', abrio: 'Rosa', cerro: 'Rosa', abiertoEn: '2026-10-27T13:00:00.000Z', cerradoEn: '2026-10-27T23:00:00.000Z', fondoInicial: 100,
+  sucursal: 'Central', caja: null, desglose: null, abrio: 'Rosa', cerro: 'Rosa', abiertoEn: '2026-10-27T13:00:00.000Z', cerradoEn: '2026-10-27T23:00:00.000Z', fondoInicial: 100,
   ingresosManuales: 0, egresosManuales: 0, compensacionesEfectivo: 0, compensacionesOtrosMedios: 0, ventasCantidad: 4, ventasTotal: 800, cobradoEfectivo: 500, vueltos: 20, abonosEfectivo: 0, pagosProveedorEfectivo: 0, devolucionesCajon: 118, devolucionesOtrosMedios: 40,
   fiado: 0, abonosOtrosMedios: 0, pagosProveedorOtrosMedios: 0, esperado: 462, contado: 462, diferencia: 0, notas: null,
 }

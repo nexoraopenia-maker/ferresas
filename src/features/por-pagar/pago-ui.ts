@@ -83,7 +83,7 @@ export function previsualizarPagoUi(i: {
   if (deudaDestino <= 0) return { ...vacio(MENSAJE_PAGO_SIN_DEUDA), deudaDestino }
   if (monto === null) return { ...vacio(null), deudaDestino }
   if (Number.isNaN(monto)) return { ...vacio('Escribe un importe mayor que cero, con hasta 2 decimales.'), deudaDestino }
-  if (i.metodo === 'EFECTIVO' && i.cajaAbierta === false) return { ...vacio(MENSAJE_PAGO_SIN_CAJA), monto, deudaDestino }
+  if (i.cajaAbierta === false) return { ...vacio(MENSAJE_PAGO_SIN_CAJA), monto, deudaDestino }
 
   const { partes, sobrante } = repartirAbono(destino.map((x) => x.saldo), monto)
   const detalle = partes.map((p) => ({ id: destino[p.indice]!.id, compra: destino[p.indice]!.compra, monto: p.monto, saldoDespues: p.saldoDespues, pagada: p.pagada }))

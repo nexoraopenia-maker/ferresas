@@ -6,6 +6,7 @@ import { puede } from '@/lib/puede'
 import { topeDescuento } from '@/lib/descuentos'
 import { puedeVerVentas } from '@/features/ventas/permisos'
 import { listasParaVender } from '@/features/precios/service'
+import { turnoPropioId } from '@/features/branches/queries'
 
 export const dynamic = 'force-dynamic'
 
@@ -27,7 +28,7 @@ export default async function PosPage({
    * sucursal, el cajero se quedaría viendo fallar cada cobro sin entender
    * por qué.
    */
-  const [warehouse, tenant, listasPrecio] = await Promise.all([
+  const [warehouse, tenant, listasPrecio, turnoPropio] = await Promise.all([
     db.warehouse.findFirst({
       where: {
         isActive: true,
@@ -39,6 +40,7 @@ export default async function PosPage({
     }),
     db.tenant.findFirst({ select: { timezone: true } }),
     listasParaVender(db),
+    ctx.branchId ? turnoPropioId(db, ctx.userId, ctx.branchId) : Promise.resolve(null),
   ])
 
   return (
@@ -64,6 +66,7 @@ export default async function PosPage({
           puedeFiar={puede(ctx, 'credito.otorgar')}
           puedeVerVenta={puedeVerVentas(ctx)}
           listasPrecio={listasPrecio}
+          tieneTurno={turnoPropio !== null}
           topeDescuentoPct={topeDescuento(ctx)}
           // Solo un id sencillo: el servidor valida de nuevo al tomarlo.
           pedidoId={pedido && /^[\w-]{1,64}$/.test(pedido) ? pedido : undefined}

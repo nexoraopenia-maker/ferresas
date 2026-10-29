@@ -78,11 +78,14 @@ export function VistaPago({
                   className={`h-12 rounded-xl text-sm font-bold ${metodo === m.value ? 'bg-industrial-600 text-white' : 'border-2 border-hairline text-ink'}`}>{m.label}</button>
               ))}
             </div>
-            {metodo === 'EFECTIVO' && (
-              <p data-pago="aviso-efectivo" className={`rounded-xl px-3 py-2 text-sm font-semibold ${cajaAbierta === false ? 'bg-stock-low-soft text-stock-low' : 'bg-surface-sunken text-ink'}`} role={cajaAbierta === false ? 'alert' : undefined}>
-                {cajaAbierta === false
-                  ? 'No hay caja abierta en esta sucursal. Un pago en efectivo sale del cajón: abre la caja primero, o paga por transferencia.'
-                  : 'Un pago en efectivo sale del cajón y no puede superar el efectivo que debería haber en la caja.'}
+            {cajaAbierta === false && (
+              <p role="alert" data-pago="sin-caja" className="rounded-xl bg-stock-low-soft px-3 py-2 text-sm font-semibold text-stock-low">
+                No tienes tu turno de caja abierto: todo pago a proveedor, con cualquier medio, queda en tu turno. <a href="/caja" className="underline">Abre tu caja</a> y vuelve.
+              </p>
+            )}
+            {metodo === 'EFECTIVO' && cajaAbierta !== false && (
+              <p data-pago="aviso-efectivo" className="rounded-xl bg-surface-sunken px-3 py-2 text-sm font-semibold text-ink">
+                Un pago en efectivo sale del cajón y no puede superar el efectivo que debería haber en tu caja.
               </p>
             )}
             <label className="flex flex-col gap-1 text-sm font-semibold text-ink">Monto (S/)

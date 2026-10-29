@@ -4,16 +4,14 @@ import { currentCashSession, desgloseDeMovimientos } from '@/features/branches/c
 import { listarMovimientosDelTurno, puedeVerMovimientos } from '@/features/branches/cash-movement-service'
 import { puede } from '@/lib/puede'
 import { CashPanel } from '@/features/branches/components/CashPanel'
-import { CajaObligatoria } from '@/features/branches/components/CajaObligatoria'
+import { cajasDeSucursal } from '@/features/branches/cajas-service'
+import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * Turno de caja de la sucursal activa.
- *
- * Es por SUCURSAL y no por usuario: el cajón es físico y está en un local
- * concreto. Dos cajeros que se relevan comparten el mismo turno, y el arqueo
- * se hace sobre el cajón, no sobre quién cobró.
+ * Tu turno de caja (F6.8): cada persona abre y cierra EL SUYO en una de las cajas de la sucursal, y todo lo que mueve dinero (cobros, abonos, pagos, movimientos, devoluciones) queda en el turno
+ * de quien lo hace. Quien tiene `caja.arqueo` ve el último cierre de cualquiera; el resto, el suyo. El consolidado de todas las cajas está en /caja/consolidado (`caja.consolidado`).
  */
 export default async function CajaPage() {
   const ctx = await requireTenantContext()
@@ -31,11 +29,12 @@ export default async function CajaPage() {
     )
   }
 
-  const [turnoRaw, sucursal, ultimo, tenant] = await Promise.all([
+  const arqueo = puede(ctx, 'caja.arqueo')
+  const [turnoRaw, sucursal, ultimo, tenant, cajas, enOtra] = await Promise.all([
     currentCashSession(db, ctx),
     db.branch.findFirst({ where: { id: ctx.branchId }, select: { name: true } }),
     db.cashSession.findFirst({
-      where: { branchId: ctx.branchId, status: 'CERRADA' },
+      where: { branchId: ctx.branchId, status: 'CERRADA', ...(arqueo ? {} : { openedById: ctx.userId }) },
       orderBy: { closedAt: 'desc' },
       select: {
         id: true, openingAmount: true, countedAmount: true, expectedAmount: true,
@@ -45,13 +44,15 @@ export default async function CajaPage() {
         closedBy: { select: { name: true, email: true } },
       },
     }),
-    db.tenant.findFirst({ select: { timezone: true, cashRequired: true } }),
+    db.tenant.findFirst({ select: { timezone: true } }),
+    cajasDeSucursal(db, ctx, ctx.branchId),
+    db.cashSession.findFirst({ where: { openedById: ctx.userId, status: 'ABIERTA', branchId: { not: ctx.branchId } }, select: { branch: { select: { name: true } } } }),
   ])
 
   const abiertoPor = turnoRaw
     ? await db.cashSession.findFirst({
         where: { id: turnoRaw.id },
-        select: { openedBy: { select: { name: true, email: true } } },
+        select: { openedBy: { select: { name: true, email: true } }, register: { select: { name: true } } },
       })
     : null
 
@@ -68,8 +69,8 @@ export default async function CajaPage() {
         </p>
       </header>
 
-      {puede(ctx, 'sucursales.gestionar') && (
-        <CajaObligatoria inicial={tenant?.cashRequired ?? false} puedeOperar={ctx.access === 'FULL' || ctx.access === 'WARN'} />
+      {puede(ctx, 'caja.consolidado') && (
+        <p className="text-sm"><Link href="/caja/consolidado" data-caja="consolidado" className="font-semibold underline">Ver el consolidado del día (todas las cajas)</Link></p>
       )}
 
       <CashPanel
@@ -77,6 +78,8 @@ export default async function CajaPage() {
         zonaHoraria={tenant?.timezone ?? 'America/Lima'}
         puedeOperar={ctx.access === 'FULL' || ctx.access === 'WARN'}
         permisos={{ movimientos: puede(ctx, 'caja.movimientos'), ajuste: puede(ctx, 'caja.ajuste') }}
+        cajas={cajas}
+        turnoEnOtraSucursal={enOtra?.branch.name ?? null}
         turno={
           turnoRaw
             ? {
@@ -91,6 +94,7 @@ export default async function CajaPage() {
                 openedAt: turnoRaw.openedAt,
                 abiertoPor:
                   abiertoPor?.openedBy.name ?? abiertoPor?.openedBy.email ?? '—',
+                caja: abiertoPor?.register?.name ?? null,
               }
             : null
         }

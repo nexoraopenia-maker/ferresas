@@ -110,7 +110,8 @@ async function cuerpo() {
   const tk = await getTicketCierre(A.db(A.O), A.O, t1.id)
   check('>>> el ticket trae lo congelado: fondo 100, cobrado 300 (dos ventas), devoluciones del cajón 0 (la sacó ADMIN de SU caja), esperado 400, contado 400, cuadra', tk.fondoInicial === 100 && tk.cobradoEfectivo === 300 && tk.devolucionesCajon === 0 && tk.devolucionesOtrosMedios === 0 && tk.esperado === cierre.expectedAmount && tk.esperado === 400 && tk.contado === 400 && tk.diferencia === 0 && /^CC-\d{8}-[A-Z0-9]{6}$/.test(tk.numero))
   check('>>> el efectivo de esa devolución salió del turno de ADMIN (200)', Number((await prisma.saleReturnRefund.aggregate({ where: { cashSessionId: tAdmin, mode: 'CAJA' }, _sum: { amount: true } }))._sum.amount ?? 0) === 200)
-  check('>>> el ticket no contiene costos ni utilidad', !/cost|utilidad|margen/i.test(JSON.stringify(tk)))
+  // «bajoCosto» es la marca de las ventas bajo el piso (solo números de venta), no una cifra: se descarta del texto buscado.
+  check('>>> el ticket no contiene costos ni utilidad', !/cost|utilidad|margen/i.test(JSON.stringify(tk).replace(/bajoCosto/g, '')))
   check('(estable) la reimpresión es idéntica', JSON.stringify(await getTicketCierre(A.db(A.O), A.O, t1.id)) === JSON.stringify(tk))
   for (const [rol, esperado] of [['OWNER', null], ['ADMIN', null], ['CONTADOR', null], ['VENDEDOR', 'FORBIDDEN_ROLE'], ['ALMACENERO', 'FORBIDDEN_ROLE']] as const) {
     const c = A.u[rol]!

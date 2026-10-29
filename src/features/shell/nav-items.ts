@@ -202,7 +202,7 @@ export const NAV_ITEMS: NavItem[] = [
     short: 'Caja',
     // Billetes
     icon: 'M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Zm9 7a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z',
-    permisos: ['caja.abrir_cerrar', 'caja.arqueo'],
+    permisos: ['caja.abrir_cerrar', 'caja.arqueo', 'caja.consolidado'],
   },
   {
     href: '/mermas',

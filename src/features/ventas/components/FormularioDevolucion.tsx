@@ -46,7 +46,7 @@ export function FormularioDevolucion({ saleId, numero, total, pagadoNeto, reembo
   const [error, setError] = useState<string | null>(null)
   const [hecho, setHecho] = useState<ResultadoDevolucion | null>(null)
 
-  const sinCaja = lineas.some((l) => l.mode === 'CAJA') && !hayTurnoAbierto
+  const sinCaja = lineas.some((l) => l.mode !== 'SIN_SALIDA') && !hayTurnoAbierto
   const motivoCorto = motivo.trim().length < 3
   const faltaMotivoSinSalida = lineas.some((l) => l.mode === 'SIN_SALIDA' && (l.reference ?? '').trim().length < 3)
   const sinMedio = lineas.some((l) => l.mode === 'EXTERNO' && !l.method)
@@ -124,7 +124,7 @@ export function FormularioDevolucion({ saleId, numero, total, pagadoNeto, reembo
               {l.mode === 'SIN_SALIDA' && <input name={`ref-${i}`} value={l.reference ?? ''} onChange={(e) => cambiar(i, { reference: e.target.value })} maxLength={120} placeholder="Motivo: por qué no se devuelve dinero (obligatorio)" className={campo} />}
             </div>
           ))}
-          {sinCaja && <p role="alert" data-devolucion="sin-caja" className="rounded-lg bg-stock-low-soft px-3 py-2 font-semibold text-stock-low">Para sacar efectivo del cajón hace falta un turno de caja abierto en la sucursal de la venta. Abre la caja, o elige devolverlo por otro medio.</p>}
+          {sinCaja && <p role="alert" data-devolucion="sin-caja" className="rounded-lg bg-stock-low-soft px-3 py-2 font-semibold text-stock-low">Para devolver dinero hace falta que tengas tu propio turno de caja abierto en la sucursal de la venta (el efectivo sale de tu caja). Abre tu caja primero; si no se devuelve dinero, elige «sin salida de dinero».</p>}
           <p className="text-xs text-ink-muted">Suma de los reembolsos: {money(suma)}{suma === pagadoNeto ? ' — cuadra con lo pagado.' : ''}</p>
         </fieldset>
       )}

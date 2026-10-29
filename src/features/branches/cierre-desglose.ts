@@ -114,3 +114,51 @@ export function construirDesglose(e: EntradaDesglose): DesgloseCierre {
     movimientos: { ingresos, egresos, totalIngresos, totalEgresos },
   }
 }
+
+// ─── Suma de varios desgloses (consolidado) ────────────────────────────────────────────────────────
+
+const sumaLineas = (xs: readonly Record<MetodoReporte, LineaMetodo>[]): Record<MetodoReporte, LineaMetodo> => {
+  const r = vacio()
+  for (const x of xs) for (const m of METODOS_REPORTE) { r[m].operaciones += x[m].operaciones; r[m].monto = cent(r[m].monto + x[m].monto) }
+  return r
+}
+
+const sumaPorCategoria = (xs: readonly Record<string, number>[]): Record<string, number> => {
+  const r: Record<string, number> = {}
+  for (const x of xs) for (const [k, v] of Object.entries(x)) r[k] = cent((r[k] ?? 0) + v)
+  return r
+}
+
+/**
+ * La suma de los desgloses de varios turnos (el consolidado de una sucursal en el día). Los importes se suman en céntimos; las ventas «bajo costo» se unen por número
+ * (siguen siendo solo números de venta, nunca costos). Sin turnos devuelve un desglose en cero.
+ */
+export function sumarDesgloses(ds: readonly DesgloseCierre[]): DesgloseCierre {
+  return {
+    version: VERSION_DESGLOSE,
+    ventasPorMetodo: sumaLineas(ds.map((d) => d.ventasPorMetodo)),
+    cobradoNeto: cent(ds.reduce((s, d) => s + d.cobradoNeto, 0)),
+    vueltos: cent(ds.reduce((s, d) => s + d.vueltos, 0)),
+    ventas: {
+      cantidad: ds.reduce((s, d) => s + d.ventas.cantidad, 0),
+      total: cent(ds.reduce((s, d) => s + d.ventas.total, 0)),
+      descuentos: { total: cent(ds.reduce((s, d) => s + d.ventas.descuentos.total, 0)), ventasConDescuento: ds.reduce((s, d) => s + d.ventas.descuentos.ventasConDescuento, 0) },
+      anuladas: { cantidad: ds.reduce((s, d) => s + d.ventas.anuladas.cantidad, 0), monto: cent(ds.reduce((s, d) => s + d.ventas.anuladas.monto, 0)) },
+      bajoCosto: (() => { const v = [...new Set(ds.flatMap((d) => d.ventas.bajoCosto.ventas))].sort(); return { cantidad: v.length, ventas: v } })(),
+    },
+    devoluciones: {
+      porMetodo: sumaLineas(ds.map((d) => d.devoluciones.porMetodo)),
+      delCajon: cent(ds.reduce((s, d) => s + d.devoluciones.delCajon, 0)),
+      porOtroMedio: cent(ds.reduce((s, d) => s + d.devoluciones.porOtroMedio, 0)),
+      sinSalida: cent(ds.reduce((s, d) => s + d.devoluciones.sinSalida, 0)),
+    },
+    abonosPorMetodo: sumaLineas(ds.map((d) => d.abonosPorMetodo)),
+    pagosProveedorPorMetodo: sumaLineas(ds.map((d) => d.pagosProveedorPorMetodo)),
+    movimientos: {
+      ingresos: sumaPorCategoria(ds.map((d) => d.movimientos.ingresos)),
+      egresos: sumaPorCategoria(ds.map((d) => d.movimientos.egresos)),
+      totalIngresos: cent(ds.reduce((s, d) => s + d.movimientos.totalIngresos, 0)),
+      totalEgresos: cent(ds.reduce((s, d) => s + d.movimientos.totalEgresos, 0)),
+    },
+  }
+}

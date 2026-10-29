@@ -8,6 +8,7 @@ import { MovimientosCaja } from './MovimientosCaja'
 import type { PermisosDeCaja } from '../cash-movement-formulario'
 import type { FilaMovimiento } from '../cash-movement-service'
 import type { DesgloseMovimientos } from '../cash-service'
+import type { CajaDeSucursal } from '../cajas-service'
 
 const money = (n: number) =>
   `S/ ${new Intl.NumberFormat('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)}`
@@ -26,6 +27,8 @@ export interface TurnoAbierto {
   lista: FilaMovimiento[]
   openedAt: string
   abiertoPor: string
+  /** La caja en la que trabaja (F6.8). Nula en turnos anteriores a las cajas. */
+  caja?: string | null
 }
 
 export interface CierreReciente {
@@ -71,6 +74,8 @@ export function CashPanel({
   puedeOperar,
   zonaHoraria,
   permisos = { movimientos: false, ajuste: false },
+  cajas = [],
+  turnoEnOtraSucursal = null,
 }: {
   turno: TurnoAbierto | null
   ultimoCierre: CierreReciente | null
@@ -87,6 +92,10 @@ export function CashPanel({
   zonaHoraria: string
   /** Qué movimientos puede registrar esta persona (la acción vuelve a comprobarlo). */
   permisos?: PermisosDeCaja
+  /** Las cajas vivas de la sucursal con quién tiene abierta cada una (F6.8c): se elige en cuál se trabaja. */
+  cajas?: CajaDeSucursal[]
+  /** Nombre de la otra sucursal donde esta persona ya tiene un turno abierto: una persona tiene un solo turno. */
+  turnoEnOtraSucursal?: string | null
 }) {
   const router = useRouter()
   const [fondo, setFondo] = useState('')
@@ -95,6 +104,8 @@ export function CashPanel({
   const [error, setError] = useState<string | null>(null)
   const [resultado, setResultado] = useState<CierreReciente | null>(null)
   const [pending, startTransition] = useTransition()
+  const libres = cajas.filter((c) => !c.turnoAbierto)
+  const [cajaElegida, setCajaElegida] = useState<string>(libres[0]?.id ?? '')
 
   const abrir = () => {
     setError(null)
@@ -103,8 +114,12 @@ export function CashPanel({
       setError('Escribe el fondo de cambio con el que arrancas. Si es cero, pon 0.')
       return
     }
+    if (cajas.length > 1 && !libres.some((c) => c.id === cajaElegida)) {
+      setError('Elige la caja en la que vas a trabajar.')
+      return
+    }
     startTransition(async () => {
-      const res = await openCash({ openingAmount: monto, notes: notas.trim() || undefined })
+      const res = await openCash({ openingAmount: monto, notes: notas.trim() || undefined, ...(cajas.length > 1 ? { registerId: cajaElegida } : {}) })
       if (!res.ok) { setError(res.message); return }
       setFondo(''); setNotas('')
       router.refresh()
@@ -195,8 +210,12 @@ export function CashPanel({
           data-cierre="imprimir"
           className="mt-4 flex h-touch w-full items-center justify-center rounded-xl border border-graphite-300 text-sm font-semibold"
         >
-          Imprimir ticket de cierre
+          Imprimir ticket de cierre (80 mm)
         </a>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <a href={`/cierre-caja/${resultado.id}`} target="_blank" rel="noopener" data-cierre="a4" className="flex h-touch items-center justify-center rounded-xl border border-graphite-300 text-sm font-semibold">Cierre en A4</a>
+          <a href={`/api/caja/cierre/${resultado.id}`} data-cierre="csv" className="flex h-touch items-center justify-center rounded-xl border border-graphite-300 text-sm font-semibold">Descargar CSV</a>
+        </div>
 
         <button
           type="button"
@@ -219,7 +238,7 @@ export function CashPanel({
               <p className="text-xs font-semibold uppercase tracking-wide text-stock-ok">
                 Caja abierta
               </p>
-              <h2 className="text-lg font-bold text-ink">{sucursal}</h2>
+              <h2 className="text-lg font-bold text-ink">{sucursal}{turno.caja ? ` · ${turno.caja}` : ''}</h2>
             </div>
             <span className="rounded-full bg-stock-ok-soft px-3 py-1 text-xs font-bold text-stock-ok">
               En curso
@@ -299,10 +318,32 @@ export function CashPanel({
           Caja cerrada
         </p>
         <h2 className="text-lg font-bold text-ink">{sucursal}</h2>
-        <p className="mt-2 text-sm text-ink-muted">
-          Puedes vender sin abrir caja, pero esas ventas no entrarán en ningún
-          arqueo. Si llevas control del cajón, abre el turno antes de empezar.
+        <p className="mt-2 text-sm text-ink-muted" data-caja="obligatoria">
+          Para cobrar, registrar abonos, pagar a proveedores o mover dinero necesitas <b>tu propio turno de caja abierto</b>: todo lo que hagas queda en tu turno y en tu arqueo.
         </p>
+
+        {turnoEnOtraSucursal && (
+          <p role="alert" data-caja="turno-en-otra-sucursal" className="mt-3 rounded-xl bg-stock-low-soft px-3 py-2 text-sm font-semibold text-stock-low">
+            Ya tienes un turno abierto en {turnoEnOtraSucursal}. Ciérralo allí para abrir uno en esta sucursal: una persona tiene un solo turno.
+          </p>
+        )}
+
+        {cajas.length > 1 && (
+          <fieldset className="mt-4" data-caja="selector">
+            <legend className="text-sm font-medium text-ink-muted">Caja en la que vas a trabajar</legend>
+            <div className="mt-1 flex flex-col gap-2">
+              {cajas.map((c) => (
+                <label key={c.id} className={`flex items-center gap-3 rounded-xl border-2 px-3 py-2 ${c.turnoAbierto ? 'border-hairline opacity-60' : cajaElegida === c.id ? 'border-industrial-600' : 'border-hairline'}`}>
+                  <input type="radio" name="caja" value={c.id} checked={cajaElegida === c.id} disabled={!!c.turnoAbierto} onChange={() => setCajaElegida(c.id)} />
+                  <span className="font-semibold text-ink">{c.name}</span>
+                  {c.turnoAbierto && <span className="ml-auto text-xs text-ink-muted">Ocupada por {c.turnoAbierto.abiertoPor}</span>}
+                </label>
+              ))}
+            </div>
+            {libres.length === 0 && <p className="mt-2 text-sm font-semibold text-stock-low">Todas las cajas de la sucursal están ocupadas. Pide que cierren una o que un administrador cree otra.</p>}
+          </fieldset>
+        )}
+        {cajas.length === 1 && <p className="mt-3 text-sm text-ink-muted" data-caja="unica">Caja: <b>{cajas[0]!.name}</b>{cajas[0]!.turnoAbierto ? ` (ocupada por ${cajas[0]!.turnoAbierto.abiertoPor})` : ''}</p>}
 
         <label className="mt-4 flex flex-col gap-1">
           <span className="text-sm font-medium text-ink-muted">Fondo de cambio</span>
@@ -333,7 +374,7 @@ export function CashPanel({
         <button
           type="button"
           onClick={abrir}
-          disabled={pending || !puedeOperar}
+          disabled={pending || !puedeOperar || !!turnoEnOtraSucursal || (cajas.length > 0 && libres.length === 0)}
           className="mt-4 h-touch-xl w-full rounded-xl bg-industrial-600 text-lg font-bold text-white disabled:opacity-40"
         >
           {pending ? 'Abriendo…' : 'Abrir caja'}
@@ -374,6 +415,12 @@ export function CashPanel({
             <a href={`/imprimir/cierre-caja/${ultimoCierre.id}`} target="_blank" rel="noopener" data-cierre="imprimir-ultimo" className="mt-3 inline-block text-sm font-semibold underline">
               Imprimir ticket de cierre
             </a>
+          )}
+          {puedeImprimirUltimoCierre && (
+            <p className="mt-2 flex gap-4 text-sm font-semibold">
+              <a href={`/cierre-caja/${ultimoCierre.id}`} target="_blank" rel="noopener" data-cierre="a4-ultimo" className="underline">A4</a>
+              <a href={`/api/caja/cierre/${ultimoCierre.id}`} data-cierre="csv-ultimo" className="underline">CSV</a>
+            </p>
           )}
         </div>
       )}

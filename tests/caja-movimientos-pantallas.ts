@@ -106,7 +106,7 @@ check('>>> el resultado recién cerrado también lleva el desglose', fuenteCp.in
 console.log('\nD) El ticket de cierre')
 const tk: TicketCierre = {
   numero: 'CC-20261028-ABC123', zonaHoraria: 'America/Lima', locale: 'es-PE',
-  emisor: { nombre: 'Ferretería Demo', razonSocial: null, ruc: '20123456789', direccion: null, telefono: null }, sucursal: 'Central', abrio: 'Rosa', cerro: 'Rosa',
+  emisor: { nombre: 'Ferretería Demo', razonSocial: null, ruc: '20123456789', direccion: null, telefono: null }, sucursal: 'Central', caja: null, desglose: null, abrio: 'Rosa', cerro: 'Rosa',
   abiertoEn: '2026-10-28T13:00:00.000Z', cerradoEn: '2026-10-28T23:00:00.000Z', fondoInicial: 1000, ventasCantidad: 0, ventasTotal: 0, cobradoEfectivo: 0, vueltos: 0, abonosEfectivo: 0,
   pagosProveedorEfectivo: 0, devolucionesCajon: 0, devolucionesOtrosMedios: 0, ingresosManuales: 200, egresosManuales: 300, compensacionesEfectivo: 15, compensacionesOtrosMedios: 7,
   fiado: 0, abonosOtrosMedios: 0, pagosProveedorOtrosMedios: 0, esperado: 885, contado: 885, diferencia: 0, notas: null,

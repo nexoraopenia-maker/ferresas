@@ -2,11 +2,12 @@ import './guard'
 import { correr } from './teardown'
 import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
 import { randomUUID } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
 import { registerSale } from '../src/features/pos/sale-service'
 import { registerSaleSchema } from '../src/features/pos/schemas'
-import { closeCashSession, configurarCajaObligatoria, currentCashSession, openCashSession } from '../src/features/branches/cash-service'
+import { closeCashSession, currentCashSession, openCashSession } from '../src/features/branches/cash-service'
 import { closeCashSchema, openCashSchema } from '../src/features/branches/cash-schemas'
 import type { Role } from '../src/generated/prisma/enums'
 import type { TenantContext } from '../src/lib/tenant-context'
@@ -55,16 +56,11 @@ async function main() {
   check('>>> sin la política, cobrar sin turno propio se rechaza con CASH_REQUIRED, en efectivo o por Yape',
     await code(A.vender(A.cajero, 'EFECTIVO')) === 'CASH_REQUIRED' && await code(A.vender(A.cajero, 'YAPE')) === 'CASH_REQUIRED')
 
-  console.log('\n3) Solo la administración decide')
-  check('>>> el CAJERO no puede activarla', await code(configurarCajaObligatoria(A.cajero.db, A.cajero.ctx, true)) === 'FORBIDDEN_ROLE')
-  await configurarCajaObligatoria(A.owner.db, A.owner.ctx, true)
-  check('el dueño la activa', (await prisma.tenant.findUniqueOrThrow({ where: { id: A.t.id } })).cashRequired)
-  check('queda auditada con el valor anterior',
-    JSON.stringify((await prisma.auditLog.findFirst({ where: { tenantId: A.t.id, action: 'caja.obligatoria' } }))?.before).includes('false'))
-  await configurarCajaObligatoria(A.owner.db, A.owner.ctx, true)
-  check('repetirla no duplica la auditoría', (await prisma.auditLog.count({ where: { tenantId: A.t.id, action: 'caja.obligatoria' } })) === 1)
+  console.log('\n3) F6.8c: ya no hay interruptor')
+  check('>>> el ajuste «caja obligatoria» se retiró: no hay servicio, acción de servidor ni componente que lo cambie', !existsSync('src/features/branches/components/CajaObligatoria.tsx') && !/configurarCajaObligatoria|setCajaObligatoria/.test(readFileSync('src/features/branches/cash-service.ts', 'utf8') + readFileSync('src/features/branches/actions.ts', 'utf8')))
+  check('>>> y la pantalla de Caja ya no lo ofrece ni lo lee', !/CajaObligatoria|cashRequired/.test(readFileSync('src/app/(dashboard)/caja/page.tsx', 'utf8')))
 
-  console.log('\n4) Con la política activa o no, lo mismo')
+  console.log('\n4) Siempre obligatorio')
   const antes = Number((await prisma.stock.findFirstOrThrow({ where: { productId: A.prod.id } })).quantity)
   check('>>> cobrar sin turno propio se rechaza (también con la política activa)', await code(A.vender(A.cajero, 'EFECTIVO')) === 'CASH_REQUIRED')
   check('>>> y no descontó stock', Number((await prisma.stock.findFirstOrThrow({ where: { productId: A.prod.id } })).quantity) === antes)
@@ -80,8 +76,8 @@ async function main() {
 
   console.log('\n5) Es por persona y por negocio')
   check('>>> el otro negocio tampoco cobra sin turno', await code(B.vender(B.cajero, 'EFECTIVO')) === 'CASH_REQUIRED')
-  await configurarCajaObligatoria(A.owner.db, A.owner.ctx, false)
-  check('>>> desactivar el ajuste no devuelve el comportamiento anterior: el turno propio sigue siendo obligatorio', await code(A.vender(A.cajero, 'EFECTIVO')) === 'CASH_REQUIRED')
+  await prisma.tenant.update({ where: { id: A.t.id }, data: { cashRequired: false } })
+  check('>>> aunque la columna heredada diga «no», el turno propio sigue siendo obligatorio', await code(A.vender(A.cajero, 'EFECTIVO')) === 'CASH_REQUIRED')
 
   await prisma.tenant.deleteMany({ where: { id: { in: [A.t.id, B.t.id] } } })
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)

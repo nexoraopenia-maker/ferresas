@@ -467,36 +467,3 @@ export async function currentCashSession(
     movimientos: await desgloseDeMovimientos(db, s.id),
   }
 }
-
-/**
- * Activa o desactiva «caja obligatoria» para todo el negocio.
- *
- * Es política del negocio, no del cajero: la decide quien administra
- * sucursales. Queda auditado con el valor anterior.
- */
-export async function configurarCajaObligatoria(
-  db: TenantPrismaClient,
-  ctx: TenantContext,
-  activo: boolean,
-): Promise<void> {
-  exigir(ctx, 'sucursales.gestionar')
-  const antes = await db.tenant.findFirstOrThrow({ select: { id: true, cashRequired: true } })
-  if (antes.cashRequired === activo) return
-  await db.$transaction(async (tx) => {
-    const t = tx as unknown as TenantPrismaClient
-    await t.tenant.update({ where: { id: antes.id }, data: { cashRequired: activo } })
-    await t.auditLog.create({
-      data: {
-        tenantId: ctx.tenantId,
-        actorId: ctx.userId,
-        actorRole: ctx.role,
-        action: 'caja.obligatoria',
-        entityType: 'Tenant',
-        entityId: antes.id,
-        before: { cashRequired: antes.cashRequired },
-        after: { cashRequired: activo },
-        impersonationId: ctx.impersonationId ?? null,
-      },
-    })
-  })
-}

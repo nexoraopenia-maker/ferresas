@@ -77,9 +77,9 @@ export function VistaAbono({
                   className={`h-12 rounded-xl text-sm font-bold ${metodo === m.value ? 'bg-industrial-600 text-white' : 'border-2 border-hairline text-ink'}`}>{m.label}</button>
               ))}
             </div>
-            {metodo === 'EFECTIVO' && cajaAbierta === false && (
+            {cajaAbierta === false && (
               <p role="alert" data-abono="sin-caja" className="rounded-xl bg-stock-low-soft px-3 py-2 text-sm font-semibold text-stock-low">
-                No hay caja abierta en esta sucursal. Un abono en efectivo entra al cajón: abre la caja primero.
+                No tienes tu turno de caja abierto: todo abono, con cualquier medio, entra a tu turno. <a href="/caja" className="underline">Abre tu caja</a> y vuelve.
               </p>
             )}
             <label className="flex flex-col gap-1 text-sm font-semibold text-ink">Monto (S/)

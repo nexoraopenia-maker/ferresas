@@ -27,7 +27,6 @@ export const ACCIONES: Readonly<Record<string, { categoria: Categoria; etiqueta:
   'venta.anulada': { categoria: V, etiqueta: 'Venta anulada' },
   'venta.devuelta': { categoria: V, etiqueta: 'Venta devuelta' },
   'venta.devuelta_parcial': { categoria: V, etiqueta: 'Devolución parcial de una venta' },
-  'caja.obligatoria': { categoria: V, etiqueta: 'Cambió la obligación de abrir caja' },
   'pedido.cancelar': { categoria: V, etiqueta: 'Pedido cancelado' },
   'pedido.soltar': { categoria: V, etiqueta: 'Pedido liberado' },
   'descuento.tope': { categoria: V, etiqueta: 'Cambió el tope de descuento' },

@@ -56,6 +56,9 @@ const money = (n: number) => `S/ ${n.toFixed(2)}`
  * del escáner, encadenado a la búsqueda en el servidor, es lo que evita que
  * un código delante de la cámara añada veinte unidades.
  */
+/** El mismo mensaje que el servidor da con `CASH_REQUIRED` al cobrar sin turno propio. */
+export const MENSAJE_SIN_TURNO = 'Para cobrar hace falta que tengas tu propio turno de caja abierto. Abre tu caja primero.'
+
 export function PosTerminal({
   warehouseName,
   zonaHoraria,
@@ -66,6 +69,7 @@ export function PosTerminal({
   puedeFiar = false,
   puedeVerVenta = false,
   listasPrecio = [],
+  tieneTurno = true,
 }: {
   warehouseName: string
   /** Zona del negocio: ver la nota en CashPanel. */
@@ -84,6 +88,8 @@ export function PosTerminal({
   puedeVerVenta?: boolean
   /** Las listas de precio que se pueden elegir (F6.7c). Vacío = el negocio no usa listas y el selector no aparece. */
   listasPrecio?: { id: string; name: string }[]
+  /** Tiene SU turno de caja abierto en esta sucursal (F6.8c). Sin él no se cobra: el aviso sale ANTES de armar el cobro, no al darle a «Cobrar». */
+  tieneTurno?: boolean
 }) {
   const [carrito, setCarrito] = useState<LineaCarrito[]>([])
   // La lista de precios del carrito (F6.7c): `null` = Base. Se elige a mano o llega con el cliente que la tiene por defecto.
@@ -399,6 +405,7 @@ export function PosTerminal({
 
   const cobrar = () => {
     if (carrito.length === 0) return
+    if (!tieneTurno) { setError(MENSAJE_SIN_TURNO); return }
     if (!enLinea) { setError(MENSAJE_SIN_RED); return }
     setError(null)
     idemRef.current ??= crypto.randomUUID()
@@ -552,6 +559,12 @@ export function PosTerminal({
       {/* Avisos a ANCHO COMPLETO sobre las dos columnas.
           Sin `col-span-2` cada uno ocuparía una celda de la rejilla y
           desplazaría el carrito a una tercera fila. */}
+      {puedeCobrar && !tieneTurno && (
+        <div role="alert" data-pos="sin-turno" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-stock-low bg-stock-low-soft p-4 lg:col-span-2">
+          <p className="text-sm font-semibold text-stock-low">{MENSAJE_SIN_TURNO}</p>
+          <Link href="/caja" className="rounded-xl bg-stock-low px-4 py-2 text-sm font-bold text-white">Abrir mi caja</Link>
+        </div>
+      )}
       {pedidoEnviado && (
         <div className="rounded-2xl border-2 border-industrial-600 bg-industrial-50 p-4 lg:col-span-2 dark:bg-industrial-950">
           <p className="font-bold text-industrial-700 dark:text-industrial-300">Pedido enviado a caja</p>
@@ -978,7 +991,7 @@ export function PosTerminal({
               {puedeCobrar && <button
                 type="button"
                 onClick={cobrar}
-                disabled={pendiente || !enLinea || carrito.some((l) => l.quantity <= 0) || (dividir && estadoPagos.estado !== 'LISTO')}
+                disabled={pendiente || !enLinea || !tieneTurno || carrito.some((l) => l.quantity <= 0) || (dividir && estadoPagos.estado !== 'LISTO')}
                 className="h-16 min-w-0 flex-1 rounded-2xl bg-industrial-600 text-xl font-bold text-white shadow-md transition active:scale-95 disabled:opacity-40 lg:order-first lg:basis-full"
               >
                 {pendiente ? 'Registrando…' : `Cobrar ${money(totales.total)}`}

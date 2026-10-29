@@ -22,7 +22,7 @@ import {
   deleteBranch as runDelete, updateBranch as runUpdate,
 } from './branch-service'
 import {
-  closeCashSession as runClose, configurarCajaObligatoria as runCajaObligatoria,
+  closeCashSession as runClose,
   currentCashSession as runCurrent, openCashSession as runOpen,
 } from './cash-service'
 import {
@@ -302,17 +302,5 @@ export async function searchForTransfer(q: string, fromWarehouseId: string) {
         disponible: Number(p.stocks[0]?.quantity ?? 0),
       })),
     }
-  })
-}
-
-/** Política del negocio: exigir un turno de caja abierto para cobrar en efectivo. */
-export async function setCajaObligatoria(activo: boolean) {
-  if (typeof activo !== 'boolean') {
-    return { ok: false as const, code: 'VALIDATION' as const, message: 'Valor no válido.' }
-  }
-  return withTenant('setCajaObligatoria', async (db, ctx) => {
-    await runCajaObligatoria(db, ctx, activo)
-    revalidatePath('/caja')
-    return { ok: true as const, data: null }
   })
 }

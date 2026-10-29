@@ -56,7 +56,7 @@ export function FormularioDevolucionParcial({ saleId, numero, diagnostico: d, pu
     return { original: x.method, mode, method: mode === 'CAJA' ? 'EFECTIVO' : mode === 'EXTERNO' ? (a.method ?? (x.method === 'EFECTIVO' ? 'YAPE' : x.method)) : null, amount: x.cent / 100, reference: a.reference ?? '' }
   })), [calc, ajustes])
 
-  const sinCaja = reembolsos.some((r) => r.mode === 'CAJA') && !d.hayTurnoAbierto
+  const sinCaja = reembolsos.some((r) => r.mode !== 'SIN_SALIDA') && !d.hayTurnoAbierto
   const faltaMotivoSinSalida = reembolsos.some((r) => r.mode === 'SIN_SALIDA' && r.reference.trim().length < 3)
   const bloqueado = !sePuedeEnviar({ puedeOperar, calculoOk: calc.estado === 'OK', sinCaja, faltaMotivoSinSalida, motivo, confirmo, pendiente })
   const cambiarPedido = (i: number, cambio: Partial<PedidoPantalla>) => setPedidos((ps) => ps.map((p, k) => (k === i ? { ...p, ...cambio } : p)))
@@ -197,7 +197,7 @@ export function FormularioDevolucionParcial({ saleId, numero, diagnostico: d, pu
               {r.mode === 'SIN_SALIDA' && <input name={`ref-${r.original}`} value={r.reference} onChange={(e) => ajustar(r.original, { reference: e.target.value })} maxLength={120} placeholder="Motivo: por qué no se devuelve dinero (obligatorio)" className={campo} />}
             </div>
           ))}
-          {sinCaja && <p role="alert" data-devolucion="sin-caja" className="rounded-lg bg-stock-low-soft px-3 py-2 font-semibold text-stock-low">Para sacar efectivo del cajón hace falta un turno de caja abierto en la sucursal de la venta. Abre la caja, o elige devolverlo por otro medio.</p>}
+          {sinCaja && <p role="alert" data-devolucion="sin-caja" className="rounded-lg bg-stock-low-soft px-3 py-2 font-semibold text-stock-low">Para devolver dinero hace falta que tengas tu propio turno de caja abierto en la sucursal de la venta (el efectivo sale de tu caja). Abre tu caja primero; si no se devuelve dinero, elige «sin salida de dinero».</p>}
         </fieldset>
       )}
 
