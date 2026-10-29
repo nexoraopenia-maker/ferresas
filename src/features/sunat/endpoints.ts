@@ -7,6 +7,8 @@
  */
 export const SUNAT_BETA_BILL = 'https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService'
 export const SUNAT_PRODUCCION_BILL = 'https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService'
+/** ⚠️ Servicio de consulta de CDR en BETA: de una biblioteca de terceros (NO de SUNAT) y sin confirmar en BETA real. Es otra aplicación que el envío (`ol-it-wsconscpegem`, no `ol-ti-itcpfegem-beta`). */
+export const SUNAT_BETA_CONSULTA = 'https://e-beta.sunat.gob.pe/ol-it-wsconscpegem/billConsultService'
 export const SUNAT_PRODUCCION_CONSULTA = 'https://e-factura.sunat.gob.pe/ol-it-wsconscpegem/billConsultService'
 
 export type TipoEndpointSunat = 'beta' | 'produccion' | 'falso'
@@ -54,5 +56,6 @@ export function evaluarEndpointSunat(url: string | undefined | null, env: Record
 /** URL del servicio de consulta de CDR a partir de la de envío. */
 export function urlConsulta(urlBill: string): string {
   if (urlBill === SUNAT_PRODUCCION_BILL) return SUNAT_PRODUCCION_CONSULTA
+  if (urlBill === SUNAT_BETA_BILL) return SUNAT_BETA_CONSULTA
   return urlBill.replace(/\/billService$/, '/billConsultService')
 }

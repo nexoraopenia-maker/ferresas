@@ -41,7 +41,7 @@ export class EndpointNoPermitido extends Error {
 const TIMEOUT_MS = 15_000
 const MAX_RESPUESTA = 1024 * 1024
 
-async function llamar(url: string, sobre: string, d: DepsCliente): Promise<{ estado: number; cuerpo: string } | { transitorio: string }> {
+async function llamar(url: string, sobre: string, d: DepsCliente, accion = ''): Promise<{ estado: number; cuerpo: string } | { transitorio: string }> {
   const v = evaluarEndpointSunat(url, d.env)
   if (!v.ok) throw new EndpointNoPermitido(v.motivo)
   const ctl = new AbortController()
@@ -49,7 +49,7 @@ async function llamar(url: string, sobre: string, d: DepsCliente): Promise<{ est
   try {
     const r = await (d.fetch ?? fetch)(url, {
       method: 'POST', redirect: 'manual', signal: ctl.signal,
-      headers: { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: '' },
+      headers: { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: accion },
       body: sobre,
     })
     // El tope se aplica MIENTRAS se lee: una respuesta enorme no se carga entera en memoria para luego rechazarla.
@@ -112,7 +112,8 @@ export async function consultarCdr(
   urlBill: string, cred: CredencialesSol, ref: { tipo: string; serie: string; numero: number }, d: DepsCliente = {},
 ): Promise<ResultadoSunat> {
   const sobre = sobreGetStatusCdr(`${cred.ruc}${cred.usuarioSol}`, cred.claveSol, { ruc: cred.ruc, tipo: ref.tipo, serie: ref.serie, numero: ref.numero })
-  return clasificarCdr(await llamar(urlConsulta(urlBill), sobre, d))
+  // ⚠️ SOAPAction `urn:getStatusCdr` y la URL de consulta salen de ejemplos de terceros, no de SUNAT (docs/SUNAT-SUPUESTOS.md #35).
+  return clasificarCdr(await llamar(urlConsulta(urlBill), sobre, d, 'urn:getStatusCdr'))
 }
 
 /** Resumen diario / comunicación de baja: devuelve un ticket (fase 1B.5). */

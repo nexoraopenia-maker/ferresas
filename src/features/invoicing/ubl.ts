@@ -211,6 +211,9 @@ export function construirXmlUbl(c: ComprobanteFiscal): string {
       : `<cbc:InvoiceTypeCode listAgencyName="PE:SUNAT" listName="Tipo de Documento" listURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo01" listID="0101" name="Tipo de Operacion" listSchemeURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo51">${c.tipoComprobante}</cbc:InvoiceTypeCode>`) +
     `<cbc:Note languageLocaleID="1000">${escaparXml(c.totalEnLetras)}</cbc:Note>` +
     `<cbc:DocumentCurrencyCode listID="ISO 4217 Alpha" listName="Currency" listAgencyName="United Nations Economic Commission for Europe">${moneda}</cbc:DocumentCurrencyCode>` +
+    // Orden del esquema UBL 2.1 (CreditNote/DebitNote/Invoice): LineCountNumeric va ANTES de DiscrepancyResponse y BillingReference. SUNAT BETA rechazó la nota de crédito con el 0306
+    // («found LineCountNumeric but next item should be AccountingSupplierParty») cuando iba después (docs/SUNAT-SUPUESTOS.md #34).
+    `<cbc:LineCountNumeric>${c.lineas.length}</cbc:LineCountNumeric>` +
     (esNota && rel
       ? `<cac:DiscrepancyResponse><cbc:ReferenceID>${escaparXml(`${rel.serie}-${rel.correlativo}`)}</cbc:ReferenceID>` +
         // ⚠️ Catálogo 09 (crédito) o 10 (débito): códigos y nombres de lista sin validar.
@@ -221,7 +224,6 @@ export function construirXmlUbl(c: ComprobanteFiscal): string {
         `<cbc:DocumentTypeCode listAgencyName="PE:SUNAT" listName="Tipo de Documento" listURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo01">${rel.tipoComprobante}</cbc:DocumentTypeCode>` +
         `</cac:InvoiceDocumentReference></cac:BillingReference>`
       : '') +
-    `<cbc:LineCountNumeric>${c.lineas.length}</cbc:LineCountNumeric>` +
     `<cac:Signature><cbc:ID>${escaparXml(c.emisor.ruc)}</cbc:ID>` +
     `<cac:SignatoryParty><cac:PartyIdentification><cbc:ID>${escaparXml(c.emisor.ruc)}</cbc:ID></cac:PartyIdentification>` +
     `<cac:PartyName><cbc:Name>${escaparXml(c.emisor.razonSocial)}</cbc:Name></cac:PartyName></cac:SignatoryParty>` +

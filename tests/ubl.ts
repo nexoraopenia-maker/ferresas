@@ -120,6 +120,19 @@ check('no lleva InvoiceTypeCode', !xn.includes('InvoiceTypeCode') && bienFormado
 const sinRel = base(); sinRel.tipoComprobante = '07'
 check('>>> una nota de crédito sin comprobante relacionado se rechaza', (() => { try { construirXmlUbl(sinRel); return false } catch (e) { return e instanceof ComprobanteInconsistente } })())
 
+console.log('\n6b) Orden de los elementos del esquema UBL 2.1 (SUNAT BETA: 0306)')
+const ORDEN = ['<ext:UBLExtensions>', '<cbc:UBLVersionID>', '<cbc:CustomizationID>', '<cbc:ID>', '<cbc:IssueDate>', '<cbc:DocumentCurrencyCode', '<cbc:LineCountNumeric>', '<cac:DiscrepancyResponse>', '<cac:BillingReference>', '<cac:Signature>', '<cac:AccountingSupplierParty>', '<cac:AccountingCustomerParty>', '<cac:PaymentTerms>', '<cac:TaxTotal>']
+const ordenOk = (x: string, cierre: string) => {
+  const tags = [...ORDEN, cierre, x.includes('<cac:CreditNoteLine>') ? '<cac:CreditNoteLine>' : x.includes('<cac:DebitNoteLine>') ? '<cac:DebitNoteLine>' : '<cac:InvoiceLine>']
+  const pos = tags.map((t) => x.indexOf(t)).filter((i) => i >= 0)
+  return pos.length >= 9 && pos.every((p, i) => i === 0 || p > pos[i - 1]!)
+}
+check('>>> la nota de crédito respeta el orden del esquema (LineCountNumeric ANTES de DiscrepancyResponse y BillingReference)', ordenOk(xn, '<cac:LegalMonetaryTotal>') && xn.indexOf('<cbc:LineCountNumeric>') < xn.indexOf('<cac:DiscrepancyResponse>'))
+const nd = base(); nd.tipoComprobante = '08'; nd.serie = 'BD01'; nd.correlativo = 1
+nd.documentoRelacionado = { tipoComprobante: '03', serie: 'B001', correlativo: 12, motivo: '01', descripcionMotivo: 'Intereses por mora' }
+check('la nota de débito también', ordenOk(construirXmlUbl(nd), '<cac:RequestedMonetaryTotal>'))
+check('la factura y la boleta también', ordenOk(xf, '<cac:LegalMonetaryTotal>') && ordenOk(xml, '<cac:LegalMonetaryTotal>'))
+
 console.log('\n7) Determinismo')
 check('el mismo comprobante produce SIEMPRE el mismo XML (sirve para el hash)', construirXmlUbl(base()) === construirXmlUbl(base()))
 

@@ -112,6 +112,7 @@ async function main() {
   check('>>> el servidor local solo FUERA de producción', evaluarEndpointSunat('http://127.0.0.1:4000/billService', {}).tipo === 'falso' && !evaluarEndpointSunat('http://127.0.0.1:4000/billService', { VERCEL_ENV: 'production' }).ok && !evaluarEndpointSunat('http://localhost:4000/x', { NODE_ENV: 'production' }).ok)
   check('>>> un usuario:clave dentro de la URL se rechaza aunque el host sea de SUNAT', !evaluarEndpointSunat('https://usuario:clave@e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService', {}).ok)
   check('>>> cualquier otro host se rechaza (incluido http hacia SUNAT y el truco del usuario en la URL)', ['https://example.com/billService', 'http://e-beta.sunat.gob.pe/x', 'https://e-beta.sunat.gob.pe@evil.com/x', 'https://e-beta.sunat.gob.pe.evil.com/x', 'ftp://localhost/x', '', 'basura'].every((u) => !evaluarEndpointSunat(u, {}).ok))
+  check('>>> la consulta de CDR en BETA va al servicio de consulta (ol-it-wsconscpegem), NO a una ruta derivada del envío (BETA devolvió «Internal Error»)', urlConsulta(SUNAT_BETA_BILL) === 'https://e-beta.sunat.gob.pe/ol-it-wsconscpegem/billConsultService' && evaluarEndpointSunat(urlConsulta(SUNAT_BETA_BILL), {}).tipo === 'beta')
   check('la URL de consulta de producción es la de consulta; las demás cambian la ruta', urlConsulta(SUNAT_PRODUCCION_BILL).includes('billConsultService') && urlConsulta('http://127.0.0.1:1/billService') === 'http://127.0.0.1:1/billConsultService')
 
   check('>>> un host de SUNAT con un puerto raro se rechaza (solo el 443 normal)', !evaluarEndpointSunat('https://e-beta.sunat.gob.pe:8443/ol-ti-itcpfegem-beta/billService', {}).ok && evaluarEndpointSunat('https://e-beta.sunat.gob.pe:443/ol-ti-itcpfegem-beta/billService', {}).ok)
@@ -171,6 +172,10 @@ async function main() {
   const eco = (cuerpo: string, status = 200, headers: Record<string, string> = {}) => async (_u: unknown, init?: RequestInit) => { initVisto = init; return new Response(cuerpo, { status, headers }) }
   await enviarComprobante(SUNAT_BETA_BILL, SOL, base, firmado, { fetch: eco('x') as never })
   check('>>> nunca se siguen redirecciones (una redirección podría sacar la clave SOL hacia otro host)', initVisto?.redirect === 'manual')
+  await consultarCdr(SUNAT_BETA_BILL, SOL, { tipo: '01', serie: 'F001', numero: 1 }, { fetch: eco('x') as never })
+  check('>>> getStatusCdr lleva SOAPAction urn:getStatusCdr; el envío no lleva acción', (initVisto?.headers as Record<string, string>).SOAPAction === 'urn:getStatusCdr')
+  await enviarComprobante(SUNAT_BETA_BILL, SOL, base, firmado, { fetch: eco('x') as never })
+  check('el envío (sendBill) sigue sin SOAPAction', (initVisto?.headers as Record<string, string>).SOAPAction === '')
   const r5xx = await enviarComprobante(SUNAT_BETA_BILL, SOL, base, firmado, { fetch: eco('<html>Bad Gateway</html>', 502) as never })
   const r500 = await enviarComprobante(SUNAT_BETA_BILL, SOL, base, firmado, { fetch: eco('', 500) as never })
   check('>>> un 5xx sin fallo SOAP es transitorio (nunca un éxito ni un rechazo)', r5xx.tipo === 'transitorio' && r500.tipo === 'transitorio')
