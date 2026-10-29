@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { crearSucursal } from './fixtures'
+import { crearSucursal, cajaDe } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -91,13 +91,13 @@ async function main() {
   check('>>> ni el rendimiento de caja', await code(rendimientoDeCaja(getTenantPrisma(cAlm), cAlm, AHORA)) === 'FORBIDDEN_ROLE')
 
   console.log('\n4) Caja')
-  await prisma.cashSession.create({ data: { tenantId: t.id, branchId: bA.id, openedById: owner.id, openingAmount: 100, openedAt: lima('2026-10-20T08:00:00'), salesTotal: 150 } })
+  await prisma.cashSession.create({ data: { tenantId: t.id, branchId: bA.id, registerId: await cajaDe(t.id, bA.id), openedById: owner.id, openingAmount: 100, openedAt: lima('2026-10-20T08:00:00'), salesTotal: 150 } })
   await prisma.cashSession.create({
-    data: { tenantId: t.id, branchId: bB.id, openedById: owner.id, openingAmount: 50, openedAt: lima('2026-10-20T08:00:00'),
+    data: { tenantId: t.id, branchId: bB.id, registerId: await cajaDe(t.id, bB.id), openedById: owner.id, openingAmount: 50, openedAt: lima('2026-10-20T08:00:00'),
       status: 'CERRADA', closedAt: lima('2026-10-20T18:00:00'), difference: -5, salesTotal: 200 },
   })
   await prisma.cashSession.create({
-    data: { tenantId: t.id, branchId: bB.id, openedById: owner.id, openingAmount: 50, openedAt: lima('2026-10-10T08:00:00'),
+    data: { tenantId: t.id, branchId: bB.id, registerId: await cajaDe(t.id, bB.id), openedById: owner.id, openingAmount: 50, openedAt: lima('2026-10-10T08:00:00'),
       status: 'CERRADA', closedAt: lima('2026-10-10T18:00:00'), difference: -99, salesTotal: 1 },
   })
   const caja = await rendimientoDeCaja(dbOwner, cOwner, AHORA)

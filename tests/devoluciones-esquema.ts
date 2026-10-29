@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, cajaDe } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
@@ -63,7 +63,7 @@ async function cuerpo() {
   const s2 = await A.venta(A.b1, 'S-11', 'DEVUELTA', ok())
   check('…pero las parciales (isFull = false, F6.2) pueden ser varias', !(await falla(prisma.saleReturn.create({ data: { tenantId: A.t.id, saleId: s2.id, kind: 'DEVOLUCION', number: 'P-1', reason: 'Parcial 1', isFull: false, userId: A.x.id, saleTotal: 100, returnTotal: 100, paidNet: 10, idempotencyKey: randomUUID() } }))) && !(await falla(prisma.saleReturn.create({ data: { tenantId: A.t.id, saleId: s2.id, kind: 'DEVOLUCION', number: 'P-2', reason: 'Parcial 2', isFull: false, userId: A.x.id, saleTotal: 100, returnTotal: 100, paidNet: 10, idempotencyKey: randomUUID() } }))))
   check('el número y la clave de idempotencia son únicos por negocio', await falla(devolucion({ number: d1.number })) && await falla(devolucion({ idempotencyKey: d1.idempotencyKey })))
-  const sesion = await prisma.cashSession.create({ data: { tenantId: A.t.id, branchId: A.b1.branch.id, openedById: A.x.id, openingAmount: 0 } })
+  const sesion = await prisma.cashSession.create({ data: { tenantId: A.t.id, branchId: A.b1.branch.id, registerId: await cajaDe(A.t.id, A.b1.branch.id), openedById: A.x.id, openingAmount: 0 } })
   const reembolso = (o: Record<string, unknown>) => prisma.saleReturnRefund.create({ data: { tenantId: A.t.id, returnId: d1.id, amount: 10, ...o } as never })
   check('>>> CAJA solo con efectivo y con turno: sin turno, o con Yape, se rechaza', await falla(reembolso({ mode: 'CAJA', method: 'EFECTIVO' })) && await falla(reembolso({ mode: 'CAJA', method: 'YAPE', cashSessionId: sesion.id })) && !(await falla(reembolso({ mode: 'CAJA', method: 'EFECTIVO', cashSessionId: sesion.id }))))
   check('>>> EXTERNO exige un medio que no sea efectivo ni crédito; con turno anotado es válido', await falla(reembolso({ mode: 'EXTERNO' })) && await falla(reembolso({ mode: 'EXTERNO', method: 'EFECTIVO' })) && await falla(reembolso({ mode: 'EXTERNO', method: 'CREDITO' })) && !(await falla(reembolso({ mode: 'EXTERNO', method: 'YAPE' }))) && !(await falla(reembolso({ mode: 'EXTERNO', method: 'PLIN', cashSessionId: sesion.id }))))

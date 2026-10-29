@@ -28,8 +28,8 @@ export interface TicketCierre {
   locale: string
   emisor: { nombre: string; razonSocial: string | null; ruc: string | null; direccion: string | null; telefono: string | null }
   sucursal: string
-  /** La caja en la que se trabajó (F6.8). Nula en turnos anteriores a las cajas. */
-  caja: string | null
+  /** La caja en la que se trabajó (F6.8). */
+  caja: string
   abrio: string
   cerro: string | null
   abiertoEn: string
@@ -91,7 +91,7 @@ export async function getTicketCierre(db: TenantPrismaClient, ctx: TenantContext
     numero: numeroDeCierre(s.id, diaLocal(t.timezone, s.closedAt)),
     zonaHoraria: t.timezone, locale: t.locale,
     emisor: { nombre: t.name, razonSocial: t.legalName, ruc: t.taxId, direccion: t.address, telefono: t.phone },
-    sucursal: s.branch.name, caja: s.register?.name ?? null,
+    sucursal: s.branch.name, caja: s.register.name,
     abrio: nombre(s.openedBy), cerro: s.closedBy ? nombre(s.closedBy) : null,
     abiertoEn: s.openedAt.toISOString(), cerradoEn: s.closedAt.toISOString(),
     fondoInicial: num(s.openingAmount),
@@ -121,7 +121,7 @@ export async function exportarCierreCsv(db: TenantPrismaClient, ctx: TenantConte
   const filas: CeldaCsv[][] = []
   const f = (seccion: string, concepto: string, operaciones: number | null, monto: number | null) => filas.push([seccion, concepto, operaciones, monto === null ? null : M(monto)])
   const fecha = (iso: string) => formatearIso(iso, c.zonaHoraria)
-  filas.push(['Cierre', 'Número', null, c.numero], ['Cierre', 'Sucursal', null, c.sucursal], ['Cierre', 'Caja', null, c.caja ?? '—'], ['Cierre', 'Abrió', null, c.abrio], ['Cierre', 'Cerró', null, c.cerro ?? '—'],
+  filas.push(['Cierre', 'Número', null, c.numero], ['Cierre', 'Sucursal', null, c.sucursal], ['Cierre', 'Caja', null, c.caja], ['Cierre', 'Abrió', null, c.abrio], ['Cierre', 'Cerró', null, c.cerro ?? '—'],
     ['Cierre', 'Desde', null, fecha(c.abiertoEn)], ['Cierre', 'Hasta', null, fecha(c.cerradoEn)])
   f('Cajón', 'Fondo inicial', null, c.fondoInicial); f('Cajón', 'Cobrado en efectivo', null, c.cobradoEfectivo); f('Cajón', 'Vueltos', null, c.vueltos)
   f('Cajón', 'Abonos en efectivo', null, c.abonosEfectivo); f('Cajón', 'Pagos a proveedores en efectivo', null, c.pagosProveedorEfectivo); f('Cajón', 'Devoluciones pagadas del cajón', null, c.devolucionesCajon)

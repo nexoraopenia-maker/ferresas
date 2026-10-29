@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { crearSucursal, asignarSucursal } from './fixtures'
+import { crearSucursal, asignarSucursal, cajaDe } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -52,7 +52,7 @@ async function main() {
   const sA = await venta(bA.id, wA.id, 'N-A-1')
   const sB = await venta(bB.id, wB.id, 'N-B-1')
   const cajaB = await prisma.cashSession.create({
-    data: { tenantId: t.id, branchId: bB.id, openedById: uOwner.id, openingAmount: 10 },
+    data: { tenantId: t.id, branchId: bB.id, registerId: await cajaDe(t.id, bB.id), openedById: uOwner.id, openingAmount: 10 },
   })
   const trAB = await prisma.branchTransfer.create({
     data: {

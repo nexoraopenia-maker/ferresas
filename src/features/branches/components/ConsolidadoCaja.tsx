@@ -43,7 +43,7 @@ export function ConsolidadoCajaVista({ c }: { c: ConsolidadoDelDia }) {
               <tbody>
                 {s.turnos.map((t) => (
                   <tr key={t.id} className="border-t border-hairline" data-consolidado="turno">
-                    <td className="py-1 pr-3">{t.caja ?? '—'}</td>
+                    <td className="py-1 pr-3">{t.caja}</td>
                     <td className="pr-3">{t.cajero}</td>
                     <td className="pr-3">{t.estado === 'ABIERTA' ? 'Abierto' : `Cerrado ${t.cerradoEn ? formatearFechaLocal(t.cerradoEn, c.zonaHoraria) : ''}`}</td>
                     <td className="pr-3 text-right">{t.ventas.cantidad} · {money(t.ventas.total)}</td>

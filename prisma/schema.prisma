@@ -421,15 +421,12 @@ model Tenant {
   timezone String @default("America/Lima")
 
   /// Cuenta de demostración: datos ficticios, sin cobros reales ni envío a SUNAT.
-  /// Si está activa, cobrar EN EFECTIVO exige un turno de caja abierto en la sucursal:
-  /// el efectivo siempre cae dentro de un arqueo.
   /// URL base del PSE (https). La configura el dueño; el servidor la valida contra SSRF.
   pseEndpointUrl           String?
   /// Token del PSE CIFRADO con AES-256-GCM (clave maestra en PSE_MASTER_KEY, atado a este tenant).
   /// Nunca sale de la base en claro ni llega al navegador.
   pseTokenEnc              String?
   pseConfiguredAt          DateTime?
-  cashRequired             Boolean   @default(false)
   /**
    * Facturación electrónica REAL habilitada. NULL (apagado) por defecto: mientras
    * esté apagado un negocio emite y numera comprobantes, pero NINGUNO sale hacia un
@@ -2252,9 +2249,9 @@ model CashSession {
   branchId String
   branch   Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
 
-  /// La caja (puesto de cobro) en la que se abrió el turno (F6.8). NULO solo durante la migración en dos pasos: el código lo trata como la «Caja principal» de la sucursal; un paso posterior lo vuelve NOT NULL.
-  registerId String?
-  register   CashRegister? @relation(fields: [tenantId, registerId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
+  /// La caja (puesto de cobro) en la que se abrió el turno (F6.8). Obligatoria desde el paso 2 de la migración (F6.8d): todo turno nace en una caja.
+  registerId String
+  register   CashRegister @relation(fields: [tenantId, registerId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
 
   openedById String
   openedBy   User    @relation("CashOpenedBy", fields: [openedById], references: [id], onDelete: Restrict)
@@ -2321,10 +2318,9 @@ model CashSession {
   movements         CashMovement[]       @relation("CashMovementSession")
   corrections       CashMovement[]       @relation("CashMovementRelatedSession")
 
-  // OJO: los índices únicos que garantizan «un turno abierto por caja», «por persona» y «sin caja por sucursal» son PARCIALES y no se pueden escribir aquí; viven en la migración:
-  //   CREATE UNIQUE INDEX cash_sessions_una_abierta_por_caja ON cash_sessions ("tenantId", "registerId") WHERE status = 'ABIERTA' AND "registerId" IS NOT NULL;
+  // OJO: los índices únicos que garantizan «un turno abierto por caja» y «por persona» son PARCIALES y no se pueden escribir aquí; viven en las migraciones:
+  //   CREATE UNIQUE INDEX cash_sessions_una_abierta_por_caja ON cash_sessions ("tenantId", "registerId") WHERE status = 'ABIERTA';
   //   CREATE UNIQUE INDEX cash_sessions_una_abierta_por_persona ON cash_sessions ("tenantId", "openedById") WHERE status = 'ABIERTA';
-  //   CREATE UNIQUE INDEX cash_sessions_una_abierta_sin_caja ON cash_sessions ("tenantId", "branchId") WHERE status = 'ABIERTA' AND "registerId" IS NULL;
   @@unique([tenantId, id])
   @@index([tenantId, branchId, status])
   @@index([tenantId, branchId, openedAt])

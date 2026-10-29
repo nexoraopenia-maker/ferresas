@@ -10,7 +10,7 @@ import type { TenantContext } from '../src/lib/tenant-context'
 
 /**
  * F6.8a · La migración del paso 1 contra la base: el relleno (una «Caja principal» por sucursal, TODOS los turnos —cerrados y abiertos— quedan en ella, sin tocar nada más y sin duplicar
- * al repetirlo), los índices únicos parciales (por caja, por persona y por sucursal para los turnos sin caja), las restricciones y que el código actual sigue abriendo turnos como siempre.
+ * al repetirlo), los índices únicos parciales (por caja y por persona), las restricciones y que el código actual sigue abriendo turnos como siempre.
  */
 let pass = 0, fail = 0
 const check = (n: string, ok: boolean, extra = '') => { ok ? pass++ : fail++; console.log(`${ok ? '  ✓' : '  ✗'} ${n}${extra ? ` — ${extra}` : ''}`) }
@@ -18,13 +18,30 @@ const rechaza = (p: Promise<unknown>) => p.then(() => false).catch(() => true)
 const code = (p: Promise<unknown>) => p.then(() => null).catch((e) => e.code ?? e.name ?? String(e))
 
 /** Las sentencias del relleno, tal cual están en la migración (entre los marcadores BACKFILL). */
-function sentenciasDeRelleno(): string[] {
-  const sql = readFileSync('prisma/migrations/20261123100000_cajas_registradoras/migration.sql', 'utf8')
+function sentenciasDeRelleno(migracion = '20261123100000_cajas_registradoras'): string[] {
+  const sql = readFileSync(`prisma/migrations/${migracion}/migration.sql`, 'utf8')
   const bloque = sql.slice(sql.indexOf('-- BACKFILL INICIO'), sql.indexOf('-- BACKFILL FIN'))
   return bloque.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n').split(/;\s*\n/).map((s) => s.trim()).filter(Boolean)
 }
 
+/**
+ * F6.8d: `registerId` ya es NOT NULL, y el relleno del paso 1 solo se puede ejercitar sobre filas SIN caja. Así que la columna se afloja mientras dura la sección 1 y se restaura al terminar (con el mismo
+ * relleno, por si quedó alguna fila). Las pruebas corren una a una sobre esta base.
+ */
+const aflojar = () => prisma.$executeRawUnsafe('ALTER TABLE "cash_sessions" ALTER COLUMN "registerId" DROP NOT NULL')
+async function restaurar() {
+  for (const s of sentenciasDeRelleno()) await prisma.$executeRawUnsafe(s)
+  await prisma.$executeRawUnsafe('ALTER TABLE "cash_sessions" ALTER COLUMN "registerId" SET NOT NULL')
+}
+
 async function main() {
+  // F6.8d: el estado que deja la migración del paso 2, ANTES de aflojar nada.
+  console.log('\n0) El esquema tras el paso 2 (F6.8d)')
+  const unaFila = async <T,>(q: string): Promise<T> => (await prisma.$queryRawUnsafe<T[]>(q))[0]!
+  check('>>> `registerId` es obligatorio (NOT NULL)', (await unaFila<{ is_nullable: string }>(`SELECT is_nullable FROM information_schema.columns WHERE table_name = 'cash_sessions' AND column_name = 'registerId'`)).is_nullable === 'NO')
+  check('>>> el índice de los turnos sin caja ya no existe y el de «uno por caja» no tiene la condición sobrante', (await unaFila<{ n: number }>(`SELECT count(*)::int AS n FROM pg_indexes WHERE indexname = 'cash_sessions_una_abierta_sin_caja'`)).n === 0 && !/IS NOT NULL/.test((await unaFila<{ indexdef: string }>(`SELECT indexdef FROM pg_indexes WHERE indexname = 'cash_sessions_una_abierta_por_caja'`)).indexdef))
+  check('>>> la columna heredada `cashRequired` ya no existe', (await unaFila<{ n: number }>(`SELECT count(*)::int AS n FROM information_schema.columns WHERE table_name = 'tenants' AND column_name = 'cashRequired'`)).n === 0)
+  await aflojar()
   const plan = await prisma.plan.findUniqueOrThrow({ where: { code: 'pro' } })
   const mkTenant = (n: string) => prisma.tenant.create({ data: { slug: `cj-${randomUUID().slice(0, 8)}`, name: n, planId: plan.id } })
   const t = await mkTenant('Cajas')
@@ -35,8 +52,15 @@ async function main() {
   const bAj = await crearSucursal(ajeno.id, { code: 'AJ', seriesNumber: 1, isDefault: true })
   const mk = (role: 'CAJERO' | 'OWNER' = 'CAJERO', tenantId = t.id) => prisma.user.create({ data: { tenantId, email: `u-${randomUUID()}@x.com`, name: 'Cajero', role } })
   const [u1, u2, u3, u4, uAj] = await Promise.all([mk(), mk(), mk(), mk(), mk('OWNER', ajeno.id)])
-  const turno = (branchId: string, openedById: string, extra: Record<string, unknown> = {}, tenantId = t.id) =>
-    prisma.cashSession.create({ data: { tenantId, branchId, openedById, openingAmount: 100, ...extra } as never })
+  const turno = async (branchId: string, openedById: string, extra: Record<string, unknown> = {}, tenantId = t.id) => {
+    if (extra.registerId !== undefined) return prisma.cashSession.create({ data: { tenantId, branchId, openedById, openingAmount: 100, ...extra } as never })
+    // Un turno SIN caja (solo para ejercitar el relleno, con la columna aflojada): Prisma ya no deja crearlo, así que se crea con una caja de paso y se le quita.
+    const k = await prisma.cashRegister.create({ data: { tenantId, branchId, name: `paso-${randomUUID().slice(0, 8)}` } })
+    const s = await prisma.cashSession.create({ data: { tenantId, branchId, registerId: k.id, openedById, openingAmount: 100, ...extra } as never })
+    await prisma.$executeRaw`UPDATE cash_sessions SET "registerId" = NULL WHERE id = ${s.id}`
+    await prisma.cashRegister.delete({ where: { id: k.id } })
+    return s
+  }
   const caja = (branchId: string, name: string, extra: Record<string, unknown> = {}, tenantId = t.id) => prisma.cashRegister.create({ data: { tenantId, branchId, name, ...extra } })
 
   console.log('\n1) El relleno de la migración')
@@ -73,6 +97,15 @@ async function main() {
   await ejecutar()
   check('>>> con cajas vivas y muertas, el turno va a la VIVA más antigua (no a la dada de baja)', (await sesion(tD.id)).registerId === viva.id && muerta.id !== viva.id)
 
+  // El paso 2 (F6.8d) repite el mismo relleno por si quedara algún turno sin caja: tiene que dejarlo en la caja viva más antigua de SU sucursal antes de exigir NOT NULL.
+  const huerfano = await turno(bB.id, u4.id, { status: 'CERRADA', closedAt: new Date(), closedById: u4.id, countedAmount: 1, expectedAmount: 1, difference: 0 })
+  check('>>> (preparación) el turno de prueba quedó SIN caja', (await sesion(huerfano.id)).registerId === null)
+  const paso2 = sentenciasDeRelleno('20261124100000_cajas_obligatorias')
+  check('>>> el paso 2 trae el mismo relleno defensivo (insertar cajas y asignar turnos)', paso2.length === 2 && /^INSERT INTO "cash_registers"/.test(paso2[0]!) && /^UPDATE "cash_sessions"/.test(paso2[1]!))
+  for (const q of paso2) await prisma.$executeRawUnsafe(q)
+  check('>>> y deja el turno sin caja en la caja viva más antigua de SU sucursal (no cruza sucursales ni negocios)', (await sesion(huerfano.id)).registerId === propiaB.id)
+  await restaurar()
+
   console.log('\n2) Los índices únicos parciales')
   const bE = await crearSucursal(t.id, { code: 'NORTE2', name: 'Norte 2', seriesNumber: 5, isDefault: false, establishmentCode: '0004' })
   const [k1, k2] = [await caja(bE.id, 'Caja 1'), await caja(bE.id, 'Caja 2')]
@@ -87,14 +120,6 @@ async function main() {
   check('>>> otra persona sí puede abrir en la otra sucursal', !(await rechaza(turno(bF.id, p4.id, { registerId: kF.id }))))
   await prisma.cashSession.update({ where: { id: t1.id }, data: { status: 'CERRADA', closedAt: new Date(), closedById: p1.id, countedAmount: 1, expectedAmount: 1, difference: 0 } })
   check('>>> al cerrar el turno, la caja y la persona quedan libres', !(await rechaza(turno(bE.id, p3.id, { registerId: k1.id }))) && !(await rechaza(turno(bF.id, p1.id, { registerId: (await caja(bF.id, 'Caja G')).id }))))
-  const [q1, q2, q3] = await Promise.all([mk(), mk(), mk()])
-  const bG = await crearSucursal(t.id, { code: 'G', name: 'G', seriesNumber: 7, isDefault: false, establishmentCode: '0006' })
-  const bH = await crearSucursal(t.id, { code: 'H', name: 'H', seriesNumber: 8, isDefault: false, establishmentCode: '0007' })
-  await turno(bG.id, q1.id)
-  check('>>> >>> los turnos SIN caja (de la versión anterior) siguen limitados a UNO por sucursal', await rechaza(turno(bG.id, q2.id)))
-  check('>>> sin caja en otra sucursal sí', !(await rechaza(turno(bH.id, q2.id))))
-  const kG = await caja(bG.id, 'Caja G1')
-  check('>>> un turno con caja convive con uno sin caja en la misma sucursal (la transición)', !(await rechaza(turno(bG.id, q3.id, { registerId: kG.id }))))
 
   console.log('\n3) Restricciones')
   const k3 = await caja(bE.id, 'Caja 3')
@@ -129,6 +154,6 @@ async function main() {
 }
 
 async function seguro() {
-  try { return await main() } catch (e) { check(`EXCEPCIÓN no controlada: ${e instanceof Error ? e.message.slice(0, 200) : e}`, false); return 1 }
+  try { return await main() } catch (e) { check(`EXCEPCIÓN no controlada: ${e instanceof Error ? e.message.slice(0, 200) : e}`, false); await restaurar().catch(() => undefined); return 1 }
 }
 correr(seguro)

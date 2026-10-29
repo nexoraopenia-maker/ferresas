@@ -76,8 +76,7 @@ async function main() {
 
   console.log('\n5) Es por persona y por negocio')
   check('>>> el otro negocio tampoco cobra sin turno', await code(B.vender(B.cajero, 'EFECTIVO')) === 'CASH_REQUIRED')
-  await prisma.tenant.update({ where: { id: A.t.id }, data: { cashRequired: false } })
-  check('>>> aunque la columna heredada diga «no», el turno propio sigue siendo obligatorio', await code(A.vender(A.cajero, 'EFECTIVO')) === 'CASH_REQUIRED')
+  check('>>> F6.8d: la columna heredada `cashRequired` ya no existe: el turno propio no depende de ningún ajuste', (await prisma.$queryRawUnsafe<{ n: number }[]>(`SELECT count(*)::int AS n FROM information_schema.columns WHERE table_name = 'tenants' AND column_name = 'cashRequired'`))[0]!.n === 0)
 
   await prisma.tenant.deleteMany({ where: { id: { in: [A.t.id, B.t.id] } } })
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)

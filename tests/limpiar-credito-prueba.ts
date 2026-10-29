@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { crearSucursalConAlmacen } from './fixtures'
+import { crearSucursalConAlmacen, cajaDe } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
@@ -31,7 +31,7 @@ async function fixture(tag: string, prefijo = 'cr', over: { nombre?: string; ema
   const cliente = await prisma.customer.create({ data: { tenantId: t.id, name: over.clienteReal ? 'Ferretería Los Andes' : `Cliente ${tag}`, creditLimit: 1000, creditBalance: 0 } })
   await prisma.customer.create({ data: { tenantId: t.id, name: 'x', creditBalance: 50 } })
   const venta = (await prisma.sale.create({ data: { tenantId: t.id, branchId: branch.id, warehouseId: w.id, userId: u.id, number: over.ventaReal ? `B001-${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}` : `V-${tag}-${hex()}`, status: 'COMPLETADA' } })).id
-  await prisma.cashSession.create({ data: { tenantId: t.id, branchId: branch.id, openedById: u.id, openingAmount: 0 } })
+  await prisma.cashSession.create({ data: { tenantId: t.id, branchId: branch.id, registerId: await cajaDe(t.id, branch.id), openedById: u.id, openingAmount: 0 } })
   await prisma.receivable.create({ data: { tenantId: t.id, customerId: cliente.id, saleId: venta, amount: 100, dueDate: new Date('2026-12-31') } })
   await prisma.customerPayment.create({ data: { tenantId: t.id, customerId: cliente.id, branchId: branch.id, userId: u.id, method: 'YAPE', amount: 10 } })
   if (over.conComprobante) await prisma.taxDocument.create({ data: { tenantId: t.id, saleId: venta, documentType: 'BOLETA', series: 'PB001', correlativo: 1, fullNumber: 'PB001-00000001', status: 'PENDIENTE', isTrial: true, subtotal: 1, taxTotal: 0, total: 1, issuedAt: new Date() } })

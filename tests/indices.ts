@@ -19,10 +19,9 @@ const ESPERADOS = [
   { nombre: 'stocks_no_variant_key', unico: true, donde: /"variantId" IS NULL/ },
   { nombre: 'products_barcode_lookup', unico: false, donde: /"?barcode"? IS NOT NULL/ },
   { nombre: 'products_qrcode_lookup', unico: false, donde: /"qrCode" IS NOT NULL/ },
-  // F6.8: varias cajas por sucursal. Un turno abierto por caja, por persona y —solo para los turnos SIN caja— por sucursal; el nombre de una caja es único entre las vivas de su sucursal.
-  { nombre: 'cash_sessions_una_abierta_por_caja', unico: true, donde: /status.*ABIERTA.*"registerId" IS NOT NULL/ },
+  // F6.8: varias cajas por sucursal. Un turno abierto por caja y por persona; el nombre de una caja es único entre las vivas de su sucursal.
+  { nombre: 'cash_sessions_una_abierta_por_caja', unico: true, donde: /status.*ABIERTA/ },
   { nombre: 'cash_sessions_una_abierta_por_persona', unico: true, donde: /status.*ABIERTA/ },
-  { nombre: 'cash_sessions_una_abierta_sin_caja', unico: true, donde: /status.*ABIERTA.*"registerId" IS NULL/ },
   { nombre: 'cash_registers_name_uniq', unico: true, donde: /lower.*"deletedAt" IS NULL/ },
   // F6.3b: un abono se anula una sola vez, así que tiene a lo sumo UNA compensación en caja.
   { nombre: 'cash_movements_una_compensacion_por_abono', unico: true, donde: /"relatedPaymentId" IS NOT NULL/ },

@@ -21,7 +21,7 @@ const cent = (n: number) => Math.round(n * 100) / 100
 
 export interface TurnoConsolidado {
   id: string
-  caja: string | null
+  caja: string
   cajero: string
   estado: 'ABIERTA' | 'CERRADA'
   abiertoEn: string
@@ -93,7 +93,7 @@ export async function consolidadoDelDia(db: TenantPrismaClient, ctx: TenantConte
     const cerrado = t.status === 'CERRADA'
     const foto = cerrado ? (t.closingBreakdown as DesgloseCierre | null) : await desgloseDelTurno(db, t.id)
     const fila: TurnoConsolidado = {
-      id: t.id, caja: t.register?.name ?? null, cajero: t.openedBy.name ?? t.openedBy.email, estado: t.status,
+      id: t.id, caja: t.register.name, cajero: t.openedBy.name ?? t.openedBy.email, estado: t.status,
       abiertoEn: t.openedAt.toISOString(), cerradoEn: t.closedAt?.toISOString() ?? null, fondo: num(t.openingAmount),
       esperado: cerrado ? num(t.expectedAmount) : null, contado: cerrado ? num(t.countedAmount) : null, diferencia: cerrado ? num(t.difference) : null,
       sinDesglose: foto === null,
@@ -128,7 +128,7 @@ export async function exportarConsolidadoCsv(db: TenantPrismaClient, ctx: Tenant
   const M = (monto: number | null): CeldaCsv => (monto === null ? null : { monto })
   const filas: CeldaCsv[][] = []
   for (const s of c.sucursales) {
-    for (const t of s.turnos) filas.push([s.sucursal, t.caja ?? '—', t.cajero, t.estado === 'ABIERTA' ? 'Abierto' : 'Cerrado', t.ventas.cantidad, M(t.ventas.total), M(t.fondo), M(t.esperado), M(t.contado), M(t.diferencia), t.sinDesglose ? 'Sin detalle por medio' : ''])
+    for (const t of s.turnos) filas.push([s.sucursal, t.caja, t.cajero, t.estado === 'ABIERTA' ? 'Abierto' : 'Cerrado', t.ventas.cantidad, M(t.ventas.total), M(t.fondo), M(t.esperado), M(t.contado), M(t.diferencia), t.sinDesglose ? 'Sin detalle por medio' : ''])
     filas.push([s.sucursal, 'TOTAL SUCURSAL', '', `${s.cerrados} cerrado(s), ${s.abiertos} abierto(s)`, s.total.ventas.cantidad, M(s.total.ventas.total), null, M(s.arqueo.esperado), M(s.arqueo.contado), M(s.arqueo.diferencia), ''])
     for (const m of METODOS_REPORTE) if (s.total.ventasPorMetodo[m].operaciones > 0) filas.push([s.sucursal, `Ventas · ${ETIQUETA_METODO[m]}`, '', '', s.total.ventasPorMetodo[m].operaciones, M(s.total.ventasPorMetodo[m].monto), null, null, null, null, ''])
   }

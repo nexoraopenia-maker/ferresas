@@ -94,7 +94,7 @@ export default async function CajaPage() {
                 openedAt: turnoRaw.openedAt,
                 abiertoPor:
                   abiertoPor?.openedBy.name ?? abiertoPor?.openedBy.email ?? '—',
-                caja: abiertoPor?.register?.name ?? null,
+                caja: abiertoPor?.register.name,
               }
             : null
         }

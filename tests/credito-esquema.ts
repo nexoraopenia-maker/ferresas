@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
 import { completarRuc } from '../src/lib/documentos'
-import { crearSucursalConAlmacen } from './fixtures'
+import { crearSucursalConAlmacen, cajaDe } from './fixtures'
 import type { TenantContext } from '../src/lib/tenant-context'
 
 /**
@@ -75,7 +75,7 @@ async function parteB() {
     const u = await prisma.user.create({ data: { tenantId: t.id, email: `o-${randomUUID()}@x.com`, name: 'Dueño', role: 'OWNER' } })
     const cliente = await prisma.customer.create({ data: { tenantId: t.id, name: `Cliente ${tag}`, creditLimit: 1000 } })
     const venta = async () => (await prisma.sale.create({ data: { tenantId: t.id, branchId: branch.id, warehouseId: w.id, userId: u.id, number: `V-${tag}-${randomUUID().slice(0, 6)}`, status: 'COMPLETADA' } })).id
-    const caja = await prisma.cashSession.create({ data: { tenantId: t.id, branchId: branch.id, openedById: u.id, openingAmount: 0 } })
+    const caja = await prisma.cashSession.create({ data: { tenantId: t.id, branchId: branch.id, registerId: await cajaDe(t.id, branch.id), openedById: u.id, openingAmount: 0 } })
     const cuenta = (saleId: string, over: Record<string, unknown> = {}) => ({ tenantId: t.id, customerId: cliente.id, saleId, amount: 100, dueDate: new Date('2026-12-31'), ...over })
     const abono = (over: Record<string, unknown> = {}) => ({ tenantId: t.id, customerId: cliente.id, branchId: branch.id, userId: u.id, method: 'YAPE' as const, amount: 10, ...over })
     const ctx: TenantContext = { tenantId: t.id, userId: u.id, role: 'OWNER', access: 'FULL', branchId: branch.id, branchIds: [branch.id] }

@@ -271,7 +271,6 @@ export async function prepararCuentaDemo(opts: {
       data: {
         isDemo: true,
         // La demo enseña la política de caja: el efectivo entra siempre en un turno.
-        cashRequired: true,
         legalName: 'FERRETERIA DEMO S.A.C.',
         // Ficticio. Un RUC real aquí haría pasar la demo por una empresa de verdad.
         taxId: RUC_EMISOR_DEMO,

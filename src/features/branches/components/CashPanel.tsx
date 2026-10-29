@@ -27,8 +27,8 @@ export interface TurnoAbierto {
   lista: FilaMovimiento[]
   openedAt: string
   abiertoPor: string
-  /** La caja en la que trabaja (F6.8). Nula en turnos anteriores a las cajas. */
-  caja?: string | null
+  /** La caja en la que trabaja (F6.8). */
+  caja?: string
 }
 
 export interface CierreReciente {

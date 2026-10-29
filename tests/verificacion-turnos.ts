@@ -1,15 +1,15 @@
 import './guard'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { correr } from './teardown'
-import { crearSucursal } from './fixtures'
+import { cajaDe, crearSucursal } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
-import { turnosSinCaja, usuariosConVariosTurnosAbiertos } from '../src/features/branches/verificacion-turnos'
+import { usuariosConVariosTurnosAbiertos } from '../src/features/branches/verificacion-turnos'
 
 /**
- * F6.8a · Los scripts de verificación previos al despliegue: `verificar-turnos-abiertos` (antes del paso 1) y `verificar-turnos-sin-caja` (antes del paso 2). Solo lectura, con su código de
- * salida (0 = se puede seguir, 3 = no) y el detalle de quién y dónde.
+ * F6.8a · El script de verificación previo al paso 1: `verificar-turnos-abiertos`. Solo lectura, con su código de salida (0 = se puede seguir, 3 = no) y el detalle de quién y dónde. (F6.8d retiró
+ * `verificar-turnos-sin-caja`: con `registerId` obligatorio ya no puede haber turnos sin caja.)
  */
 let pass = 0, fail = 0
 const check = (n: string, ok: boolean, extra = '') => { ok ? pass++ : fail++; console.log(`${ok ? '  ✓' : '  ✗'} ${n}${extra ? ` — ${extra}` : ''}`) }
@@ -32,19 +32,13 @@ async function cuerpo() {
   const t = await prisma.tenant.create({ data: { slug: `vt-${randomUUID().slice(0, 8)}`, name: 'Verificación de turnos', planId: plan.id } })
   const b = await crearSucursal(t.id, { code: 'NORTE', seriesNumber: 1, isDefault: true })
   const u = await prisma.user.create({ data: { tenantId: t.id, email: `u-${randomUUID()}@x.com`, name: 'Cajero', role: 'CAJERO' } })
-  const sin = await prisma.cashSession.create({ data: { tenantId: t.id, branchId: b.id, openedById: u.id, openingAmount: 10 } })
-  const huerfanos = await turnosSinCaja(prisma as never)
-  check('>>> un turno sin caja asignada se detecta, con su negocio, sucursal y estado', huerfanos.some((h) => h.id === sin.id && h.tenantId === t.id && h.branchId === b.id && h.status === 'ABIERTA'))
-  const r3 = correrScript('verificar-turnos-sin-caja')
-  check('>>> >>> el script de «sin caja» sale con código 3 y nombra el turno', r3.status === 3 && r3.stdout.includes(sin.id) && /SOLO LECTURA/.test(r3.stdout), `${r3.status} ${r3.stderr.slice(0, 120)}`)
-  const caja = await prisma.cashRegister.create({ data: { tenantId: t.id, branchId: b.id, name: 'Caja 1' } })
-  await prisma.cashSession.update({ where: { id: sin.id }, data: { registerId: caja.id } })
-  check('>>> con la caja asignada ya no aparece', !(await turnosSinCaja(prisma as never)).some((h) => h.id === sin.id))
+  await prisma.cashSession.create({ data: { tenantId: t.id, branchId: b.id, registerId: await cajaDe(t.id, b.id), openedById: u.id, openingAmount: 10 } })
   const r0 = correrScript('verificar-turnos-abiertos')
   check('>>> >>> el script de «turnos abiertos» sale con código 0 cuando nadie tiene dos (el índice de la base ya lo impide)', r0.status === 0 && /SOLO LECTURA/.test(r0.stdout) && /nadie tiene más de uno/.test(r0.stdout), `${r0.status} ${r0.stdout.slice(0, 160)} ${r0.stderr.slice(0, 120)}`)
 
   console.log('\nC) Solo lectura')
-  for (const f of ['verificar-turnos-abiertos', 'verificar-turnos-sin-caja']) {
+  check('>>> el script de «sin caja» se retiró junto con la columna nula', !existsSync('scripts/verificar-turnos-sin-caja.ts') && !/turnosSinCaja/.test(readFileSync('src/features/branches/verificacion-turnos.ts', 'utf8')))
+  for (const f of ['verificar-turnos-abiertos']) {
     const src = readFileSync(`scripts/${f}.ts`, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
     check(`>>> ${f} no escribe nada (sin create/update/delete/upsert/raw)`, !/\.(create|createMany|update|updateMany|delete|deleteMany|upsert)\(|\$executeRaw|\$queryRawUnsafe/.test(src))
   }

@@ -31,7 +31,7 @@ export function TicketCierreCaja({ ticket: c }: { ticket: TicketCierre }) {
       <div className="t-sep t-sep-doble" aria-hidden />
 
       <Par etiqueta="Sucursal" valor={c.sucursal} />
-      {c.caja && <Par etiqueta="Caja" valor={c.caja} />}
+      <Par etiqueta="Caja" valor={c.caja} />
       <Par etiqueta="Abrió" valor={c.abrio} />
       <Par etiqueta="Desde" valor={formatearFechaLocal(c.abiertoEn, c.zonaHoraria, c.locale)} />
       {c.cerro && <Par etiqueta="Cerró" valor={c.cerro} />}

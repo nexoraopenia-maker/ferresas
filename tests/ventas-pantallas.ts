@@ -110,7 +110,7 @@ check('>>> la conciliación enlaza cada venta a /ventas/[id] (ya no a la lista d
 console.log('\nF) Caja: resumen del turno, cierre y ticket')
 const tk: TicketCierre = {
   numero: 'CC-20261027-ABC123', zonaHoraria: 'America/Lima', locale: 'es-PE', emisor: { nombre: 'Ferretería Demo', razonSocial: null, ruc: '20123456789', direccion: null, telefono: null },
-  sucursal: 'Central', caja: null, desglose: null, abrio: 'Rosa', cerro: 'Rosa', abiertoEn: '2026-10-27T13:00:00.000Z', cerradoEn: '2026-10-27T23:00:00.000Z', fondoInicial: 100,
+  sucursal: 'Central', caja: 'Caja principal', desglose: null, abrio: 'Rosa', cerro: 'Rosa', abiertoEn: '2026-10-27T13:00:00.000Z', cerradoEn: '2026-10-27T23:00:00.000Z', fondoInicial: 100,
   ingresosManuales: 0, egresosManuales: 0, compensacionesEfectivo: 0, compensacionesOtrosMedios: 0, ventasCantidad: 4, ventasTotal: 800, cobradoEfectivo: 500, vueltos: 20, abonosEfectivo: 0, pagosProveedorEfectivo: 0, devolucionesCajon: 118, devolucionesOtrosMedios: 40,
   fiado: 0, abonosOtrosMedios: 0, pagosProveedorOtrosMedios: 0, esperado: 462, contado: 462, diferencia: 0, notas: null,
 }

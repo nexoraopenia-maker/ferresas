@@ -1,6 +1,6 @@
 import './guard'
 import { correr } from './teardown'
-import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, cajaDe } from './fixtures'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
@@ -83,7 +83,7 @@ async function cuerpo() {
   await venta(n, { userId: u.beto!.id, numero: 'X-ANTES', total: 1000, completedAt: '2026-10-20T04:59:59Z', pagos: [{ metodo: 'EFECTIVO', monto: 1000 }] })   // Lima: 19/10 23:59:59
   await venta(n, { userId: u.beto!.id, numero: 'X-DESPUES', total: 2000, completedAt: '2026-10-27T05:00:00Z', pagos: [{ metodo: 'EFECTIVO', monto: 2000 }] })  // Lima: 27/10 00:00:00
   // Abonos
-  const caja = await prisma.cashSession.create({ data: { tenantId: n.t.id, branchId: n.b1.branch.id, openedById: u.beto!.id, openingAmount: 0 } })
+  const caja = await prisma.cashSession.create({ data: { tenantId: n.t.id, branchId: n.b1.branch.id, registerId: await cajaDe(n.t.id, n.b1.branch.id), openedById: u.beto!.id, openingAmount: 0 } })
   const abono = (o: { metodo: string; monto: number; en: string; branch?: 'b1' | 'b2'; anulado?: boolean; caja?: boolean }) => prisma.customerPayment.create({ data: {
     tenantId: n.t.id, customerId: cliente.id, branchId: (o.branch === 'b2' ? n.b2 : n.b1).branch.id, userId: u.beto!.id, method: o.metodo as never, amount: o.monto, receivedAt: iso(o.en),
     ...(o.caja ? { cashSessionId: caja.id } : {}), ...(o.anulado ? { voidedAt: iso(o.en), voidedById: u.owner!.id, voidReason: 'error' } : {}),

@@ -117,3 +117,13 @@ export async function cajaLibre(tenantId: string, branchId: string): Promise<{ r
   })
   return c ? { registerId: c.id } : {}
 }
+
+/**
+ * El id de una caja viva de la sucursal (la crea con el nombre «Caja principal» si no hay ninguna). Desde F6.8d `cash_sessions.registerId` es obligatorio: las pruebas que insertan un turno
+ * a mano con `prisma.cashSession.create` le ponen esta caja. No abre turno ni mira si la caja está ocupada.
+ */
+export async function cajaDe(tenantId: string, branchId: string): Promise<string> {
+  const c = await prisma.cashRegister.findFirst({ where: { tenantId, branchId, deletedAt: null }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { id: true } })
+  if (c) return c.id
+  return (await prisma.cashRegister.create({ data: { tenantId, branchId, name: 'Caja principal' }, select: { id: true } })).id
+}

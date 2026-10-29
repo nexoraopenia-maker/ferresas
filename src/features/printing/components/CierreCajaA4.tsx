@@ -64,7 +64,7 @@ export function CierreCajaA4({ ticket: c }: { ticket: TicketCierre }) {
         <h1>Cierre de caja {c.numero}</h1>
         <div className="meta">
           <span>Sucursal: <b>{c.sucursal}</b></span>
-          <span>Caja: <b>{c.caja ?? '—'}</b></span>
+          <span>Caja: <b>{c.caja}</b></span>
           <span>Abrió: {c.abrio} · {f(c.abiertoEn)}</span>
           <span>Cerró: {c.cerro ?? '—'} · {f(c.cerradoEn)}</span>
         </div>
