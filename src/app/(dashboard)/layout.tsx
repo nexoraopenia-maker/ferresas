@@ -6,6 +6,8 @@ import { logoutAction } from '../(auth)/actions'
 import { AccountBannerBar } from '@/features/billing/components/AccountBannerBar'
 import { estadoEnvioFiscal } from '@/features/invoicing/alarma-envio'
 import { FiscalAlertBar } from '@/features/invoicing/components/FiscalAlertBar'
+import { CertificadoAlertBar } from '@/features/invoicing/components/CertificadoAlertBar'
+import { alertaDeCertificado } from '@/features/sunat/credenciales'
 import { ImpersonationBanner } from '@/features/superadmin/components/ImpersonationBanner'
 import { NavLinks } from '@/features/shell/components/NavLinks'
 import { BranchSwitcher } from '@/features/branches/components/BranchSwitcher'
@@ -71,6 +73,8 @@ export default async function DashboardLayout({
   const estadoFiscal = tenant?.realBillingEnabledAt && puedeAlguno(ctx, 'config.fiscal', 'comprobantes.anular')
     ? await estadoEnvioFiscal(db)
     : null
+  // Aviso de vencimiento del certificado: solo a quien gestiona lo fiscal (el dueño) y solo si ya cargó uno. Una barra dentro del panel; sin correos.
+  const alertaCert = puede(ctx, 'config.fiscal') ? await alertaDeCertificado(db) : null
   // El selector de operador lo ve quien cobra o vende; y siempre quien YA está en modo operador, para poder salir.
   const puedeOperarCaja =
     !!ctx.operadorDe || puede(ctx, 'ventas.cobrar') || puede(ctx, 'ventas.crear') || puede(ctx, 'caja.abrir_cerrar')
@@ -122,6 +126,7 @@ export default async function DashboardLayout({
         <ImpersonationBanner />
         <AccountBannerBar />
         {estadoFiscal && <FiscalAlertBar estado={estadoFiscal} />}
+        {alertaCert && <CertificadoAlertBar estado={alertaCert.estado} diasRestantes={alertaCert.diasRestantes} />}
 
         {/* Cabecera solo en móvil: en escritorio esa información ya está en
             el sidebar y repetirla gasta altura. */}

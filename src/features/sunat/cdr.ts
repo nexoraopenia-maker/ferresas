@@ -55,3 +55,12 @@ export function categoriaDeCodigo(codigo: string): CategoriaCodigo {
   if (n >= 100 && n < 200) return 'configuracion'
   return 'excepcion'
 }
+
+/**
+ * ⚠️ CÓDIGOS DE FALLO DE ACCESO (usuario o clave SOL incorrectos, usuario inexistente o inactivo, encabezado de seguridad mal formado), de memoria y SIN
+ * verificar en la tabla oficial de errores. Es MÁS ESTRECHA que la categoría `configuracion` (0100–0199) a propósito: «el comprobante no existe» u otro fallo
+ * de contenido también cae en 01xx y NO significa que las credenciales estén mal. La usa la prueba de conexión (docs/SUNAT-SUPUESTOS.md #13).
+ */
+export const CODIGOS_DE_ACCESO: readonly string[] = ['0101', '0102', '0103', '0104', '0105', '0106']
+
+export const esFalloDeAcceso = (codigo: string | null | undefined): boolean => codigo != null && CODIGOS_DE_ACCESO.includes(codigo.padStart(4, '0'))

@@ -6,9 +6,9 @@ import { getTenantPrisma, type TenantPrismaClient } from '@/lib/tenant-prisma'
 import { requireTenantContext } from '@/lib/session'
 import { isBusinessError, type ActionResult } from '@/lib/errors'
 import type { TenantContext } from '@/lib/tenant-context'
-import { emitirNotaCreditoSchema, fijarArranqueSchema } from './schemas'
+import { emitirNotaCreditoSchema, fijarArranqueSchema, guardarCredencialesSunatSchema } from './schemas'
 import { fijarArranqueSerie, listarSeriesConfigurables } from './counter-service'
-import { guardarConfigPse, probarConexionPse, quitarConfigPse } from './pse-config'
+import { guardarCredencialesSunat, probarConexionSunat, quitarCredencialesSunat } from '@/features/sunat/credenciales'
 import { emitirNotaCreditoTotal } from './service'
 
 /**
@@ -95,32 +95,35 @@ export async function emitirNotaCreditoAction(raw: unknown) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  PROVEEDOR DE FACTURACIÓN (PSE) — solo el dueño (config.fiscal)
+//  SUNAT DIRECTO — certificado digital y usuario SOL secundario (config.fiscal, solo el dueño)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export async function guardarProveedorPse(raw: unknown) {
-  const parsed = z.object({ url: z.string().trim().min(8).max(300), token: z.string().min(8).max(2000) }).safeParse(raw)
+export async function guardarCredencialesSunatAction(raw: unknown) {
+  const parsed = guardarCredencialesSunatSchema.safeParse(raw)
   if (!parsed.success) {
-    return { ok: false as const, code: 'VALIDATION' as const, message: 'Escribe la URL y el token del proveedor.' }
+    return { ok: false as const, code: 'VALIDATION' as const, message: parsed.error.issues[0]?.message ?? 'Revisa los datos.', details: z.flattenError(parsed.error).fieldErrors }
   }
-  return withTenant('guardarProveedorPse', async (db, ctx) => {
-    await guardarConfigPse(db, ctx, parsed.data)
+  return withTenant('guardarCredencialesSunatAction', async (db, ctx) => {
+    const estado = await guardarCredencialesSunat(db, ctx, parsed.data)
+    revalidatePath('/comprobantes')
+    // Solo metadatos: nunca vuelve el .pfx ni ninguna clave.
+    return { ok: true as const, data: { vence: estado.certificado?.vence.toISOString() ?? null } }
+  })
+}
+
+export async function quitarCredencialesSunatAction() {
+  return withTenant('quitarCredencialesSunatAction', async (db, ctx) => {
+    await quitarCredencialesSunat(db, ctx)
     revalidatePath('/comprobantes')
     return { ok: true as const, data: null }
   })
 }
 
-export async function quitarProveedorPse() {
-  return withTenant('quitarProveedorPse', async (db, ctx) => {
-    await quitarConfigPse(db, ctx)
+/** «Probar conexión»: lee las credenciales guardadas, abre el certificado y consulta a SUNAT con el usuario SOL. No emite ni envía nada tributario. */
+export async function probarCredencialesSunatAction() {
+  return withTenant('probarCredencialesSunatAction', async (db, ctx) => {
+    const r = await probarConexionSunat(db, ctx)
     revalidatePath('/comprobantes')
-    return { ok: true as const, data: null }
+    return { ok: true as const, data: r }
   })
-}
-
-export async function probarProveedorPse() {
-  return withTenant('probarProveedorPse', async (db, ctx) => ({
-    ok: true as const,
-    data: await probarConexionPse(db, ctx),
-  }))
 }

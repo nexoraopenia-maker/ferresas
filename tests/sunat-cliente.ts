@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { crearZip, leerZip, ZipInvalido } from '../src/features/sunat/zip'
-import { categoriaDeCodigo, leerCdr, CdrIlegible } from '../src/features/sunat/cdr'
+import { categoriaDeCodigo, esFalloDeAcceso, leerCdr, CdrIlegible } from '../src/features/sunat/cdr'
 import { escaparXml, leerFallo, sobreGetStatus, sobreSendBill, xmlDelCdr } from '../src/features/sunat/soap'
 import { evaluarEndpointSunat, SUNAT_BETA_BILL, SUNAT_PRODUCCION_BILL, urlConsulta } from '../src/features/sunat/endpoints'
 import { consultarCdr, EndpointNoPermitido, enviarComprobante, nombreBase, type CredencialesSol } from '../src/features/sunat/cliente'
@@ -94,6 +94,8 @@ async function main() {
   const cat = (c: string) => categoriaDeCodigo(c)
   check('>>> categorías (⚠️ rangos sin verificar): 0 aceptado, 4xxx observado, 2xxx-3xxx rechazo, 01xx configuración, el resto excepción',
     cat('0') === 'aceptado' && cat('4252') === 'observado' && cat('2800') === 'rechazado' && cat('3030') === 'rechazado' && cat('0102') === 'configuracion' && cat('1033') === 'excepcion' && cat('abc') === 'excepcion')
+
+  check('>>> los fallos de ACCESO (0101–0106, ⚠️) son más estrechos que la familia 01xx: «el comprobante no existe» (0127) NO es un fallo de credenciales', esFalloDeAcceso('0102') && esFalloDeAcceso('104') && !esFalloDeAcceso('0127') && !esFalloDeAcceso('0151') && !esFalloDeAcceso(null) && !esFalloDeAcceso('2800'))
 
   console.log('\n3) Lista blanca de endpoints')
   check('beta y producción de SUNAT (https) → permitidos', evaluarEndpointSunat(SUNAT_BETA_BILL, {}).tipo === 'beta' && evaluarEndpointSunat(SUNAT_PRODUCCION_BILL, {}).tipo === 'produccion')

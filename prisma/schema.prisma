@@ -525,6 +525,8 @@ model Tenant {
   priceListEntries      PriceListEntry[]
   priceTiers            PriceTier[]
   cashRegisters         CashRegister[]
+  /// Credenciales de SUNAT directo (certificado y usuario SOL secundario), cifradas. Una por negocio.
+  sunatCredential SunatCredential?
 }
 
 // ============================================================================
@@ -3272,4 +3274,50 @@ model CashRegister {
   @@unique([tenantId, id])
   @@index([tenantId, branchId])
   @@map("cash_registers")
+}
+
+enum SunatAmbiente {
+  /// Ambiente de pruebas (beta) de SUNAT: lo que se envía NO tiene validez tributaria.
+  BETA
+  /// Producción. Solo un SuperAdmin lo activa (fase S5).
+  PRODUCCION
+}
+
+/// Credenciales de SUNAT directo de un negocio (S2): certificado digital (.pfx) y usuario SOL SECUNDARIO. Los secretos (el .pfx, su clave y la
+/// clave SOL) van CIFRADOS con AES-256-GCM atado al negocio (`src/lib/cifrado.ts`; el texto cifrado lleva la versión de la clave maestra) y no
+/// salen del servidor. El resto son metadatos del certificado para la pantalla y las alertas de vencimiento.
+model SunatCredential {
+  id       String @id @default(cuid())
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// El .pfx en base64, cifrado.
+  pfxEnc         String
+  /// Clave del .pfx, cifrada.
+  pfxPasswordEnc String
+  /// Usuario SOL secundario (no es secreto; nunca el principal).
+  solUser        String
+  /// Clave SOL del usuario secundario, cifrada.
+  solPasswordEnc String
+  ambiente       SunatAmbiente @default(BETA)
+
+  certSubject   String
+  certIssuer    String
+  certSerial    String
+  /// RUC deducido del sujeto del certificado (heurística ⚠️), si se pudo.
+  certRuc       String?
+  certValidFrom DateTime
+  certValidTo   DateTime
+
+  /// Última prueba de conexión con SUNAT (nunca guarda la respuesta completa, solo si salió bien y un mensaje corto).
+  lastTestAt      DateTime?
+  lastTestOk      Boolean?
+  lastTestMessage String?
+
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([certValidTo])
+  @@map("sunat_credentials")
 }

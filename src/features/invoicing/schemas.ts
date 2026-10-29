@@ -128,3 +128,14 @@ export const fijarArranqueSchema = z.object({
 })
 
 export type FijarArranqueInputDTO = z.infer<typeof fijarArranqueSchema>
+
+/**
+ * Credenciales de SUNAT directo (S2). El .pfx viaja en base64 (Server Action: tope razonable, ≤ 100 KB de archivo). Las claves no se recortan:
+ * pueden llevar espacios. La validación de fondo (abrir el .pfx, vigencia, RUC) está en el servicio.
+ */
+export const guardarCredencialesSunatSchema = z.object({
+  pfxBase64: z.string().min(200, 'Elige el archivo del certificado (.pfx).').max(140_000, 'El certificado es demasiado grande.'),
+  claveCertificado: z.string().min(1, 'Escribe la clave del certificado.').max(200),
+  usuarioSol: z.string().trim().min(3, 'Escribe el usuario SOL secundario.').max(30),
+  claveSol: z.string().min(4, 'Escribe la clave SOL.').max(100),
+})

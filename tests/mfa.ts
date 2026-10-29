@@ -87,7 +87,7 @@ async function main() {
   const { secreto, otpauth } = await iniciarActivacionMfa(vend.id)
   check('el otpauth lleva el correo de la cuenta', otpauth.includes(encodeURIComponent((await prisma.user.findUniqueOrThrow({ where: { id: vend.id } })).email)))
   const fila = await prisma.user.findUniqueOrThrow({ where: { id: vend.id } })
-  check('>>> el secreto se guarda CIFRADO, no en claro', fila.mfaSecretEnc !== null && !fila.mfaSecretEnc.includes(secreto) && fila.mfaSecretEnc.startsWith('v1.'))
+  check('>>> el secreto se guarda CIFRADO, no en claro', fila.mfaSecretEnc !== null && !fila.mfaSecretEnc.includes(secreto) && /^v[12]\./.test(fila.mfaSecretEnc))
   const ahora = new Date()
   check('un código incorrecto no activa', await code(confirmarActivacionMfa(vend.id, '000000')) === 'UNAUTHENTICATED' || totp(secreto, ahora) === '000000')
   check('...y sigue sin estar activo', !(await estadoMfa(vend.id)).activo)

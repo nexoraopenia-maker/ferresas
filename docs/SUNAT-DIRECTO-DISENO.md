@@ -146,3 +146,10 @@ Valores dados por el dueño. Los normativos siguen ⚠️ hasta que suba los PDF
 | 6 | Worker con **Vercel Cron Jobs** cada minuto sobre `/api/fiscal/worker`; `FISCAL_WORKER_SECRET` = UUID largo en `.env.local` y Vercel. | ⚠️ Los crons por minuto exigen un plan de Vercel que los permita; se verifica antes de S5. La ruta ya se autentica con ese secreto compartido. Hay que dejar `vercel.json` con el cron cuando llegue S3/S5. |
 | 7 | Alertas de vencimiento: solo barra/banner dentro del panel. Sin correos. | Sin envío de correo (S2). |
 | 8 | Cada ferretería compra y tramita su propio certificado; nosotros damos la interfaz para subir el `.pfx`. | Texto de ayuda de la pantalla (S2). |
+
+## 13. Lo que S2 entregó y en qué se apartó del diseño (2026-10-29)
+
+- **Clave maestra versionada**: formato `v2.<kid>.<iv>.<etiqueta>.<cifrado>`; entorno `SECRETOS_CLAVES` (JSON de claves) + `SECRETOS_CLAVE_ACTUAL`; `PSE_MASTER_KEY` sigue valiendo y se toma como la clave «1» (y la rotación de siempre con `_PREVIOUS` sigue leyendo). Lo `v1` se lee con cualquier clave configurada. `scripts/recifrar-secretos.ts` (solo mira por defecto; `--aplicar` escribe de a un registro comprobando que lo escrito se lee).
+- **`sunat_credentials`** (migración `20261125100000_sunat_credenciales`, aditiva) con CHECK que impiden guardar un secreto sin cifrar. **Desviación**: no lleva columna `keyVersion`; la versión de la clave va dentro del propio texto cifrado (una sola fuente de verdad, imposible que columna y dato se contradigan).
+- **Servicio y pantalla «Conexión con SUNAT»** (3 pasos), solo `config.fiscal`; guardar y quitar se niegan durante una suplantación; siempre nace en BETA; barra de vencimiento solo en el panel y solo para quien tiene `config.fiscal`; auditoría sin secretos; «Probar conexión» con freno de 15 s (⚠️ #13).
+- **PSE en pantalla retirado** (paso 1 de D6): sin `PseConfig` ni sus acciones. El servicio `pse-config.ts`, el proveedor `pse-rest` y las columnas `Tenant.pse*` siguen hasta S3 (cuando el proveedor `sunat-directo` los reemplace) y el borrado destructivo, que es un push aparte.

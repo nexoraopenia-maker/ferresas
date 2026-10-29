@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { CifradoInvalido, ClaveMaestraAusente, cifrar, descifrar, hayClaveMaestra, leerClave } from '../src/lib/cifrado'
+import { CifradoInvalido, ClaveMaestraAusente, cifrar, descifrar, hayClaveMaestra, leerClave, necesitaRecifrado, recifrar, versionDeClave } from '../src/lib/cifrado'
 import { UrlNoPermitida, esIpInterna, validarFormaUrl, validarUrlPse } from '../src/features/invoicing/url-segura'
 import { construirTramaQr, llevaQr, qrSvg } from '../src/features/invoicing/qr'
 
@@ -13,7 +13,8 @@ const lanzaAsync = async (f: () => Promise<unknown>) => { try { await f(); retur
 
 const K1 = randomBytes(32).toString('base64')
 const K2 = randomBytes(32).toString('hex')
-const antes = { k: process.env.PSE_MASTER_KEY, p: process.env.PSE_MASTER_KEY_PREVIOUS, h: process.env.PSE_ALLOWED_HOSTS }
+const antes = { k: process.env.PSE_MASTER_KEY, p: process.env.PSE_MASTER_KEY_PREVIOUS, h: process.env.PSE_ALLOWED_HOSTS, c: process.env.SECRETOS_CLAVES, a: process.env.SECRETOS_CLAVE_ACTUAL }
+delete process.env.SECRETOS_CLAVES; delete process.env.SECRETOS_CLAVE_ACTUAL
 
 async function main() {
   console.log('\n1) Cifrado AES-256-GCM')
@@ -22,13 +23,13 @@ async function main() {
   const c1 = cifrar(TOKEN, 'tenant-A')
   check('>>> ida y vuelta', descifrar(c1, 'tenant-A') === TOKEN)
   check('>>> el texto cifrado NO contiene el token', !c1.includes(TOKEN) && !c1.includes('SECRETO'))
-  check('formato v1.iv.etiqueta.cifrado', /^v1\.[\w-]+\.[\w-]+\.[\w-]+$/.test(c1))
+  check('>>> formato v2.kid.iv.etiqueta.cifrado, con la clave «1» por compatibilidad con PSE_MASTER_KEY', /^v2\.1\.[\w-]+\.[\w-]+\.[\w-]+$/.test(c1) && versionDeClave(c1) === '1')
   check('>>> mismo token, distinto texto cada vez (IV aleatorio)', cifrar(TOKEN, 'tenant-A') !== c1)
   check('>>> atado al negocio: otro tenantId NO descifra', lanza(() => descifrar(c1, 'tenant-B'), CifradoInvalido))
   const partes = c1.split('.')
-  const manipulado = [partes[0], partes[1], partes[2], Buffer.from([...Buffer.from(partes[3]!, 'base64url')].map((b, i) => (i === 0 ? b ^ 1 : b))).toString('base64url')].join('.')
+  const manipulado = [partes[0], partes[1], partes[2], partes[3], Buffer.from([...Buffer.from(partes[4]!, 'base64url')].map((b, i) => (i === 0 ? b ^ 1 : b))).toString('base64url')].join('.')
   check('>>> un cambio de UN bit se detecta (GCM autentica)', lanza(() => descifrar(manipulado, 'tenant-A'), CifradoInvalido))
-  check('un formato ajeno se rechaza', lanza(() => descifrar('v9.a.b.c', 'tenant-A'), CifradoInvalido) && lanza(() => descifrar('basura', 'tenant-A'), CifradoInvalido))
+  check('un formato ajeno se rechaza', lanza(() => descifrar('v9.a.b.c', 'tenant-A'), CifradoInvalido) && lanza(() => descifrar('basura', 'tenant-A'), CifradoInvalido) && lanza(() => descifrar('v2.1.a', 'tenant-A'), CifradoInvalido))
   check('texto largo y con tildes', descifrar(cifrar('señor ñandú ' + 'x'.repeat(2000), 'a'), 'a') === 'señor ñandú ' + 'x'.repeat(2000))
 
   console.log('\n2) Claves')
@@ -39,9 +40,52 @@ async function main() {
   check('ni se descifra', lanza(() => descifrar(c1, 'tenant-A'), ClaveMaestraAusente))
   process.env.PSE_MASTER_KEY = K2
   check('>>> con OTRA clave no descifra lo guardado con la primera', lanza(() => descifrar(c1, 'tenant-A'), CifradoInvalido))
+  const c1v1 = cifrar(TOKEN, 'tenant-A', leerClave(K1)!)   // el formato anterior (sin identificador de clave)
+  check('>>> un valor v1 con la clave nueva NO descifra', lanza(() => descifrar(c1v1, 'tenant-A'), CifradoInvalido))
   process.env.PSE_MASTER_KEY_PREVIOUS = K1
-  check('>>> ROTACIÓN: con la anterior declarada sí descifra', descifrar(c1, 'tenant-A') === TOKEN)
+  check('>>> ROTACIÓN heredada: con la anterior declarada sí descifra un valor v1', descifrar(c1v1, 'tenant-A') === TOKEN)
   check('y lo nuevo se cifra con la clave actual (no con la anterior)', descifrar(cifrar(TOKEN, 'a'), 'a') === TOKEN && (() => { delete process.env.PSE_MASTER_KEY_PREVIOUS; return descifrar(cifrar(TOKEN, 'a'), 'a') === TOKEN })())
+
+  // El procedimiento de siempre sigue sirviendo para lo que se cifró DESPUÉS de las claves versionadas con la clave «1» (= PSE_MASTER_KEY).
+  process.env.PSE_MASTER_KEY = K1
+  const v2k1 = cifrar('legado', 'neg-9')
+  process.env.PSE_MASTER_KEY = K2; process.env.PSE_MASTER_KEY_PREVIOUS = K1
+  check('>>> rotación de SIEMPRE (nueva en PSE_MASTER_KEY, vieja en _PREVIOUS) sigue leyendo también lo v2 de la clave «1»', descifrar(v2k1, 'neg-9') === 'legado')
+  delete process.env.PSE_MASTER_KEY_PREVIOUS
+  check('>>> y sin la anterior declarada, no', lanza(() => descifrar(v2k1, 'neg-9'), CifradoInvalido))
+  process.env.PSE_MASTER_KEY = K1
+
+  console.log('\n2b) Clave versionada: rotar sin perder nada')
+  delete process.env.PSE_MASTER_KEY_PREVIOUS
+  const KA = randomBytes(32).toString('base64'), KB = randomBytes(32).toString('base64')
+  process.env.SECRETOS_CLAVES = JSON.stringify({ a: KA })
+  process.env.SECRETOS_CLAVE_ACTUAL = 'a'
+  delete process.env.PSE_MASTER_KEY
+  const va = cifrar('secreto', 'neg-1')
+  check('>>> con SECRETOS_CLAVES el valor lleva el identificador de la clave («a»)', /^v2\.a\./.test(va) && versionDeClave(va) === 'a' && descifrar(va, 'neg-1') === 'secreto')
+  process.env.SECRETOS_CLAVES = JSON.stringify({ a: KA, b: KB })
+  process.env.SECRETOS_CLAVE_ACTUAL = 'b'
+  const vb = cifrar('secreto', 'neg-1')
+  check('>>> ROTACIÓN: agregada la clave «b» y declarada actual, lo viejo («a») SIGUE leyéndose y lo nuevo se cifra con «b»', descifrar(va, 'neg-1') === 'secreto' && versionDeClave(vb) === 'b' && descifrar(vb, 'neg-1') === 'secreto')
+  check('>>> qué hay que re-cifrar: lo cifrado con «a» sí, con «b» no, y un v1 también', necesitaRecifrado(va) && !necesitaRecifrado(vb) && necesitaRecifrado(cifrar('x', 'n', leerClave(KA)!)) && !necesitaRecifrado('basura'))
+  const nuevo = recifrar(va, 'neg-1')
+  check('>>> re-cifrar deja el mismo secreto con la clave actual y atado al mismo negocio', versionDeClave(nuevo) === 'b' && descifrar(nuevo, 'neg-1') === 'secreto' && lanza(() => descifrar(nuevo, 'neg-2'), CifradoInvalido))
+  process.env.SECRETOS_CLAVES = JSON.stringify({ b: KB })
+  check('>>> retirada «a», lo re-cifrado se lee y lo que quedó con «a» falla con un mensaje que dice cuál clave falta', descifrar(nuevo, 'neg-1') === 'secreto' && (() => { try { descifrar(va, 'neg-1'); return false } catch (e) { return e instanceof CifradoInvalido && /«a»/.test(e.message) } })())
+  check('>>> un v1 sigue leyéndose con cualquiera de las claves configuradas (no dice cuál lo cifró)', (() => { process.env.SECRETOS_CLAVES = JSON.stringify({ a: KA, b: KB }); return descifrar(cifrar('viejo', 'neg-1', leerClave(KA)!), 'neg-1') === 'viejo' })())
+  process.env.SECRETOS_CLAVES = JSON.stringify({ v1: KA })
+  process.env.SECRETOS_CLAVE_ACTUAL = 'v1'
+  check('>>> «v1» y «v2» no valen como identificador de clave (se confundirían con la versión del formato)', !hayClaveMaestra())
+  process.env.SECRETOS_CLAVES = JSON.stringify({ a: KA, b: KB })
+  process.env.SECRETOS_CLAVE_ACTUAL = 'z'
+  check('>>> si la clave declarada como actual no existe NO se cifra (nunca con otra por sorpresa)', !hayClaveMaestra() && lanza(() => cifrar('x', 'n'), ClaveMaestraAusente))
+  process.env.SECRETOS_CLAVE_ACTUAL = 'b'
+  process.env.SECRETOS_CLAVES = JSON.stringify({ b: 'corta', 'v2': KA, '../x': KA })
+  check('>>> claves mal formadas o con identificador reservado/ilegal se ignoran (no se cifra con basura)', !hayClaveMaestra())
+  process.env.SECRETOS_CLAVES = '{no es json'
+  check('>>> un JSON ilegible no tumba el servidor: simplemente no hay clave', !hayClaveMaestra() && lanza(() => cifrar('x', 'n'), ClaveMaestraAusente))
+  delete process.env.SECRETOS_CLAVES; delete process.env.SECRETOS_CLAVE_ACTUAL
+  process.env.PSE_MASTER_KEY = K1
 
   console.log('\n3) La URL del PSE la escribe un usuario: SSRF')
   const mala = (u: string) => lanza(() => validarFormaUrl(u), UrlNoPermitida)
@@ -76,10 +120,10 @@ async function main() {
   check('>>> el SVG no contiene los datos en claro (solo módulos del QR)', !svg.includes('20131312955') && !svg.includes('AbC123'))
   check('es determinista', svg === (await qrSvg(construirTramaQr(base))))
 
-  Object.assign(process.env, { PSE_MASTER_KEY: antes.k, PSE_MASTER_KEY_PREVIOUS: antes.p, PSE_ALLOWED_HOSTS: antes.h })
-  for (const k of ['PSE_MASTER_KEY', 'PSE_MASTER_KEY_PREVIOUS', 'PSE_ALLOWED_HOSTS'] as const) if (process.env[k] === undefined || process.env[k] === 'undefined') delete process.env[k]
+  Object.assign(process.env, { PSE_MASTER_KEY: antes.k, PSE_MASTER_KEY_PREVIOUS: antes.p, PSE_ALLOWED_HOSTS: antes.h, SECRETOS_CLAVES: antes.c, SECRETOS_CLAVE_ACTUAL: antes.a })
+  for (const k of ['PSE_MASTER_KEY', 'PSE_MASTER_KEY_PREVIOUS', 'PSE_ALLOWED_HOSTS', 'SECRETOS_CLAVES', 'SECRETOS_CLAVE_ACTUAL'] as const) if (process.env[k] === undefined || process.env[k] === 'undefined') delete process.env[k]
 
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
   process.exit(fail === 0 ? 0 : 1)
 }
-main()
+main().catch((e) => { console.log(`  ✗ EXCEPCIÓN no controlada: ${e instanceof Error ? e.stack : e}`); process.exit(1) })

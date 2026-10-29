@@ -4,8 +4,8 @@ import { TaxDocumentList } from '@/features/invoicing/components/TaxDocumentList
 import { SeriesPanel } from '@/features/invoicing/components/SeriesPanel'
 import { listarSeriesConfigurables } from '@/features/invoicing/counter-service'
 import { puede } from '@/lib/puede'
-import { PseConfig } from '@/features/invoicing/components/PseConfig'
-import { estadoConfigPse } from '@/features/invoicing/pse-config'
+import { SunatConfig } from '@/features/invoicing/components/SunatConfig'
+import { estadoCredencialesSunat } from '@/features/sunat/credenciales'
 import { modoFiscal } from '@/features/invoicing/modo-fiscal'
 import { CODIGOS_NOTA_CREDITO_PARCIAL, CODIGOS_NOTA_CREDITO_TOTAL } from '@/features/invoicing/notas'
 
@@ -66,7 +66,7 @@ export default async function ComprobantesPage() {
       ])
     : [null, null]
 
-  const pse = puedeSeries ? await estadoConfigPse(db) : null
+  const sunat = puedeSeries ? await estadoCredencialesSunat(db) : null
   const porEstado = Object.fromEntries(resumen.map((r) => [r.status, r._count._all]))
 
   return (
@@ -85,9 +85,17 @@ export default async function ComprobantesPage() {
         <Contador label="Rechazados" value={porEstado.RECHAZADO ?? 0} tono="stop" />
       </section>
 
-      {pse && (
-        <PseConfig
-          configurado={pse.configurado} host={pse.host} claveMaestra={pse.claveMaestra}
+      {sunat && (
+        <SunatConfig
+          estado={{
+            configurado: sunat.configurado, ambiente: sunat.ambiente, usuarioSol: sunat.usuarioSol,
+            certificado: sunat.certificado && {
+              sujeto: sunat.certificado.sujeto, ruc: sunat.certificado.ruc, estado: sunat.certificado.estado,
+              diasRestantes: sunat.certificado.diasRestantes, vence: sunat.certificado.vence.toISOString().slice(0, 10),
+            },
+            ultimaPrueba: sunat.ultimaPrueba && { en: sunat.ultimaPrueba.en.toISOString(), ok: sunat.ultimaPrueba.ok, mensaje: sunat.ultimaPrueba.mensaje },
+          }}
+          claveMaestra={sunat.claveMaestra}
           puedeOperar={ctx.access === 'FULL' || ctx.access === 'WARN'}
         />
       )}

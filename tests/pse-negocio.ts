@@ -79,7 +79,7 @@ async function main() {
   // Para guardar hace falta que el nombre resuelva a una IP pública: se usa example.com, que lo hace.
   await guardarConfigPse(A.owner.db, A.owner.ctx, { url: 'https://example.com/pse/', token: TOKEN })
   const fila = await prisma.tenant.findUniqueOrThrow({ where: { id: A.t.id } })
-  check('>>> el token NO está en claro en la base', !!fila.pseTokenEnc && !fila.pseTokenEnc.includes(TOKEN) && fila.pseTokenEnc.startsWith('v1.'))
+  check('>>> el token NO está en claro en la base', !!fila.pseTokenEnc && !fila.pseTokenEnc.includes(TOKEN) && /^v[12]\./.test(fila.pseTokenEnc))
   check('la URL se guarda normalizada (sin barra final)', fila.pseEndpointUrl === 'https://example.com/pse')
   const est = await estadoConfigPse(A.owner.db)
   check('>>> la pantalla solo sabe que está configurado y el host, nunca el token', est.configurado && est.host === 'example.com' && !JSON.stringify(est).includes(TOKEN) && !JSON.stringify(est).includes('pse/'))

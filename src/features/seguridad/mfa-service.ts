@@ -20,7 +20,7 @@ import { BLOQUEO_MFA_MS, EMISOR_TOTP, MAX_INTENTOS_MFA, mfaObligatorio } from '.
  * recuperación, solo como hash.
  */
 
-const aad = (userId: string) => `mfa:${userId}`
+export const aad = (userId: string) => `mfa:${userId}`
 
 export type ResultadoSegundoFactor =
   | { ok: true; recuperacion: boolean }

@@ -58,6 +58,7 @@ const TENANT_SCOPED = new Set([
   'Customer',
   'PriceList',
   'CashRegister',
+  'SunatCredential',
   'PriceListEntry',
   'PriceTier',
   'Product',
