@@ -24,11 +24,26 @@ export async function guardarArchivosFiscales(
   t: TenantPrismaClient, tenantId: string, taxDocumentId: string, archivos: { xmlFirmado?: string; cdrXml?: string } | undefined,
 ): Promise<void> {
   if (!archivos) return
-  const filas = ([['XML_FIRMADO', archivos.xmlFirmado], ['CDR', archivos.cdrXml]] as const)
-    .filter((f): f is readonly [TipoArchivoFiscal, string] => typeof f[1] === 'string' && f[1].length > 0)
-    .map(([kind, texto]) => ({ tenantId, taxDocumentId, kind, content: gzipSync(Buffer.from(texto, 'utf8')), sha256: sha256(texto), size: Buffer.byteLength(texto, 'utf8') }))
+  const filas = filasDeArchivos(archivos).map((f) => ({ tenantId, taxDocumentId, ...f }))
   if (filas.length === 0) return
   await t.taxDocumentFile.createMany({ data: filas, skipDuplicates: true })
+}
+
+/** Las filas comprimidas y con huella de lo que haya (compartido por los archivos del comprobante y los de su baja). */
+function filasDeArchivos(archivos: { xmlFirmado?: string; cdrXml?: string }) {
+  return ([['XML_FIRMADO', archivos.xmlFirmado], ['CDR', archivos.cdrXml]] as const)
+    .filter((f): f is readonly [TipoArchivoFiscal, string] => typeof f[1] === 'string' && f[1].length > 0)
+    .map(([kind, texto]) => ({ kind, content: gzipSync(Buffer.from(texto, 'utf8')), sha256: sha256(texto), size: Buffer.byteLength(texto, 'utf8') }))
+}
+
+/** Lo mismo para una comunicación de baja (S4): el XML que se envió y el CDR del ticket. Mismas garantías: una vez por tipo, sin reemplazo. */
+export async function guardarArchivosBaja(
+  t: TenantPrismaClient, tenantId: string, taxVoidId: string, archivos: { xmlFirmado?: string; cdrXml?: string } | undefined,
+): Promise<void> {
+  if (!archivos) return
+  const filas = filasDeArchivos(archivos).map((f) => ({ tenantId, taxVoidId, ...f }))
+  if (filas.length === 0) return
+  await t.taxVoidFile.createMany({ data: filas, skipDuplicates: true })
 }
 
 export interface ArchivoFiscal {
@@ -57,4 +72,22 @@ export async function leerArchivoFiscal(db: TenantPrismaClient, ctx: TenantConte
 export async function archivosDeComprobante(db: TenantPrismaClient, taxDocumentId: string): Promise<TipoArchivoFiscal[]> {
   const filas = await db.taxDocumentFile.findMany({ where: { taxDocumentId }, select: { kind: true } })
   return filas.map((f) => f.kind)
+}
+
+/**
+ * Descarga el XML o el CDR de la baja MÁS RECIENTE de un comprobante que lo tenga. Mismos permisos que los archivos del comprobante. Al leer se vuelve a calcular la huella.
+ */
+export async function leerArchivoBaja(db: TenantPrismaClient, ctx: TenantContext, taxDocumentId: string, kind: TipoArchivoFiscal): Promise<ArchivoFiscal> {
+  if (!puede(ctx, 'comprobantes.emitir') && !puede(ctx, 'reportes.ver') && !puede(ctx, 'comprobantes.dar_baja')) {
+    throw new BusinessError('FORBIDDEN_ROLE', 'No tienes permiso para descargar los archivos de una baja.')
+  }
+  const f = await db.taxVoidFile.findFirst({
+    where: { kind, taxVoid: { taxDocumentId } }, orderBy: { createdAt: 'desc' },
+    select: { content: true, sha256: true, taxVoid: { select: { identifier: true } } },
+  })
+  if (!f) throw new BusinessError('NOT_FOUND', 'Ese comprobante no tiene ese archivo de baja guardado (se guarda cuando SUNAT responde).')
+  let contenido: string
+  try { contenido = gunzipSync(f.content, { maxOutputLength: 6 * 1024 * 1024 }).toString('utf8') } catch { throw new BusinessError('INVALID_DOCUMENT', 'El archivo guardado está dañado.') }
+  if (sha256(contenido) !== f.sha256) throw new BusinessError('INVALID_DOCUMENT', 'El archivo guardado está dañado: su huella no coincide.')
+  return { nombre: kind === 'XML_FIRMADO' ? `${f.taxVoid.identifier}.xml` : `R-${f.taxVoid.identifier}.xml`, contenido, sha256: f.sha256 }
 }

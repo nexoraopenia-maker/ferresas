@@ -139,3 +139,11 @@ export const guardarCredencialesSunatSchema = z.object({
   usuarioSol: z.string().trim().min(3, 'Escribe el usuario SOL secundario.').max(30),
   claveSol: z.string().min(4, 'Escribe la clave SOL.').max(100),
 })
+
+/** Pedir la baja de un comprobante (S4). El largo del motivo lo vuelve a exigir el servicio y la base. */
+export const solicitarBajaSchema = z.object({
+  taxDocumentId: z.string().min(1).max(64),
+  motivo: z.string().max(200),
+})
+
+export const reintentarBajaSchema = z.object({ taxDocumentId: z.string().min(1).max(64) })

@@ -156,6 +156,36 @@ export interface Descarga {
   tipoMime: string
 }
 
+/** Lo que hace falta para comunicar la baja de UN comprobante a SUNAT (S4). */
+export interface SolicitudBaja {
+  /** `RA-AAAAMMDD-N`. */
+  identificador: string
+  /** Día (zona del negocio) en que se genera la comunicación, `AAAA-MM-DD`. */
+  fechaGeneracion: string
+  /** Día de emisión del comprobante que se da de baja, `AAAA-MM-DD`. */
+  fechaEmision: string
+  emisor: { ruc: string; razonSocial: string }
+  /** Factura (01) o nota de crédito/débito (07/08) de serie F. */
+  tipoComprobante: '01' | '07' | '08'
+  serie: string
+  correlativo: number
+  motivo: string
+}
+
+/** Primera mitad de la baja: se envía y SUNAT da un ticket (la respuesta llega después). */
+export type EnvioBaja =
+  | { tipo: 'ticket'; ticket: string; xmlFirmado: string }
+  /** SUNAT rechazó la comunicación misma (estructura, firma…): definitivo, reenviar daría lo mismo. */
+  | { tipo: 'rechazo'; codigo: string | null; mensaje: string; xmlFirmado: string }
+  /** No hubo respuesta utilizable: se reintenta con el MISMO identificador. */
+  | { tipo: 'transitorio'; mensaje: string }
+
+/** Segunda mitad: preguntar por el ticket. */
+export type ConsultaBaja =
+  | { tipo: 'en_proceso' }
+  | { tipo: 'transitorio'; mensaje: string }
+  | { tipo: 'resuelta'; aceptada: boolean; codigo: string; mensaje: string; cdrXml: string }
+
 export interface ResultadoBaja {
   /** Ticket de la comunicación de baja: el resultado llega después. */
   ticket: string | null
@@ -229,6 +259,13 @@ export interface ProveedorFacturacion {
     motivo: string,
     credenciales: CredencialesProveedor,
   ): Promise<ResultadoBaja>
+
+  /**
+   * Comunicación de baja en DOS tiempos (S4): `comunicarBaja` envía y devuelve el ticket; `consultarBaja` pregunta por él. Un proveedor que no la soporta lanza
+   * `ErrorConfiguracionProveedor`. (`anular` es la baja de una sola llamada de los proveedores simulados.)
+   */
+  comunicarBaja(solicitud: SolicitudBaja, credenciales: CredencialesProveedor): Promise<EnvioBaja>
+  consultarBaja(ticket: string, rucEmisor: string, credenciales: CredencialesProveedor): Promise<ConsultaBaja>
 
   /** Descarga el XML firmado, el CDR o el PDF. */
   descargar(

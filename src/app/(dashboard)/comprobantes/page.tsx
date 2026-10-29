@@ -7,6 +7,8 @@ import { puede } from '@/lib/puede'
 import { SunatConfig } from '@/features/invoicing/components/SunatConfig'
 import { estadoCredencialesSunat } from '@/features/sunat/credenciales'
 import { modoFiscal } from '@/features/invoicing/modo-fiscal'
+import { bajasDeComprobantes, motivoDeNoBaja } from '@/features/sunat/baja'
+import { diaLocal } from '@/lib/periodos'
 import { CODIGOS_NOTA_CREDITO_PARCIAL, CODIGOS_NOTA_CREDITO_TOTAL } from '@/features/invoicing/notas'
 
 export const dynamic = 'force-dynamic'
@@ -52,6 +54,15 @@ export default async function ComprobantesPage() {
 
   const tenant = await db.tenant.findFirst({ select: { timezone: true, isDemo: true, realBillingEnabledAt: true, realBillingPausedAt: true } })
   const modo = tenant ? modoFiscal(tenant) : 'ENSAYO'
+  // Baja (S4): la más reciente de cada comprobante, sus archivos y cuántas notas vivas tiene (una nota y una baja a la vez se contradicen).
+  const ids = docs.map((d) => d.id)
+  const [bajas, archivosBaja, notasVivas] = await Promise.all([
+    bajasDeComprobantes(db, ids),
+    db.taxVoidFile.findMany({ where: { taxVoid: { taxDocumentId: { in: ids } } }, select: { kind: true, taxVoid: { select: { taxDocumentId: true } } } }),
+    db.taxDocument.groupBy({ by: ['relatedDocumentId'], where: { isTrial: false, relatedDocumentId: { in: ids }, status: { not: 'RECHAZADO' } }, _count: { _all: true } }),
+  ])
+  const notasPorDoc = new Map(notasVivas.map((n) => [n.relatedDocumentId, n._count._all]))
+  const ahoraPagina = new Date()
   const facturacionActiva = modo === 'REAL' || modo === 'PAUSADO'
 
   /*
@@ -122,6 +133,7 @@ export default async function ComprobantesPage() {
         canManage={puede(ctx, 'comprobantes.anular')}
         puedeEmitirNota={puede(ctx, 'comprobantes.anular') && (ctx.access === 'FULL' || ctx.access === 'WARN')}
         facturacionActiva={facturacionActiva}
+        puedeDarBaja={puede(ctx, 'comprobantes.dar_baja') && (ctx.access === 'FULL' || ctx.access === 'WARN') && facturacionActiva}
         puedeEmitirGuia={puede(ctx, 'guias.emitir')}
         puedeEnviar={puede(ctx, 'comprobantes.emitir') && (ctx.access === 'FULL' || ctx.access === 'WARN')}
         zonaHoraria={tenant?.timezone ?? 'America/Lima'}
@@ -147,6 +159,13 @@ export default async function ComprobantesPage() {
           notaTotal: d.notes[0]?.fullNumber ?? null,
           tieneIdProveedor: !!d.externalId,
           archivos: d.archivos.map((a) => a.kind),
+          baja: bajas[d.id] ? { identificador: bajas[d.id]!.identificador, status: bajas[d.id]!.status, motivo: bajas[d.id]!.motivo, mensaje: bajas[d.id]!.mensaje, ticket: bajas[d.id]!.ticket } : null,
+          archivosBaja: archivosBaja.filter((a) => a.taxVoid.taxDocumentId === d.id).map((a) => a.kind),
+          bajaBloqueo: motivoDeNoBaja({
+            documentType: d.documentType, series: d.series, isTrial: d.isTrial, status: d.status,
+            diaEmision: diaLocal(tenant?.timezone ?? 'America/Lima', d.issuedAt), diaHoy: diaLocal(tenant?.timezone ?? 'America/Lima', ahoraPagina),
+            bajaPrevia: bajas[d.id] ? { status: bajas[d.id]!.status, ticket: bajas[d.id]!.ticket } : null, notasVivas: notasPorDoc.get(d.id) ?? 0,
+          }),
           cola: d.dispatch ? { estado: d.dispatch.status, intentos: d.dispatch.attempts, proximo: d.dispatch.nextAttemptAt.toISOString(), error: d.dispatch.lastError } : null,
         }))}
       />

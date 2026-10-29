@@ -2,25 +2,28 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import { requireTenantContext } from '@/lib/session'
 import { isBusinessError } from '@/lib/errors'
-import { leerArchivoFiscal, type TipoArchivoFiscal } from '@/features/sunat/archivos'
+import { leerArchivoBaja, leerArchivoFiscal, type TipoArchivoFiscal } from '@/features/sunat/archivos'
 
 /**
- * GET /api/comprobantes/[id]/archivo?tipo=xml|cdr — descarga el XML firmado o el CDR (constancia de SUNAT) guardados de un comprobante.
+ * GET /api/comprobantes/[id]/archivo?tipo=xml|cdr|baja-xml|baja-cdr — descarga el XML firmado o el CDR (constancia de SUNAT) guardados de un comprobante, o los de su comunicación de baja.
  * Exige sesión y permiso (`comprobantes.emitir` o `reportes.ver`; lo decide el servicio). Lo que no existe, no es del negocio o no se puede ver es el mismo 404.
  * Se entrega como adjunto, sin guardar en caché y sin que el navegador lo reinterprete.
  */
 export const dynamic = 'force-dynamic'
 
-const TIPOS: Record<string, TipoArchivoFiscal> = { xml: 'XML_FIRMADO', cdr: 'CDR' }
+const TIPOS: Record<string, { kind: TipoArchivoFiscal; baja: boolean }> = {
+  xml: { kind: 'XML_FIRMADO', baja: false }, cdr: { kind: 'CDR', baja: false }, 'baja-xml': { kind: 'XML_FIRMADO', baja: true }, 'baja-cdr': { kind: 'CDR', baja: true },
+}
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await requireTenantContext().catch(() => null)
   if (!ctx) return NextResponse.json({ error: 'unauthenticated' }, { status: 401 })
-  const kind = TIPOS[req.nextUrl.searchParams.get('tipo') ?? '']
-  if (!kind) return NextResponse.json({ error: 'INVALID_DOCUMENT', message: 'Pide tipo=xml o tipo=cdr.' }, { status: 400 })
+  const tipo = TIPOS[req.nextUrl.searchParams.get('tipo') ?? '']
+  if (!tipo) return NextResponse.json({ error: 'INVALID_DOCUMENT', message: 'Pide tipo=xml, cdr, baja-xml o baja-cdr.' }, { status: 400 })
   const { id } = await params
   try {
-    const a = await leerArchivoFiscal(getTenantPrisma(ctx), ctx, id.slice(0, 64), kind)
+    const lector = tipo.baja ? leerArchivoBaja : leerArchivoFiscal
+    const a = await lector(getTenantPrisma(ctx), ctx, id.slice(0, 64), tipo.kind)
     return new NextResponse(a.contenido, {
       status: 200,
       headers: {

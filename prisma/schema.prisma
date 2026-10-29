@@ -528,6 +528,8 @@ model Tenant {
   /// Credenciales de SUNAT directo (certificado y usuario SOL secundario), cifradas. Una por negocio.
   sunatCredential SunatCredential?
   taxDocumentFiles TaxDocumentFile[]
+  taxVoids         TaxVoid[]
+  taxVoidFiles     TaxVoidFile[]
 }
 
 // ============================================================================
@@ -2007,6 +2009,8 @@ model TaxDocument {
   items     TaxDocumentItem[]
   /// El XML firmado y el CDR que devolvió SUNAT (S3). Se conservan: no hay borrado automático (mínimo 5 años ⚠️).
   archivos  TaxDocumentFile[]
+  /// Comunicaciones de baja de este comprobante (S4).
+  bajas     TaxVoid[]
 
   @@unique([tenantId, id])
   /// La restricción LEGAL: no puede haber dos comprobantes con el mismo
@@ -3353,4 +3357,86 @@ model TaxDocumentFile {
   @@unique([taxDocumentId, kind])
   @@index([tenantId, taxDocumentId])
   @@map("tax_document_files")
+}
+
+enum TaxVoidStatus {
+  /// Por enviar a SUNAT (o por reintentar).
+  PENDIENTE
+  /// SUNAT recibió la comunicación y dio un ticket; falta su constancia.
+  ENVIADA
+  /// SUNAT aceptó la baja: el comprobante pasó a ANULADO.
+  ACEPTADA
+  /// SUNAT rechazó la baja: el comprobante sigue como estaba.
+  RECHAZADA
+  /// Sin respuesta tras todos los reintentos: el comprobante sigue como estaba y se ve en la alarma.
+  AGOTADA
+}
+
+/// Comunicación de baja (S4): pedir a SUNAT que anule un comprobante ya aceptado, dentro del plazo. Cada fila es una solicitud y lleva su propia cola
+/// (intentos, lease). Como mucho hay UNA viva por comprobante (índice único parcial en la migración). ⚠️ Todo lo normativo está sin validar (SUNAT-SUPUESTOS.md).
+model TaxVoid {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  taxDocumentId String
+  taxDocument   TaxDocument @relation(fields: [tenantId, taxDocumentId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  /// Día (en la zona del negocio) en que se generó la comunicación, `AAAA-MM-DD`, y su número del día. Juntos forman `RA-AAAAMMDD-N`.
+  issueDay   String
+  seq        Int
+  identifier String
+
+  reason      String
+  status      TaxVoidStatus @default(PENDIENTE)
+  requestedBy String?
+  requestedAt DateTime      @default(now())
+
+  /// Ticket que devolvió SUNAT al recibir la comunicación.
+  ticket          String?
+  responseCode    String?
+  responseMessage String?
+  sentAt          DateTime?
+  resolvedAt      DateTime?
+
+  // --- Cola: intentos (se cuentan al reclamar) y lease, como la cola de envío ---
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lockedUntil   DateTime?
+  lockedBy      String?
+  lastAttemptAt DateTime?
+  lastError     String?
+  exhaustedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  files TaxVoidFile[]
+
+  @@unique([tenantId, identifier])
+  @@unique([tenantId, id])
+  @@index([tenantId, taxDocumentId])
+  @@index([status, nextAttemptAt])
+  @@map("tax_voids")
+}
+
+/// Lo que se envió en la comunicación de baja (XML firmado) y lo que SUNAT respondió (CDR del ticket). Mismas garantías que `TaxDocumentFile`: una vez por tipo, inmutable.
+model TaxVoidFile {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  taxVoidId String
+  taxVoid   TaxVoid @relation(fields: [tenantId, taxVoidId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  kind    TaxFileKind
+  content Bytes
+  sha256  String
+  size    Int
+
+  createdAt DateTime @default(now())
+
+  @@unique([taxVoidId, kind])
+  @@index([tenantId, taxVoidId])
+  @@map("tax_void_files")
 }

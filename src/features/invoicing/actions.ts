@@ -6,9 +6,10 @@ import { getTenantPrisma, type TenantPrismaClient } from '@/lib/tenant-prisma'
 import { requireTenantContext } from '@/lib/session'
 import { isBusinessError, type ActionResult } from '@/lib/errors'
 import type { TenantContext } from '@/lib/tenant-context'
-import { emitirNotaCreditoSchema, fijarArranqueSchema, guardarCredencialesSunatSchema } from './schemas'
+import { emitirNotaCreditoSchema, fijarArranqueSchema, guardarCredencialesSunatSchema, reintentarBajaSchema, solicitarBajaSchema } from './schemas'
 import { fijarArranqueSerie, listarSeriesConfigurables } from './counter-service'
 import { guardarCredencialesSunat, probarConexionSunat, quitarCredencialesSunat } from '@/features/sunat/credenciales'
+import { reintentarBaja, solicitarBajaComprobante } from '@/features/sunat/baja'
 import { emitirNotaCreditoTotal } from './service'
 
 /**
@@ -91,6 +92,28 @@ export async function emitirNotaCreditoAction(raw: unknown) {
     const r = await emitirNotaCreditoTotal(db, ctx, parsed.data)
     revalidatePath('/comprobantes')
     return { ok: true as const, data: r }
+  })
+}
+
+/** Pide la baja de una factura ya aceptada (comprobantes.dar_baja; el servicio lo exige). Nada sale a SUNAT aquí: la cola lo envía. */
+export async function solicitarBajaAction(raw: unknown) {
+  const parsed = solicitarBajaSchema.safeParse(raw)
+  if (!parsed.success) return { ok: false as const, code: 'VALIDATION' as const, message: 'Revisa el motivo de la baja.', details: z.flattenError(parsed.error).fieldErrors }
+  return withTenant('solicitarBajaAction', async (db, ctx) => {
+    const r = await solicitarBajaComprobante(db, ctx, parsed.data.taxDocumentId, parsed.data.motivo)
+    revalidatePath('/comprobantes')
+    return { ok: true as const, data: r }
+  })
+}
+
+/** Reintenta una baja que se quedó sin respuesta tras todos los reintentos. */
+export async function reintentarBajaAction(raw: unknown) {
+  const parsed = reintentarBajaSchema.safeParse(raw)
+  if (!parsed.success) return { ok: false as const, code: 'VALIDATION' as const, message: 'Falta el comprobante.', details: z.flattenError(parsed.error).fieldErrors }
+  return withTenant('reintentarBajaAction', async (db, ctx) => {
+    await reintentarBaja(db, ctx, parsed.data.taxDocumentId)
+    revalidatePath('/comprobantes')
+    return { ok: true as const, data: {} }
   })
 }
 

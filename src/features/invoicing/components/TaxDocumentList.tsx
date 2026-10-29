@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { formatearFechaLocal } from '@/lib/fecha-local'
 import { EmitirNotaCreditoDialog } from './EmitirNotaCreditoDialog'
+import { DarDeBajaDialog } from './DarDeBajaDialog'
 import { nombreMotivo, razonSinNota } from '../motivos-nota'
 
 export interface TaxDocRow {
@@ -28,6 +29,12 @@ export interface TaxDocRow {
   series: string
   /** Archivos fiscales guardados (S3): el XML firmado y el CDR de SUNAT, para descargarlos. */
   archivos: ('XML_FIRMADO' | 'CDR')[]
+  /** Comunicación de baja más reciente (S4), si hay. */
+  baja: { identificador: string; status: string; motivo: string; mensaje: string | null; ticket: string | null } | null
+  /** Archivos de esa baja (XML enviado y constancia de SUNAT). */
+  archivosBaja: ('XML_FIRMADO' | 'CDR')[]
+  /** Por qué NO se puede dar de baja ahora; `null` = se puede. */
+  bajaBloqueo: string | null
   /** Notas: número del comprobante que modifican, y el código de su motivo. */
   documentoRelacionado: string | null
   motivo: string | null
@@ -46,6 +53,11 @@ const ESTADO: Record<string, { texto: string; cls: string }> = {
   OBSERVADO: { texto: 'Aceptado con observaciones', cls: 'bg-stock-low-soft text-stock-low' },
   RECHAZADO: { texto: 'Rechazado', cls: 'bg-stock-out-soft text-stock-out' },
   ANULADO: { texto: 'Anulado', cls: 'bg-surface-sunken text-ink-muted' },
+}
+
+const BAJA_TEXTO: Record<string, string> = {
+  PENDIENTE: 'por enviar a SUNAT', ENVIADA: 'enviada, esperando la respuesta de SUNAT', ACEPTADA: 'aceptada por SUNAT',
+  RECHAZADA: 'no se pudo dar de baja', AGOTADA: 'SUNAT no respondió (reintenta)',
 }
 
 const TIPO: Record<string, string> = { FACTURA: 'Factura', BOLETA: 'Boleta', NOTA_CREDITO: 'Nota de crédito', NOTA_DEBITO: 'Nota de débito' }
@@ -67,6 +79,7 @@ export function TaxDocumentList({
   puedeEnviar = false,
   puedeEmitirGuia = false,
   puedeEmitirNota = false,
+  puedeDarBaja = false,
   facturacionActiva = false,
   zonaHoraria,
 }: {
@@ -78,6 +91,8 @@ export function TaxDocumentList({
   puedeEmitirGuia?: boolean
   /** Puede emitir notas de crédito (comprobantes.anular). */
   puedeEmitirNota?: boolean
+  /** Puede comunicar la baja de una factura (comprobantes.dar_baja). */
+  puedeDarBaja?: boolean
   /**
    * Facturación electrónica REAL o en pausa: el estado lo fija solo la respuesta del proveedor (cola o «Consultar»),
    * así que no se ofrece cambiarlo a mano (el servicio también lo rechaza).
@@ -167,7 +182,7 @@ export function TaxDocumentList({
                 <th className="px-3 py-2 font-semibold">Importes</th>
                 <th className="px-3 py-2 font-semibold">Estado</th>
                 <th className="px-3 py-2 font-semibold">Imprimir</th>
-                {canManage && <th className="px-3 py-2 font-semibold">Acción</th>}
+                {(canManage || puedeDarBaja) && <th className="px-3 py-2 font-semibold">Acción</th>}
               </tr>
             </thead>
             <tbody>
@@ -227,6 +242,20 @@ export function TaxDocumentList({
                       {d.statusMessage && (
                         <p className="mt-1 max-w-[16rem] text-xs text-ink-muted">{d.statusMessage}</p>
                       )}
+                      {d.baja && (
+                        <div data-baja="estado" className="mt-1 max-w-[16rem] text-xs">
+                          <p className={`font-semibold ${d.baja.status === 'RECHAZADA' || d.baja.status === 'AGOTADA' ? 'text-stock-out' : 'text-ink-muted'}`}>
+                            Baja {d.baja.identificador}: {BAJA_TEXTO[d.baja.status] ?? d.baja.status}
+                          </p>
+                          {d.baja.mensaje && <p className="text-ink-muted">{d.baja.mensaje}</p>}
+                          {d.archivosBaja.length > 0 && (
+                            <span className="inline-flex gap-2 font-semibold">
+                              {d.archivosBaja.includes('XML_FIRMADO') && <a href={`/api/comprobantes/${d.id}/archivo?tipo=baja-xml`} className="underline">XML de la baja</a>}
+                              {d.archivosBaja.includes('CDR') && <a href={`/api/comprobantes/${d.id}/archivo?tipo=baja-cdr`} className="underline">CDR de la baja</a>}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-3">
                       {/*
@@ -261,10 +290,10 @@ export function TaxDocumentList({
                         </button>
                       )}
                     </td>
-                    {canManage && (
+                    {(canManage || puedeDarBaja) && (
                       <td className="px-3 py-3">
                         <div className="flex flex-col items-start gap-2">
-                          {d.isTrial ? (
+                          {!canManage ? null : d.isTrial ? (
                             <span className="text-xs text-ink-muted">—</span>
                           ) : siguientes(d.status).length ? (
                             <button
@@ -282,6 +311,9 @@ export function TaxDocumentList({
                             <span className="text-xs text-ink-muted">
                               {facturacionActiva && !['ACEPTADO', 'OBSERVADO', 'ANULADO'].includes(d.status) ? 'Lo fija el proveedor' : 'Final'}
                             </span>
+                          )}
+                          {puedeDarBaja && !d.isTrial && d.documentType !== 'BOLETA' && (
+                            <DarDeBajaDialog taxDocumentId={d.id} numero={d.fullNumber} razonBloqueo={d.bajaBloqueo} agotada={d.baja?.status === 'AGOTADA'} />
                           )}
                           {puedeEmitirNota && !esNota(d) && (
                             <EmitirNotaCreditoDialog

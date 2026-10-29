@@ -210,3 +210,67 @@ async function auditarAgotado(tenantId: string, taxDocumentId: string, motivo: s
     },
   })
 }
+
+// ─── Comunicaciones de baja (S4) ──────────────────────────────────────────────────────────────────
+// Misma idea que arriba, pero cada `TaxVoid` lleva su propia cola (no comparte `fiscal_dispatches`: un comprobante ya tiene su fila de envío). El reclamo es atómico sin SQL
+// directo: se leen candidatos y se reclama con un `updateMany` condicionado al estado Y a los intentos leídos; si otro worker llegó antes, no encaja (cuenta 0).
+
+export interface BajaReclamada {
+  id: string
+  tenantId: string
+  taxDocumentId: string
+  /** Ya tiene ticket: toca CONSULTAR; si no, ENVIAR. */
+  ticket: string | null
+  /** Intentos contando éste. */
+  attempts: number
+  lockedBy: string
+}
+
+export async function reclamarBaja(worker: string, ahora: Date): Promise<BajaReclamada | null> {
+  const toca = {
+    status: { in: ['PENDIENTE', 'ENVIADA'] as ('PENDIENTE' | 'ENVIADA')[] },
+    attempts: { lt: MAX_INTENTOS },
+    nextAttemptAt: { lte: ahora },
+    OR: [{ lockedUntil: null }, { lockedUntil: { lt: ahora } }],
+  }
+  const candidatos = await prisma.taxVoid.findMany({
+    where: {
+      ...toca,
+      tenant: { isDemo: false, deletedAt: null, realBillingEnabledAt: { not: null }, realBillingPausedAt: null },
+      taxDocument: { isTrial: false },
+    },
+    orderBy: [{ nextAttemptAt: 'asc' }, { createdAt: 'asc' }], take: 5,
+    select: { id: true, tenantId: true, taxDocumentId: true, ticket: true, attempts: true },
+  })
+  for (const c of candidatos) {
+    const r = await prisma.taxVoid.updateMany({
+      // Los MISMOS intentos que se leyeron: si alguien la reclamó antes, esto no encaja.
+      where: { id: c.id, ...toca, attempts: c.attempts },
+      data: { lockedBy: worker, lockedUntil: new Date(ahora.getTime() + LEASE_MS), attempts: { increment: 1 }, lastAttemptAt: ahora },
+    })
+    if (r.count === 1) return { id: c.id, tenantId: c.tenantId, taxDocumentId: c.taxDocumentId, ticket: c.ticket, attempts: c.attempts + 1, lockedBy: worker }
+  }
+  return null
+}
+
+/** Bajas cuyo worker se cayó en el ÚLTIMO intento: ya no hay más que gastar, así que AGOTADA (visible, y se puede reintentar). */
+export async function agotarBajasVencidas(ahora: Date): Promise<number> {
+  const filas = await prisma.taxVoid.findMany({
+    where: { status: { in: ['PENDIENTE', 'ENVIADA'] }, lockedUntil: { lt: ahora }, attempts: { gte: MAX_INTENTOS } },
+    select: { id: true, tenantId: true, taxDocumentId: true },
+  })
+  let n = 0
+  for (const f of filas) {
+    const r = await prisma.taxVoid.updateMany({
+      where: { id: f.id, status: { in: ['PENDIENTE', 'ENVIADA'] }, lockedUntil: { lt: ahora }, attempts: { gte: MAX_INTENTOS } },
+      data: { status: 'AGOTADA', exhaustedAt: ahora, lockedUntil: null, lockedBy: null, lastError: 'El worker se cayó en el último intento: sin respuesta de SUNAT.' },
+    })
+    if (r.count === 1) {
+      n++
+      await prisma.auditLog.create({
+        data: { tenantId: f.tenantId, action: 'baja.agotada', entityType: 'TaxDocument', entityId: f.taxDocumentId, after: { motivo: 'worker caído en el último intento', nota: 'El comprobante sigue como estaba.' } },
+      })
+    }
+  }
+  return n
+}

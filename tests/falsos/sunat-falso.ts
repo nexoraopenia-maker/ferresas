@@ -63,8 +63,8 @@ const zipDeCdr = (base: string, xml: string) => crearZip(`R-${base}.xml`, Buffer
 
 const tag = (x: string, n: string) => new RegExp(`<(?:[\\w-]+:)?${n}(?:\\s[^>]*)?>([\\s\\S]*?)</(?:[\\w-]+:)?${n}>`).exec(x)?.[1]
 const NOMBRE = /^(\d{11})-(\d{2})-([A-Z0-9]{4})-(\d+)\.zip$/
-/** ⚠️ Nombre del resumen diario: RUC-RC-AAAAMMDD-N (supuesto). */
-const NOMBRE_RESUMEN = /^(\d{11})-RC-(\d{8})-(\d+)\.zip$/
+/** ⚠️ Nombre del resumen diario (RC) o de la comunicación de baja (RA): RUC-RC|RA-AAAAMMDD-N (supuesto). */
+const NOMBRE_RESUMEN = /^(\d{11})-(?:RC|RA)-(\d{8})-(\d+)\.zip$/
 
 export async function iniciarSunatFalso(o: { usuarios?: Record<string, string>; guion?: Escenario[]; demoraMs?: number } = {}): Promise<SunatFalso> {
   const usuarios = o.usuarios ?? { '20123456789MODDATOS': 'moddatos' }

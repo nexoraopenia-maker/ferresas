@@ -19,7 +19,7 @@ import { proximoIntento, recortarError } from './reglas'
 export type ResultadoFila = 'completado' | 'reintento' | 'agotado' | 'liberado' | 'consulta' | 'perdido'
 
 /** Contexto del sistema: solo sirve para acotar el cliente al negocio; el envío interno no mira permisos. */
-const contextoDeSistema = (tenantId: string): TenantContext => ({ tenantId, userId: 'sistema', role: 'SUPERADMIN', access: 'FULL' })
+export const contextoDeSistema = (tenantId: string): TenantContext => ({ tenantId, userId: 'sistema', role: 'SUPERADMIN', access: 'FULL' })
 
 const actorCola = (tenantId: string): ActorEnvio => ({ tenantId, id: null, role: null, origen: 'cola' })
 

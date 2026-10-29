@@ -1,12 +1,13 @@
 import { construirXmlUbl } from '@/features/invoicing/ubl'
 import { ErrorConfiguracionProveedor } from '@/features/invoicing/providers/errores'
 import type {
-  CredencialesProveedor, Descarga, EstadoComprobante, FormatoDescarga, ProveedorFacturacion, ResultadoBaja, ResultadoEmision,
+  CredencialesProveedor, ConsultaBaja, Descarga, EnvioBaja, EstadoComprobante, FormatoDescarga, ProveedorFacturacion, ResultadoBaja, ResultadoEmision,
 } from '@/features/invoicing/providers/types'
 import { CertificadoInvalido, estadoCertificado, leerPfx, type CertificadoCargado } from './certificado'
 import { esFalloDeAcceso } from './cdr'
-import { consultarCdr, enviarComprobante, nombreBase, type CredencialesSol, type DepsCliente, type ResultadoSunat } from './cliente'
+import { consultarCdr, consultarTicket, enviarComprobante, enviarResumen, nombreBase, type CredencialesSol, type DepsCliente, type ResultadoSunat } from './cliente'
 import { evaluarEndpointSunat } from './endpoints'
+import { construirXmlBaja } from './baja-xml'
 import { firmarXml, type AlgoritmoFirma } from './firma'
 
 /**
@@ -107,8 +108,41 @@ export function crearProveedorSunatDirecto(d: DepsProveedor = {}): ProveedorFact
       return { estado: 'ENVIADO', codigoRespuesta: null, mensaje: r.tipo === 'fallo' ? r.fallo.mensaje : r.tipo === 'transitorio' ? r.mensaje : null, aceptadoEn: null }
     },
 
+    // SUNAT da de baja en dos tiempos (ticket): ver `comunicarBaja` y `consultarBaja`. La baja de una sola llamada es de los proveedores simulados.
     async anular(): Promise<ResultadoBaja> {
-      throw new ErrorConfiguracionProveedor('La comunicación de baja todavía no está disponible (fase S4).')
+      throw new ErrorConfiguracionProveedor('SUNAT recibe la baja en dos tiempos (comunicación y consulta del ticket): usa comunicarBaja.')
+    },
+
+    async comunicarBaja(solicitud, cred): Promise<EnvioBaja> {
+      const p = preparar(cred, solicitud.emisor.ruc, d)
+      const firmado = firmarXml(construirXmlBaja(solicitud), p.cert, { algoritmo: d.algoritmo })
+      const r = await enviarResumen(p.url, p.sol, `${solicitud.emisor.ruc}-${solicitud.identificador}`, firmado.xmlFirmado, d)
+      switch (r.tipo) {
+        case 'ticket': return { tipo: 'ticket', ticket: r.ticket, xmlFirmado: firmado.xmlFirmado }
+        case 'transitorio': return { tipo: 'transitorio', mensaje: r.mensaje }
+        case 'fallo':
+          if (esFalloDeAcceso(r.fallo.codigo)) throw new ErrorConfiguracionProveedor(`SUNAT rechazó el acceso: ${r.fallo.mensaje}`)
+          return { tipo: 'rechazo', codigo: r.fallo.codigo, mensaje: r.fallo.mensaje, xmlFirmado: firmado.xmlFirmado }
+        default: return { tipo: 'transitorio', mensaje: 'SUNAT respondió la comunicación de baja de un modo inesperado.' }
+      }
+    },
+
+    async consultarBaja(ticket, rucEmisor, cred): Promise<ConsultaBaja> {
+      const p = preparar(cred, rucEmisor, d)
+      const r = await consultarTicket(p.url, p.sol, ticket, d)
+      switch (r.tipo) {
+        case 'en_proceso': return { tipo: 'en_proceso' }
+        case 'cdr':
+          // Un acceso denegado llega como fallo SOAP (rama de abajo), no como CDR.
+          // ⚠️ Como en los comprobantes: código 0 = aceptada; las observaciones no la invalidan; un rechazo (2000–3999) no la acepta. Cualquier otro código tampoco.
+          return { tipo: 'resuelta', aceptada: r.categoria === 'aceptado' || r.categoria === 'observado', codigo: r.cdr.codigo, mensaje: unir(r.cdr.descripcion, ...r.cdr.notas), cdrXml: r.xmlCdr }
+        case 'fallo':
+          if (esFalloDeAcceso(r.fallo.codigo)) throw new ErrorConfiguracionProveedor(`SUNAT rechazó el acceso: ${r.fallo.mensaje}`)
+          // Un fallo al CONSULTAR no dice que la baja fue rechazada (p. ej. un ticket que aún no se ve): se vuelve a preguntar, nunca se da por rechazada.
+          return { tipo: 'transitorio', mensaje: r.fallo.mensaje }
+        case 'transitorio': return { tipo: 'transitorio', mensaje: r.mensaje }
+        default: return { tipo: 'transitorio', mensaje: 'SUNAT respondió la consulta del ticket de un modo inesperado.' }
+      }
     },
 
     // Los archivos fiscales no se piden al proveedor: ya se guardaron al enviar (`tax_document_files`) y se descargan desde ahí.

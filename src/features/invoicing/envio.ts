@@ -199,7 +199,7 @@ export async function cargarComprobanteFiscal(
   return { comprobante, doc: { id: doc.id, status: doc.status, saleId: doc.saleId, fullNumber: doc.fullNumber, isTrial: doc.isTrial } }
 }
 
-async function elegirProveedor(
+export async function elegirProveedor(
   db: TenantPrismaClient,
   tenantId: string,
   deps: DependenciasEnvio,

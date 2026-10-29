@@ -11,3 +11,15 @@ export const PLAZO_BAJA_DIAS = 7
 
 /** Años mínimos de conservación del XML firmado y del CDR: no se purgan antes. */
 export const CONSERVACION_ANIOS = 5
+
+const MS_DIA = 86_400_000
+const aUtc = (dia: string) => Date.UTC(Number(dia.slice(0, 4)), Number(dia.slice(5, 7)) - 1, Number(dia.slice(8, 10)))
+
+/** Días calendario entre dos días `AAAA-MM-DD` (de la zona del negocio). Negativo si `hasta` es anterior. */
+export const diasEntre = (desde: string, hasta: string): number => Math.round((aUtc(hasta) - aUtc(desde)) / MS_DIA)
+
+/**
+ * ¿Se puede comunicar todavía la baja? Cuenta DÍAS CALENDARIO desde el día de emisión: el día de emisión es el día 0 y el último día válido es el 7.º después
+ * (⚠️ la forma de contar, y el plazo mismo, vienen del dueño: docs/SUNAT-SUPUESTOS.md). Los dos días son de la zona horaria del negocio.
+ */
+export const dentroDelPlazoDeBaja = (diaEmision: string, diaHoy: string): boolean => diasEntre(diaEmision, diaHoy) <= PLAZO_BAJA_DIAS

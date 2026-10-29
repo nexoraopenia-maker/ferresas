@@ -60,6 +60,8 @@ const TENANT_SCOPED = new Set([
   'CashRegister',
   'SunatCredential',
   'TaxDocumentFile',
+  'TaxVoid',
+  'TaxVoidFile',
   'PriceListEntry',
   'PriceTier',
   'Product',

@@ -73,6 +73,8 @@ export const PERMISOS = [
   'ventas.bajo_costo',
   'comprobantes.emitir',
   'comprobantes.anular',
+  // Comunicar a SUNAT la baja de una factura ya aceptada (S4, dentro del plazo). Es otro poder que emitir una nota de crédito.
+  'comprobantes.dar_baja',
   'comprobantes.estado_manual',
   'guias.emitir',
   'guias.anular',
@@ -286,6 +288,7 @@ export const ETIQUETAS: Record<Permiso, string> = {
   'ventas.bajo_costo': 'Vender por debajo del costo promedio',
   'comprobantes.emitir': 'Emitir boletas y facturas',
   'comprobantes.anular': 'Emitir notas de crédito',
+  'comprobantes.dar_baja': 'Comunicar a SUNAT la baja de una factura (comunicación de baja)',
   'comprobantes.estado_manual': 'Cambiar a mano el estado tributario de un comprobante',
   'guias.emitir': 'Emitir guías de remisión',
   'guias.anular': 'Anular guías de remisión',

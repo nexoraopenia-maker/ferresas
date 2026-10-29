@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { DependenciasEnvio } from '@/features/invoicing/envio'
-import { adoptarHuerfanos, agotarVencidos, reclamarSiguiente } from './repositorio'
+import { adoptarHuerfanos, agotarBajasVencidas, agotarVencidos, reclamarBaja, reclamarSiguiente } from './repositorio'
 import { procesarFila, type ResultadoFila } from './procesar'
+import { procesarBaja } from './procesar-baja'
 import { TIMEOUT_ENVIO_MS, tiempoRestante } from './reglas'
 
 /**
@@ -36,9 +37,22 @@ export interface ResumenWorker {
   liberados: number
   consultas: number
   perdidos: number
+  /** Comunicaciones de baja (S4): se procesan DESPUÉS de los comprobantes y comparten su presupuesto de tiempo. */
+  bajas: ResumenBajas
   /** ¿Puede quedar trabajo? (se cortó por tiempo o por el tope de filas) */
   restante: boolean
   duracionMs: number
+}
+
+export interface ResumenBajas {
+  agotadasPorCaida: number
+  procesadas: number
+  completadas: number
+  reintentos: number
+  agotadas: number
+  liberadas: number
+  consultas: number
+  perdidas: number
 }
 
 export const PRESUPUESTO_POR_DEFECTO_MS = 45_000
@@ -55,6 +69,7 @@ export async function ejecutarWorker(o: OpcionesWorker = {}): Promise<ResumenWor
   const r: ResumenWorker = {
     workerId, adoptados: 0, agotadosPorCaida: 0, procesados: 0, completados: 0, reintentos: 0,
     agotados: 0, liberados: 0, consultas: 0, perdidos: 0, restante: false, duracionMs: 0,
+    bajas: { agotadasPorCaida: 0, procesadas: 0, completadas: 0, reintentos: 0, agotadas: 0, liberadas: 0, consultas: 0, perdidas: 0 },
   }
 
   // Mantenimiento previo, acotado y barato: huérfanos y filas cuyo worker murió en el último intento.
@@ -75,6 +90,22 @@ export async function ejecutarWorker(o: OpcionesWorker = {}): Promise<ResumenWor
     if (!fila) break
     r.procesados++
     cuenta[await procesarFila(fila, o.deps ?? {}, reloj())]()
+  }
+
+  // Comunicaciones de baja: con lo que sobre del tiempo y de las filas (los comprobantes van primero).
+  r.bajas.agotadasPorCaida = await agotarBajasVencidas(reloj())
+  const b = r.bajas
+  const cuentaBaja: Record<ResultadoFila, () => void> = {
+    completado: () => b.completadas++, reintento: () => b.reintentos++, agotado: () => b.agotadas++,
+    liberado: () => b.liberadas++, consulta: () => b.consultas++, perdido: () => b.perdidas++,
+  }
+  for (;;) {
+    if (r.procesados + b.procesadas >= maxFilas) { r.restante = true; break }
+    if (tiempoRestante(inicio, presupuesto, Date.now()) < margen) { r.restante = true; break }
+    const baja = await reclamarBaja(workerId, reloj())
+    if (!baja) break
+    b.procesadas++
+    cuentaBaja[await procesarBaja(baja, o.deps ?? {}, reloj())]()
   }
 
   r.duracionMs = Date.now() - inicio

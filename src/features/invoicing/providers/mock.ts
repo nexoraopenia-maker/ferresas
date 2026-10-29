@@ -3,6 +3,7 @@ import type {
   ComprobanteFiscal, CredencialesProveedor, Descarga, EstadoComprobante,
   FormatoDescarga, ProveedorFacturacion, ResultadoBaja, ResultadoEmision,
 } from './types'
+import { ErrorConfiguracionProveedor } from './errores'
 
 /**
  * Proveedor simulado.
@@ -181,6 +182,14 @@ export const proveedorMock: ProveedorFacturacion = {
       mensaje: r.mensaje,
       aceptadoEn: r.estado === 'ACEPTADO' ? new Date().toISOString() : null,
     }
+  },
+
+  async comunicarBaja(): Promise<never> {
+    throw new ErrorConfiguracionProveedor('El proveedor simulado no comunica bajas: las cuentas de demostración no dan de baja ante SUNAT.')
+  },
+
+  async consultarBaja(): Promise<never> {
+    throw new ErrorConfiguracionProveedor('El proveedor simulado no comunica bajas.')
   },
 
   async anular(referencia, motivo): Promise<ResultadoBaja> {
