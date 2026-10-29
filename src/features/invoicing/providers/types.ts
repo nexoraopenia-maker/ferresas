@@ -87,6 +87,11 @@ export interface ComprobanteFiscal {
   total: number
   /** Importe en letras: lo exige el Reglamento de Comprobantes de Pago. */
   totalEnLetras: string
+  /**
+   * Forma de pago (solo facturas, ⚠️ docs/SUNAT-SUPUESTOS.md #32). Sin ella se asume Contado. Crédito: `monto` es lo financiado (lo que queda por pagar) y `vence`
+   * el día de vencimiento de la única cuota (`AAAA-MM-DD`).
+   */
+  formaPago?: { tipo: 'Contado' } | { tipo: 'Credito'; monto: number; vence: string }
   /** Para una nota de crédito o de débito: el comprobante que corrige o aumenta. ⚠️ Sin validar. */
   documentoRelacionado?: {
     tipoComprobante: '01' | '03'

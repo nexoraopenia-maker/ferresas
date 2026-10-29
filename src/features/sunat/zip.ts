@@ -64,7 +64,11 @@ export function leerZip(zip: Buffer): EntradaZip[] {
     p += 46 + ln + le + lc
 
     if (flags & 1) throw new ZipInvalido('ZIP cifrado: no se admite.')
-    if (nombre.includes('/') || nombre.includes('\\') || nombre.includes('..')) throw new ZipInvalido('Nombre de archivo no permitido en el ZIP.')
+    // Nunca se escribe a disco, pero igual se rechazan los nombres que intentan salirse (`..`, `\\`, ruta absoluta, NUL). Una ruta NORMAL (`dummy/R-F001-1.xml`) sí vale:
+    // los ZIP de CDR de SUNAT traen el archivo dentro de una carpeta `dummy/` (hallazgo en BETA, docs/SUNAT-SUPUESTOS.md #33).
+    if (nombre.includes('\\') || nombre.includes('\0') || nombre.startsWith('/') || nombre.split('/').includes('..')) throw new ZipInvalido('Nombre de archivo no permitido en el ZIP.')
+    // Una carpeta no es un archivo: se salta (sin tocar su cabecera, que a veces ni lleva datos).
+    if (nombre.endsWith('/')) continue
     if (usize > MAX_DESCOMPRIMIDO) throw new ZipInvalido('El contenido del ZIP es demasiado grande.')
     if (offLocal + 30 > zip.length || zip.readUInt32LE(offLocal) !== SIG_LOCAL) throw new ZipInvalido('Cabecera local dañada.')
     const inicio = offLocal + 30 + zip.readUInt16LE(offLocal + 26) + zip.readUInt16LE(offLocal + 28)
@@ -78,7 +82,7 @@ export function leerZip(zip: Buffer): EntradaZip[] {
     if (contenido.length !== usize) throw new ZipInvalido('El tamaño descomprimido no coincide.')
     // La suma de control del archivo: un CDR dañado en el camino no se acepta como si estuviera bien.
     if (crc32(contenido) !== crcDeclarado) throw new ZipInvalido('El contenido del ZIP no coincide con su suma de control.')
-    salida.push({ nombre, contenido })
+    salida.push({ nombre: nombre.slice(nombre.lastIndexOf('/') + 1), contenido })
   }
   return salida
 }

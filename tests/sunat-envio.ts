@@ -11,7 +11,7 @@ import { archivosDeComprobante, guardarArchivosFiscales, leerArchivoFiscal, sha2
 import { verificarFirmaXml } from '../src/features/sunat/firma'
 import { PLAZO_BAJA_DIAS, PLAZO_ENVIO_DIAS, CONSERVACION_ANIOS } from '../src/features/sunat/plazos'
 import { UMBRAL_CRITICO_POR_DEFECTO_HORAS } from '../src/features/invoicing/alarma-envio'
-import { consultarInterno } from '../src/features/invoicing/envio'
+import { cargarComprobanteFiscal, consultarInterno } from '../src/features/invoicing/envio'
 import { ejecutarWorker } from '../src/features/cola-fiscal/worker'
 import { claveIdempotencia } from '../src/features/cola-fiscal/reglas'
 import { asignarSucursal, crearSucursalConAlmacen } from './fixtures'
@@ -169,6 +169,18 @@ async function cuerpo() {
   check('>>> si la huella no coincide con el contenido, NO se entrega como si estuviera bien', /huella/.test(dañado))
   const ruta = readFileSync('src/app/api/comprobantes/[id]/archivo/route.ts', 'utf8')
   check('>>> la ruta de descarga exige sesión (401), oculta lo que no se puede ver (404) y entrega como adjunto sin caché', /status: 401/.test(ruta) && /FORBIDDEN_ROLE' \|\| e\.code === 'NOT_FOUND' \? 404/.test(ruta) && /attachment/.test(ruta) && /no-store/.test(ruta) && /nosniff/.test(ruta))
+
+  console.log('\n4b) Forma de pago de la factura (SUNAT BETA 3244)')
+  const fCont = await A.doc('FACTURA', 'PENDIENTE', null), fCred = await A.doc('FACTURA', 'PENDIENTE', null), fAnul = await A.doc('FACTURA', 'PENDIENTE', null), bCred = await A.doc('BOLETA', 'PENDIENTE', null)
+  const cliente = await prisma.customer.create({ data: { tenantId: A.t.id, docType: 'RUC', docNumber: completarRuc('2000000001'), name: 'Constructora Andes SAC' } })
+  const financia = (saleId: string, extra: Record<string, unknown> = {}) => prisma.receivable.create({ data: { tenantId: A.t.id, customerId: cliente.id, saleId, amount: 8, dueDate: new Date('2026-12-15'), ...extra } })
+  await financia(fCred.saleId); await financia(bCred.saleId)
+  await financia(fAnul.saleId, { status: 'ANULADA', closedAt: new Date(), voidedAt: new Date(), voidReason: 'prueba' })
+  const [cCont, cCred, cAnul, cBol] = await Promise.all([fCont, fCred, fAnul, bCred].map((d) => cargarComprobanteFiscal(A.db, d.id)))
+  check('>>> una factura de contado no declara crédito (la UBL la marca Contado)', cCont!.comprobante.formaPago === undefined)
+  check('>>> una factura de una venta FIADA declara Crédito por lo financiado y con el vencimiento de su cuenta por cobrar', cCred!.comprobante.formaPago?.tipo === 'Credito' && cCred!.comprobante.formaPago.monto === 8 && cCred!.comprobante.formaPago.vence === '2026-12-15')
+  check('una cuenta por cobrar anulada ya no financia nada', cAnul!.comprobante.formaPago === undefined)
+  check('la boleta no lleva forma de pago aunque la venta sea fiada', cBol!.comprobante.formaPago === undefined)
 
   console.log('\n5) Plazos y retiro del PSE')
   check('>>> los plazos del dueño son constantes con nombre (3, 7 y 5)', PLAZO_ENVIO_DIAS === 3 && PLAZO_BAJA_DIAS === 7 && CONSERVACION_ANIOS === 5)

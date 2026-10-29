@@ -92,6 +92,8 @@ export async function cargarComprobanteFiscal(
       receiverDocType: true, receiverDocNumber: true, receiverName: true, receiverAddress: true,
       sale: {
         select: {
+          // Forma de pago de la factura (#32): una venta fiada trae su cuenta por cobrar, con lo financiado y el vencimiento.
+          receivable: { select: { amount: true, dueDate: true, status: true } },
           branch: { select: { establishmentCode: true, address: true, ubigeo: true } },
           items: {
             orderBy: { id: 'asc' },
@@ -194,6 +196,10 @@ export async function cargarComprobanteFiscal(
     totalDescuentos: 0,
     total,
     totalEnLetras: montoALetras(total, doc.currency),
+    // Solo las facturas llevan forma de pago; la cuenta por cobrar anulada ya no financia nada.
+    ...(tipo === '01' && doc.sale.receivable && doc.sale.receivable.status !== 'ANULADA'
+      ? { formaPago: { tipo: 'Credito' as const, monto: Number(doc.sale.receivable.amount), vence: doc.sale.receivable.dueDate.toISOString().slice(0, 10) } }
+      : {}),
     ...(documentoRelacionado ? { documentoRelacionado } : {}),
   }
   return { comprobante, doc: { id: doc.id, status: doc.status, saleId: doc.saleId, fullNumber: doc.fullNumber, isTrial: doc.isTrial } }

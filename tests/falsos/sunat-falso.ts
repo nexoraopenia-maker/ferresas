@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { verificarFirmaXml } from '../../src/features/sunat/firma'
 import { crearZip, leerZip } from '../../src/features/sunat/zip'
+import { crearZipEstiloSunat } from './zip-sunat'
 
 /**
  * SUNAT FALSO. Servidor HTTP de pruebas que imita el servicio SOAP de comprobantes. Vive en `tests/`: NO es una ruta de la
@@ -20,6 +21,8 @@ export type Escenario =
   | 'ok' | 'observado' | 'rechazo' | 'auth' | 'servidor' | 'http500' | 'ilegible' | 'sin_cdr' | 'lento'
   /** sendSummary: error de contenido del resumen (⚠️ código no verificado). */
   | 'invalido'
+  /** El CDR viaja como lo hace SUNAT BETA real: ZIP con carpeta `dummy/` y descriptor de datos (hallazgo #33). */
+  | 'zip_sunat'
 
 export interface SolicitudRecibida {
   operacion: string
@@ -59,7 +62,8 @@ const sobreOk = (cuerpo: string) =>
   `<?xml version="1.0"?><soap-env:Envelope xmlns:soap-env="http://schemas.xmlsoap.org/soap/envelope/"><soap-env:Body>${cuerpo}</soap-env:Body></soap-env:Envelope>`
 const fallo = (origen: 'Client' | 'Server', codigo: string, mensaje: string) =>
   sobreOk(`<soap-env:Fault><faultcode>soap-env:${origen}.${codigo}</faultcode><faultstring>${mensaje}</faultstring></soap-env:Fault>`)
-const zipDeCdr = (base: string, xml: string) => crearZip(`R-${base}.xml`, Buffer.from(xml, 'utf8')).toString('base64')
+let zipEstiloSunat = false
+const zipDeCdr = (base: string, xml: string) => (zipEstiloSunat ? crearZipEstiloSunat(`dummy/R-${base}.xml`, Buffer.from(xml, 'utf8')) : crearZip(`R-${base}.xml`, Buffer.from(xml, 'utf8'))).toString('base64')
 
 const tag = (x: string, n: string) => new RegExp(`<(?:[\\w-]+:)?${n}(?:\\s[^>]*)?>([\\s\\S]*?)</(?:[\\w-]+:)?${n}>`).exec(x)?.[1]
 const NOMBRE = /^(\d{11})-(\d{2})-([A-Z0-9]{4})-(\d+)\.zip$/
@@ -90,6 +94,7 @@ export async function iniciarSunatFalso(o: { usuarios?: Record<string, string>; 
       recibidas.push(s)
 
       const escenario = guionPorRuc.get(usuario.slice(0, 11))?.shift() ?? guion.shift() ?? 'ok'
+      zipEstiloSunat = escenario === 'zip_sunat'
       if (escenario === 'lento') await new Promise((r) => setTimeout(r, o.demoraMs ?? 400))
       if (escenario === 'http500') return enviar(500, 'Internal Server Error')
       if (escenario === 'servidor') return enviar(500, fallo('Server', '0109', 'El servicio de SUNAT no está disponible'))

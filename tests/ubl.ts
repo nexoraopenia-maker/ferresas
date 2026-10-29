@@ -49,6 +49,7 @@ check('empieza con la declaración XML', xml.startsWith('<?xml version="1.0" enc
 check('raíz Invoice con los espacios de nombres UBL 2.1', xml.includes('<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"') && xml.includes('xmlns:cac=') && xml.includes('xmlns:cbc=') && xml.includes('xmlns:ext='))
 check('versión UBL 2.1 y personalización 2.0', texto(xml, 'cbc:UBLVersionID') === '2.1' && texto(xml, 'cbc:CustomizationID') === '2.0')
 check('>>> identificador SERIE-CORRELATIVO', texto(xml, 'cbc:ID') === 'B001-12')
+check('>>> el tipo de operación (catálogo 51) lleva listID=0101 Y su listSchemeURI, en factura y boleta (SUNAT BETA: 3244)', /listID="0101"[^>]*listSchemeURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo51"/.test(xml))
 check('tipo de documento 03', texto(xml, 'cbc:InvoiceTypeCode') === '03')
 check('fecha de emisión', texto(xml, 'cbc:IssueDate') === '2026-10-20')
 check('moneda', texto(xml, 'cbc:DocumentCurrencyCode') === 'PEN')
@@ -73,7 +74,19 @@ check('>>> un nombre de producto malicioso no inyecta etiquetas', bienFormado(co
 console.log('\n3) Factura con RUC')
 const f = base(); f.tipoComprobante = '01'; f.serie = 'F001'; f.receptor = { tipoDocumento: '6', numeroDocumento: '20100070970', razonSocial: 'CLIENTE S.A.', direccion: 'Jr. Lima 1' }
 const xf = construirXmlUbl(f)
+check('la factura también lleva el catálogo 51', /listID="0101"[^>]*catalogo51"/.test(xf))
 check('tipo 01 y receptor con tipo 6', texto(xf, 'cbc:InvoiceTypeCode') === '01' && xf.includes('>20100070970</cbc:ID>') && bienFormado(xf).ok)
+
+console.log('\n3b) Forma de pago de la factura (SUNAT BETA 3244)')
+const terminos = (x: string) => x.match(/<cac:PaymentTerms>[\s\S]*?<\/cac:PaymentTerms>/g) ?? []
+check('>>> una factura SIN forma de pago explícita sale como Contado (una sola marca FormaPago)', terminos(xf).length === 1 && terminos(xf)[0]!.includes('<cbc:ID>FormaPago</cbc:ID>') && terminos(xf)[0]!.includes('<cbc:PaymentMeansID>Contado</cbc:PaymentMeansID>') && !terminos(xf)[0]!.includes('Amount'))
+check('el bloque va después del cliente y antes de los impuestos (orden del esquema)', xf.indexOf('</cac:AccountingCustomerParty>') < xf.indexOf('<cac:PaymentTerms>') && xf.indexOf('<cac:PaymentTerms>') < xf.indexOf('<cac:TaxTotal>'))
+const fc = base(); fc.tipoComprobante = '01'; fc.serie = 'F001'; fc.receptor = f.receptor; fc.formaPago = { tipo: 'Credito', monto: 40, vence: '2026-11-30' }
+const xc = construirXmlUbl(fc)
+check('>>> a crédito: una marca Credito con el monto financiado y UNA cuota (Cuota001) con su vencimiento', terminos(xc).length === 2 && terminos(xc)[0]!.includes('<cbc:PaymentMeansID>Credito</cbc:PaymentMeansID>') && terminos(xc)[0]!.includes('<cbc:Amount currencyID="PEN">40.00</cbc:Amount>') && terminos(xc)[1]!.includes('<cbc:PaymentMeansID>Cuota001</cbc:PaymentMeansID>') && terminos(xc)[1]!.includes('<cbc:PaymentDueDate>2026-11-30</cbc:PaymentDueDate>') && bienFormado(xc).ok)
+const sinVence = base(); sinVence.tipoComprobante = '01'; sinVence.serie = 'F001'; sinVence.receptor = f.receptor
+check('>>> un crédito sin monto o con un vencimiento mal escrito se rechaza', (() => { for (const fp of [{ tipo: 'Credito' as const, monto: 0, vence: '2026-11-30' }, { tipo: 'Credito' as const, monto: 10, vence: '30/11/2026' }]) { try { construirXmlUbl({ ...sinVence, formaPago: fp }); return false } catch (e) { if (!(e instanceof ComprobanteInconsistente)) return false } } return true })())
+check('>>> la boleta NO lleva forma de pago (solo las facturas)', terminos(xml).length === 0)
 
 console.log('\n4) Sin documento y mezcla de afectaciones')
 const sd = base(); sd.receptor = { tipoDocumento: '0', numeroDocumento: null, razonSocial: 'CLIENTES VARIOS', direccion: null }

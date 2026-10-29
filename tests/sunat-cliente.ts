@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { crearZip, leerZip, ZipInvalido } from '../src/features/sunat/zip'
+import { crearZipEstiloSunat } from './falsos/zip-sunat'
 import { categoriaDeCodigo, esFalloDeAcceso, leerCdr, CdrIlegible } from '../src/features/sunat/cdr'
 import { escaparXml, leerFallo, sobreGetStatus, sobreSendBill, xmlDelCdr } from '../src/features/sunat/soap'
 import { evaluarEndpointSunat, SUNAT_BETA_BILL, SUNAT_PRODUCCION_BILL, urlConsulta } from '../src/features/sunat/endpoints'
@@ -57,6 +58,15 @@ async function main() {
   } catch { extra = false; check('(unzip/zip no disponibles en este equipo: se omite la prueba cruzada)', true) }
   void extra; void readdirSync
   check('>>> un archivo que no es ZIP → ZipInvalido', (await lanza(() => leerZip(Buffer.from('no soy un zip')))) instanceof ZipInvalido)
+  const cdrXmlSunat = '<ar:ApplicationResponse><cac:DocumentResponse><cac:Response><cbc:ReferenceID>F001-1</cbc:ReferenceID><cbc:ResponseCode>0</cbc:ResponseCode><cbc:Description>La Factura numero F001-1, ha sido aceptada</cbc:Description></cac:Response></cac:DocumentResponse></ar:ApplicationResponse>'
+  const zipSunat = crearZipEstiloSunat('dummy/R-20123456789-01-F001-1.xml', Buffer.from(cdrXmlSunat))
+  const leidoSunat = leerZip(zipSunat)
+  check('>>> un ZIP como el de SUNAT BETA (carpeta dummy/ + descriptor de datos) se lee: UN archivo, sin la carpeta ni la ruta', leidoSunat.length === 1 && leidoSunat[0]!.nombre === 'R-20123456789-01-F001-1.xml' && leidoSunat[0]!.contenido.toString('utf8') === cdrXmlSunat)
+  const soloCarpeta = crearZipEstiloSunat('dummy/', Buffer.alloc(0))
+  check('>>> un ZIP con SOLO una carpeta no trae archivos (no revienta) y la respuesta se toma como «sin CDR»', leerZip(soloCarpeta).length === 0 && xmlDelCdr(`<r><applicationResponse>${soloCarpeta.toString('base64')}</applicationResponse></r>`) === null)
+  for (const mala of ['../escapa.xml', 'dummy/../escapa.xml', '/absoluta.xml', 'a\\b.xml', 'a\0b.xml']) {
+    check(`>>> el nombre «${mala}» se rechaza (ZipInvalido) aunque las carpetas normales valgan`, (await lanza(() => leerZip(crearZip(mala, Buffer.from('x'))))) instanceof ZipInvalido)
+  }
   const traversal = crearZip('../escapa.xml', Buffer.from('x'))
   check('>>> un nombre con ruta ("../") se rechaza', (await lanza(() => leerZip(traversal))) instanceof ZipInvalido)
   const bomba = Buffer.from(z); bomba.writeUInt32LE(50_000_000, bomba.length - 22 - 46 - 'doc.xml'.length + 24)
@@ -149,6 +159,9 @@ async function main() {
   const e1 = await lanza(() => enviarComprobante('https://example.com/billService', SOL, base, firmado))
   const e2 = await lanza(() => enviarComprobante(falso.url, SOL, base, firmado, { env: { NODE_ENV: 'production' } }))
   check('>>> un host no permitido, o el falso en producción, ni siquiera abre la conexión', e1 instanceof EndpointNoPermitido && e2 instanceof EndpointNoPermitido && falso.recibidas.length === antes)
+  falso.guion.push('zip_sunat')
+  const rSunat = await enviarComprobante(falso.url, SOL, nombreBase(RUC, '01', 'F001', 9991), firmado)
+  check('>>> el CDR en un ZIP como el de SUNAT BETA real (carpeta dummy/ + descriptor) se procesa de punta a punta: CDR aceptado, código 0', rSunat.tipo === 'cdr' && rSunat.categoria === 'aceptado' && rSunat.cdr.codigo === '0')
   await falso.detener()
   const caido = await enviarComprobante(falso.url, SOL, base, firmado)
   check('>>> servidor caído (conexión rechazada) → transitorio', caido.tipo === 'transitorio')

@@ -151,6 +151,13 @@ export function verificarTotales(c: ComprobanteFiscal): void {
   }
 }
 
+function formaDePago(f: NonNullable<ComprobanteFiscal['formaPago']>, moneda: string): string {
+  if (f.tipo === 'Contado') return `<cac:PaymentTerms><cbc:ID>FormaPago</cbc:ID><cbc:PaymentMeansID>Contado</cbc:PaymentMeansID></cac:PaymentTerms>`
+  if (!(f.monto > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(f.vence)) throw new ComprobanteInconsistente('Una factura a crédito necesita el monto financiado y el día de vencimiento de la cuota.')
+  return `<cac:PaymentTerms><cbc:ID>FormaPago</cbc:ID><cbc:PaymentMeansID>Credito</cbc:PaymentMeansID><cbc:Amount currencyID="${moneda}">${monto(f.monto)}</cbc:Amount></cac:PaymentTerms>` +
+    `<cac:PaymentTerms><cbc:ID>FormaPago</cbc:ID><cbc:PaymentMeansID>Cuota001</cbc:PaymentMeansID><cbc:Amount currencyID="${moneda}">${monto(f.monto)}</cbc:Amount><cbc:PaymentDueDate>${f.vence}</cbc:PaymentDueDate></cac:PaymentTerms>`
+}
+
 export function construirXmlUbl(c: ComprobanteFiscal): string {
   verificarTotales(c)
 
@@ -197,9 +204,11 @@ export function construirXmlUbl(c: ComprobanteFiscal): string {
     `<cbc:ID>${escaparXml(id)}</cbc:ID>` +
     `<cbc:IssueDate>${fecha}</cbc:IssueDate>` +
     (hora ? `<cbc:IssueTime>${hora}</cbc:IssueTime>` : '') +
+    // Tipo de operación (catálogo 51): 0101 = venta interna. SUNAT BETA devolvió el 3244 («debe consignar la información del tipo de transacción») cuando el atributo `listID` iba
+    // SIN `listSchemeURI` del catálogo 51; esa es la hipótesis de la corrección (⚠️ docs/SUNAT-SUPUESTOS.md #31, a confirmar en BETA).
     (esNota
       ? ''
-      : `<cbc:InvoiceTypeCode listAgencyName="PE:SUNAT" listName="Tipo de Documento" listURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo01" listID="0101" name="Tipo de Operacion">${c.tipoComprobante}</cbc:InvoiceTypeCode>`) +
+      : `<cbc:InvoiceTypeCode listAgencyName="PE:SUNAT" listName="Tipo de Documento" listURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo01" listID="0101" name="Tipo de Operacion" listSchemeURI="urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo51">${c.tipoComprobante}</cbc:InvoiceTypeCode>`) +
     `<cbc:Note languageLocaleID="1000">${escaparXml(c.totalEnLetras)}</cbc:Note>` +
     `<cbc:DocumentCurrencyCode listID="ISO 4217 Alpha" listName="Currency" listAgencyName="United Nations Economic Commission for Europe">${moneda}</cbc:DocumentCurrencyCode>` +
     (esNota && rel
@@ -220,6 +229,9 @@ export function construirXmlUbl(c: ComprobanteFiscal): string {
     parte('AccountingSupplierParty', { tipo: '6', numero: c.emisor.ruc }, c.emisor.razonSocial, c.emisor.nombreComercial, c.emisor.direccion,
       { ubigeo: c.emisor.ubigeo, establecimiento: c.emisor.codigoEstablecimiento }) +
     parte('AccountingCustomerParty', receptorDoc, c.receptor.razonSocial, null, c.receptor.direccion) +
+    // Forma de pago (solo facturas). ⚠️ #32: SUNAT BETA rechazó una factura SIN este bloque con el 3244 («debe consignar la información del tipo de transacción»); la hipótesis es que
+    // «tipo de transacción» = Contado o Crédito. Contado lleva solo la marca; Crédito lleva el monto financiado y UNA cuota con su vencimiento.
+    (c.tipoComprobante === '01' ? formaDePago(c.formaPago ?? { tipo: 'Contado' }, moneda) : '') +
     `<cac:TaxTotal><cbc:TaxAmount currencyID="${moneda}">${monto(c.totalIgv)}</cbc:TaxAmount>${subtotales.join('')}</cac:TaxTotal>` +
     // ⚠️ La nota de débito lleva RequestedMonetaryTotal en lugar de LegalMonetaryTotal (sin validar contra el XSD).
     `<cac:${esDebito ? 'RequestedMonetaryTotal' : 'LegalMonetaryTotal'}>` +

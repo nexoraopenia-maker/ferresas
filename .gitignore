@@ -16,3 +16,8 @@ src/generated/
 tsconfig.tsbuildinfo
 .DS_Store
 .vercel
+
+# Certificados digitales y salida de la prueba manual contra SUNAT BETA: nunca al repositorio.
+*.pfx
+*.p12
+/salida-beta/
