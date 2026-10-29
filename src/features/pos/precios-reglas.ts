@@ -82,6 +82,26 @@ export const conservaPrecioPropioDePresentacion = (r: PrecioResuelto): boolean =
 /** Importe bruto de una línea sin precio propio de presentación: precio × cantidad base, a céntimos (igual que `registerSale`). */
 export const brutoDeLinea = (precio: number, cantidadBase: number): number => cent(precio * cantidadBase)
 
+export interface PrecioDeLinea {
+  /** Precio unitario por unidad base que se guarda en la línea (con IGV). Con precio propio de presentación es el de UNA unidad base derivado de él. */
+  precio: number
+  /** Importe bruto de la línea, antes del descuento manual. */
+  bruto: number
+  fuente: FuentePrecio
+  /** La `minQuantity` del tramo aplicado, o `null`. */
+  tramo: number | null
+}
+
+/**
+ * El precio y el importe bruto de UNA línea: lo que `registerSale`, `registerQuote` y el carrito calculan igual. `propio` es el precio de la presentación (ya convertido: precio por
+ * unidad base y bruto = precio propio × lo ingresado, redondeado una vez) cuando la línea es una presentación con precio propio; solo se respeta si manda la Base sin tramo.
+ */
+export function precioDeLinea(datos: DatosDePrecio, cantidadBase: number, propio: { precio: number; bruto: number } | null = null): PrecioDeLinea {
+  const r = resolverPrecio(datos, cantidadBase)
+  if (propio && conservaPrecioPropioDePresentacion(r)) return { precio: propio.precio, bruto: propio.bruto, fuente: 'BASE', tramo: null }
+  return { precio: r.precio, bruto: brutoDeLinea(r.precio, cantidadBase), fuente: r.fuente, tramo: r.tramo }
+}
+
 // ─── Validación de los tramos de una entrada ─────────────────────────────────────────────────────
 
 const tieneMaxDecimales = (n: number, d: number): boolean => Math.abs(Math.round(n * 10 ** d) / 10 ** d - n) < 1e-9

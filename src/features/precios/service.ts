@@ -170,8 +170,57 @@ export async function listarPrecios(db: TenantPrismaClient, ctx: TenantContext, 
 }
 
 /**
+ * La lista que realmente se aplica: la pedida si existe, está activa y no está dada de baja; si no, `null` (la Base). Una lista que se dio de baja mientras el cajero la tenía
+ * elegida no bloquea la venta: se vende a precio Base y la venta queda registrada sin lista. Sin permisos.
+ */
+export async function listaVigente(db: TenantPrismaClient, priceListId: string | null | undefined, opciones: { incluirInactivas?: boolean } = {}): Promise<string | null> {
+  if (!priceListId) return null
+  const l = await db.priceList.findFirst({ where: { id: priceListId, deletedAt: null, ...(opciones.incluirInactivas ? {} : { isActive: true }) }, select: { id: true } })
+  return l?.id ?? null
+}
+
+export interface PreciosDeLista {
+  /** El precio plano de la entrada de la lista para el producto (`null` = entrada solo con tramos). Sin clave = la lista no tiene entrada. */
+  entradas: Map<string, number | null>
+  baseTiers: Map<string, Tramo[]>
+  /** Los tramos de la lista (vacío si la lista es la Base). */
+  listaTiers: Map<string, Tramo[]>
+}
+
+/**
+ * Entradas y tramos de varios productos para UNA lista ya validada (`listaVigente`), en dos consultas. No lee el precio Base del producto: quien ya lo tiene cargado (la venta, la
+ * cotización) arma con esto el `DatosDePrecio` sin repetir esa consulta.
+ */
+export async function cargarPreciosDeLista(db: TenantPrismaClient, productIds: readonly string[], lista: string | null, opciones: { incluirInactivas?: boolean } = {}): Promise<PreciosDeLista> {
+  const ids = [...new Set(productIds)]
+  const salida: PreciosDeLista = { entradas: new Map(), baseTiers: new Map(), listaTiers: new Map() }
+  if (ids.length === 0) return salida
+  const [entradas, tramos] = await Promise.all([
+    lista ? db.priceListEntry.findMany({ where: { priceListId: lista, productId: { in: ids }, ...(opciones.incluirInactivas ? {} : { isActive: true }) }, select: { productId: true, price: true } }) : [],
+    db.priceTier.findMany({ where: { productId: { in: ids }, OR: [{ priceListId: null }, ...(lista ? [{ priceListId: lista }] : [])] }, select: { productId: true, priceListId: true, minQuantity: true, unitPrice: true } }),
+  ])
+  for (const e of entradas) salida.entradas.set(e.productId, numONull(e.price))
+  for (const t of tramos) {
+    const destino = t.priceListId === null ? salida.baseTiers : salida.listaTiers
+    const l = destino.get(t.productId) ?? []
+    l.push({ minQuantity: num(t.minQuantity), unitPrice: num(t.unitPrice) })
+    destino.set(t.productId, l)
+  }
+  return salida
+}
+
+/** Arma lo que el motor necesita para un producto a partir de su precio Base y de lo cargado para la lista. */
+export function datosDePrecioDe(salePrice: number, productId: string, p: PreciosDeLista): DatosDePrecio {
+  return {
+    salePrice,
+    baseTiers: p.baseTiers.get(productId) ?? [],
+    entrada: p.entradas.has(productId) ? { price: p.entradas.get(productId) ?? null, tiers: p.listaTiers.get(productId) ?? [] } : null,
+  }
+}
+
+/**
  * Los datos que el motor necesita para resolver el precio de varios productos con UNA lista, en tres consultas. Una lista inexistente, dada de baja o inactiva se trata como la Base
- * (vender nunca se bloquea). Sin permisos: lo usa la venta (F6.7b) en nombre de quien cobra. No lee costos.
+ * (vender nunca se bloquea). Sin permisos. No lee costos.
  */
 export async function cargarDatosDePrecio(
   db: TenantPrismaClient, productIds: readonly string[], priceListId: string | null, opciones: { incluirInactivas?: boolean } = {},
@@ -179,28 +228,12 @@ export async function cargarDatosDePrecio(
   const salida = new Map<string, DatosDePrecio>()
   if (productIds.length === 0) return salida
   const ids = [...new Set(productIds)]
-  let lista: string | null = null
-  if (priceListId) {
-    const l = await db.priceList.findFirst({ where: { id: priceListId, deletedAt: null, ...(opciones.incluirInactivas ? {} : { isActive: true }) }, select: { id: true } })
-    lista = l?.id ?? null
-  }
-  const [productos, entradas, tramos] = await Promise.all([
+  const lista = await listaVigente(db, priceListId, opciones)
+  const [productos, precios] = await Promise.all([
     db.product.findMany({ where: { id: { in: ids } }, select: { id: true, salePrice: true } }),
-    lista ? db.priceListEntry.findMany({ where: { priceListId: lista, productId: { in: ids }, ...(opciones.incluirInactivas ? {} : { isActive: true }) }, select: { productId: true, price: true } }) : [],
-    db.priceTier.findMany({ where: { productId: { in: ids }, OR: [{ priceListId: null }, ...(lista ? [{ priceListId: lista }] : [])] }, select: { productId: true, priceListId: true, minQuantity: true, unitPrice: true } }),
+    cargarPreciosDeLista(db, ids, lista, opciones),
   ])
-  const base = new Map<string, Tramo[]>(), propios = new Map<string, Tramo[]>()
-  for (const t of tramos) {
-    const destino = t.priceListId === null ? base : propios
-    const l = destino.get(t.productId) ?? []
-    l.push({ minQuantity: num(t.minQuantity), unitPrice: num(t.unitPrice) })
-    destino.set(t.productId, l)
-  }
-  const entrada = new Map(entradas.map((e) => [e.productId, e]))
-  for (const p of productos) {
-    const e = entrada.get(p.id)
-    salida.set(p.id, { salePrice: num(p.salePrice), baseTiers: base.get(p.id) ?? [], entrada: e ? { price: numONull(e.price), tiers: propios.get(p.id) ?? [] } : null })
-  }
+  for (const p of productos) salida.set(p.id, datosDePrecioDe(num(p.salePrice), p.id, precios))
   return salida
 }
 

@@ -17,6 +17,7 @@ const SO: Categoria = 'Soporte', CU: Categoria = 'Cuenta y plan'
 export const ACCIONES: Readonly<Record<string, { categoria: Categoria; etiqueta: string }>> = {
   'sale.below_stock': { categoria: V, etiqueta: 'Venta con stock insuficiente' },
   'sale.discount': { categoria: V, etiqueta: 'Descuento aplicado' },
+  'sale.below_cost': { categoria: V, etiqueta: 'Venta por debajo del costo' },
   'cash.open': { categoria: V, etiqueta: 'Caja abierta' },
   'caja.movimiento': { categoria: V, etiqueta: 'Movimiento manual de caja' },
   'caja.movimiento_anulado': { categoria: V, etiqueta: 'Movimiento manual de caja anulado' },

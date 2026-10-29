@@ -12,6 +12,9 @@ import {
   type PriceOverrides,
 } from './sale-service'
 import { puede } from '@/lib/puede'
+import { cargarPreciosDeLista, datosDePrecioDe, listaVigente } from '@/features/precios/service'
+import { precioDeLinea } from './precios-reglas'
+import { exigirPisoDeCosto } from './piso-costo'
 import type { ConvertQuoteInput, RegisterQuoteInput } from './schemas'
 
 function num(d: Prisma.Decimal | number | null | undefined): number {
@@ -90,26 +93,31 @@ export async function registerQuote(
       throw new BusinessError('TENANT_MISMATCH', 'El almacén no está disponible.')
     }
 
+    let listaDelCliente: string | null = null
     if (input.customerId) {
       const c = await t.customer.findFirst({
         where: { id: input.customerId, deletedAt: null },
-        select: { id: true },
+        select: { id: true, priceListId: true },
       })
       if (!c) throw new BusinessError('TENANT_MISMATCH', 'El cliente no existe.')
+      listaDelCliente = c.priceListId
     }
+    // La lista de precios (F6.7), con el mismo criterio que la venta: ausente = la del cliente, `null` = Base, y una lista inexistente o dada de baja se trata como Base.
+    const lista = await listaVigente(t, input.priceListId === undefined ? listaDelCliente : input.priceListId)
 
     const ids = [...new Set(input.items.map((i) => i.productId))]
     const productos = await t.product.findMany({
       where: { id: { in: ids }, deletedAt: null, isActive: true },
       select: {
         id: true, name: true, sku: true, unitType: true,
-        salePrice: true, taxRate: true,
+        salePrice: true, costPrice: true, taxRate: true,
       },
     })
     const porId = new Map(productos.map((p) => [p.id, p]))
     if (ids.some((i) => !porId.has(i))) {
       throw new BusinessError('TENANT_MISMATCH', 'Un producto ya no está disponible.')
     }
+    const preciosDeLista = await cargarPreciosDeLista(t, ids, lista)
 
     let subtotal = 0
     let taxTotal = 0
@@ -117,8 +125,10 @@ export async function registerQuote(
 
     const lineas = input.items.map((item) => {
       const p = porId.get(item.productId)!
-      const precio = num(p.salePrice)
-      const bruto = cent(precio * item.quantity)
+      // Lista y volumen según la cantidad BASE de la línea; la cotización congela el precio resultante.
+      const resuelto = precioDeLinea(datosDePrecioDe(num(p.salePrice), p.id, preciosDeLista), item.quantity)
+      const precio = resuelto.precio
+      const bruto = resuelto.bruto
 
       if (item.discount > bruto) {
         throw new BusinessError(
@@ -143,6 +153,8 @@ export async function registerQuote(
     })
 
     const total = cent(subtotal + taxTotal)
+    // El piso de margen también al cotizar o armar un pedido: no se promete un precio que luego no se podrá cobrar. Antes de reservar el número.
+    exigirPisoDeCosto(ctx, lineas.map((l) => ({ nombre: l.producto.name, netoLinea: l.lineTotal, tasaIgv: l.taxRate, cantidadBase: l.item.quantity, costoUnitario: num(l.producto.costPrice) })))
     const { correlativo, prefix, series } = await claimNextNumber(
       t, ctx.tenantId, scope, serie.series,
     )
@@ -157,6 +169,7 @@ export async function registerQuote(
         branchId,
         warehouseId: input.warehouseId,
         customerId: input.customerId ?? null,
+        priceListId: lista,
         userId: ctx.userId,
         number,
         kind,
@@ -235,7 +248,7 @@ export async function convertQuoteToSale(
     select: {
       id: true, number: true, status: true, validUntil: true,
       kind: true, lockedById: true, lockedAt: true,
-      warehouseId: true, customerId: true,
+      warehouseId: true, customerId: true, priceListId: true,
       sale: { select: { id: true, number: true, total: true } },
       items: {
         select: {
@@ -313,6 +326,8 @@ export async function convertQuoteToSale(
   const venta = await registerSale(db, ctx, {
     warehouseId: quote.warehouseId,
     customerId: quote.customerId,
+    // Los precios ya están congelados; la lista solo deja constancia de con cuál se armó (`null` = Base a propósito: no se vuelve a aplicar la del cliente).
+    priceListId: quote.priceListId ?? null,
     items: quote.items.map((i) => ({
       productId: i.productId,
       variantId: i.variantId,

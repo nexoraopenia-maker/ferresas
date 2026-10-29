@@ -62,6 +62,8 @@ export const paymentLineSchema = z.object({
 export const registerSaleSchema = z.object({
   warehouseId: id,
   customerId: id.nullish(),
+  /** Lista de precios (F6.7): ausente = la lista por defecto del cliente (si tiene), `null` = Base a propósito, un id = esa lista. El servidor recalcula los precios; esto solo elige la lista. */
+  priceListId: id.nullable().optional(),
   items: z.array(saleLineSchema).min(1, 'Agrega al menos un producto.').max(200),
   payments: z.array(paymentLineSchema).min(1, 'Registra al menos un pago.').max(5),
   documentType: z.enum(['NOTA_VENTA', 'BOLETA', 'FACTURA', 'TICKET']).default('NOTA_VENTA'),
@@ -124,6 +126,8 @@ export type CustomerByDocInput = z.infer<typeof customerByDocSchema>
 export const registerQuoteSchema = z.object({
   warehouseId: id,
   customerId: id.nullish(),
+  /** Lista de precios (F6.7): ausente = la lista por defecto del cliente (si tiene), `null` = Base a propósito, un id = esa lista. */
+  priceListId: id.nullable().optional(),
   items: z.array(saleLineSchema).min(1, 'Agrega al menos un producto.').max(200),
   /**
    * Días de validez. Por defecto 15: en ferretería los precios se mueven con

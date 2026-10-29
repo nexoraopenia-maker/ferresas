@@ -40,6 +40,8 @@ export type BusinessErrorCode =
   | 'CASH_EXCEEDS_EXPECTED'
   /** La diferencia de una línea de toma de inventario supera el umbral operativo: se recomienda recontar o confirmar expresamente (F6.5b). */
   | 'COUNT_OVER_THRESHOLD'
+  /** La línea se vendería por debajo del costo promedio (F6.7b). El mensaje NUNCA trae el costo: quien cobra no lo ve. */
+  | 'BELOW_COST'
 
 export class BusinessError extends Error {
   readonly code: BusinessErrorCode

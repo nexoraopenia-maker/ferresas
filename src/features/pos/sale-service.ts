@@ -12,6 +12,9 @@ import { resolverPagos } from './pagos'
 import { otorgarCredito } from '@/features/credito/credito-service'
 import { cargarPresentaciones, resolverLineaDeVenta, trazaDe, type Traza } from '@/features/inventory/presentacion-linea'
 import { puede } from '@/lib/puede'
+import { cargarPreciosDeLista, datosDePrecioDe, listaVigente } from '@/features/precios/service'
+import { precioDeLinea } from './precios-reglas'
+import { exigirPisoDeCosto, type LineaParaPiso } from './piso-costo'
 import type { RegisterSaleInput } from './schemas'
 
 const P2002_UNIQUE = 'P2002'
@@ -238,15 +241,23 @@ export async function registerSale(
         )
       }
 
+      let listaDelCliente: string | null = null
       if (input.customerId) {
         const cliente = await t.customer.findFirst({
           where: { id: input.customerId, deletedAt: null },
-          select: { id: true },
+          select: { id: true, priceListId: true },
         })
         if (!cliente) {
           throw new BusinessError('TENANT_MISMATCH', 'El cliente no existe.')
         }
+        listaDelCliente = cliente.priceListId
       }
+
+      // --- 0. La lista de precios (F6.7) ----------------------------------
+      // `priceListId` llega con tres sentidos: ausente = la lista por defecto del cliente (si la tiene), `null` = Base a propósito (el cajero la eligió aunque el cliente tenga otra)
+      // y un id = esa lista. Una lista inexistente, inactiva o dada de baja NO bloquea la venta: se vende a precio Base y la venta queda sin lista.
+      const pedida = input.priceListId === undefined ? listaDelCliente : input.priceListId
+      const lista = await listaVigente(t, pedida)
 
       // --- 1. Precios desde la BASE, nunca del carrito -------------------
       const ids = [...new Set(input.items.map((i) => i.productId))]
@@ -263,6 +274,9 @@ export async function registerSale(
       if (faltante) {
         throw new BusinessError('TENANT_MISMATCH', 'Un producto del carrito ya no está disponible.')
       }
+
+      // Entradas y tramos de la lista (y los tramos de la Base) de todos los productos del carrito, en dos consultas.
+      const preciosDeLista = await cargarPreciosDeLista(t, ids, lista)
 
       // Presentaciones de las líneas (caja, saco…): se cargan de la base, igual que los precios.
       const presentaciones = await cargarPresentaciones(t, input.items.flatMap((i) => (i.presentationId ? [i.presentationId] : [])))
@@ -293,8 +307,10 @@ export async function registerSale(
           }
         }
         const congelado = priceOverrides?.get(overrideKey(item.productId, item.variantId))
-        const precio = propio ? propio.precio : (congelado ?? num(p.salePrice))
-        const bruto = propio ? propio.bruto : cent(precio * item.quantity)
+        // Precio de la línea (F6.7): lista elegida y volumen según la cantidad BASE de ESTA línea; el congelado de una cotización manda sobre todo.
+        const resuelto = congelado === undefined ? precioDeLinea(datosDePrecioDe(num(p.salePrice), p.id, preciosDeLista), item.quantity, propio) : null
+        const precio = congelado ?? resuelto!.precio
+        const bruto = resuelto ? resuelto.bruto : cent(precio * item.quantity)
 
         if (item.discount > bruto) {
           throw new BusinessError(
@@ -357,8 +373,17 @@ export async function registerSale(
           unitPrice: precio,
           lineTotal: neto,
           taxRate: tasa,
+          // De dónde salió el precio (solo trazabilidad); un precio congelado de una cotización no tiene fuente que contar.
+          priceSource: resuelto ? resuelto.fuente : null,
+          tierMinQuantity: resuelto ? resuelto.tramo : null,
         }
       })
+
+      // --- 2b. Piso de margen: ninguna línea bajo el costo promedio (F6.7b) ---
+      // Va ANTES de reservar el número: una venta rechazada no quema correlativo. No lo exime ni el precio congelado ni `descuentosYaAutorizados`.
+      const bajoCosto = exigirPisoDeCosto(ctx, lineas.map((l): LineaParaPiso => ({
+        nombre: l.producto.name, netoLinea: l.lineTotal, tasaIgv: l.taxRate, cantidadBase: l.item.quantity, costoUnitario: num(l.producto.costPrice),
+      })))
 
       const total = cent(subtotal + taxTotal)
 
@@ -384,6 +409,7 @@ export async function registerSale(
           // Resuelto antes de abrir la transacción: ver la nota de arriba.
           cashSessionId,
           customerId: input.customerId ?? null,
+          priceListId: lista,
           userId: ctx.userId,
           number,
           documentType: input.documentType,
@@ -409,6 +435,7 @@ export async function registerSale(
           quantity: l.item.quantity,
           ...(l.traza ? { presentationId: l.traza.presentationId, enteredQuantity: l.traza.enteredQuantity, presentationFactor: l.traza.factor, presentationName: l.traza.name } : {}),
           unitPrice: l.unitPrice,
+          ...(l.priceSource ? { priceSource: l.priceSource, ...(l.priceSource === 'VOLUMEN' ? { tierMinQuantity: l.tierMinQuantity } : {}) } : {}),
           discount: l.item.discount,
           taxRate: l.taxRate,
           unitCost: num(l.producto.costPrice),
@@ -508,6 +535,18 @@ export async function registerSale(
             tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role,
             action: 'sale.discount', entityType: 'Sale', entityId: sale.id,
             after: { venta: number, descuento: discountTotal, tope: topeDescuento(ctx) },
+            impersonationId: ctx.impersonationId ?? null,
+          },
+        })
+      }
+
+      // Una venta por debajo del costo (solo con `ventas.bajo_costo`) queda a la vista: qué productos y a qué importe neto. NUNCA el costo: la auditoría no exige `productos.ver_costo`.
+      if (bajoCosto.length > 0) {
+        await t.auditLog.create({
+          data: {
+            tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role,
+            action: 'sale.below_cost', entityType: 'Sale', entityId: sale.id,
+            after: { venta: number, lineas: bajoCosto } as never,
             impersonationId: ctx.impersonationId ?? null,
           },
         })

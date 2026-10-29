@@ -91,6 +91,8 @@ async function main() {
    */
   const PERMITIDOS = new Set([
     'src/features/pos/sale-service.ts',
+    // Cotizaciones y pedidos (F6.7b): leen el costo SOLO para comprobar el piso de margen (`BELOW_COST`); no lo guardan en la cotización ni lo devuelven, y el mensaje de error no lo menciona (lo prueba `precios-venta`).
+    'src/features/pos/quote-service.ts',
     // Devolución de una venta (F6.1): copia el costo CON EL QUE SE VENDIÓ la línea al movimiento de reposición, solo como traza. Nunca lo devuelve ni lo
     // muestra, no recalcula el costo promedio, y la operación exige `ventas.anular` (lo prueba `devoluciones-servicio`).
     'src/features/devoluciones/service.ts',
