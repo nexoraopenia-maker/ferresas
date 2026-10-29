@@ -387,6 +387,11 @@ export async function registerSale(
 
       const total = cent(subtotal + taxTotal)
 
+      // Lo que el POS le mostró al cajero tiene que ser lo que se cobra. Si no coincide (a un céntimo), se rechaza con el total de AHORA y el POS se refresca.
+      if (input.totalEsperado !== undefined && cent(input.totalEsperado) !== total) {
+        throw new BusinessError('PRICE_CHANGED', `Los precios cambiaron mientras armabas la venta. El total ahora es S/ ${total.toFixed(2)}: revisa el carrito y vuelve a cobrar.`, { total })
+      }
+
       // Pagos mixtos: ver `pagos.ts`. Rechaza lo que no cubre el total, el vuelto que no sale del efectivo y el fiado.
       const { pagos, credito } = resolverPagos(total, input.payments, { conCliente: !!input.customerId, documentType: input.documentType })
       // Fiar es una decisión de confianza sobre dinero que no está en el cajón: permiso aparte (opcional, lo activa el dueño).

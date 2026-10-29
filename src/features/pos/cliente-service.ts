@@ -10,6 +10,8 @@ export interface ClientePos {
   docNumber: string | null
   name: string
   creado: boolean
+  /** Lista de precios por defecto del cliente (F6.7c); `null` = Base. */
+  priceListId?: string | null
   /** De dónde salió el nombre de un cliente nuevo: lo tecleado o el padrón. */
   origen?: 'TECLEADO' | 'PADRON'
 }
@@ -42,7 +44,7 @@ export async function resolverCliente(
 
   const existente = await db.customer.findFirst({
     where: { docType, docNumber, deletedAt: null },
-    select: { id: true, docType: true, docNumber: true, name: true },
+    select: { id: true, docType: true, docNumber: true, name: true, priceListId: true },
   })
   if (existente) return { cliente: { ...existente, creado: false }, aviso: null }
 

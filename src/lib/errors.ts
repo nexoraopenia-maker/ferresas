@@ -42,6 +42,8 @@ export type BusinessErrorCode =
   | 'COUNT_OVER_THRESHOLD'
   /** La línea se vendería por debajo del costo promedio (F6.7b). El mensaje NUNCA trae el costo: quien cobra no lo ve. */
   | 'BELOW_COST'
+  /** El total que el POS mostraba ya no es el que calcula el servidor (cambió un precio o una lista mientras se armaba la venta). `details.total`: el total de ahora (F6.7c). */
+  | 'PRICE_CHANGED'
 
 export class BusinessError extends Error {
   readonly code: BusinessErrorCode

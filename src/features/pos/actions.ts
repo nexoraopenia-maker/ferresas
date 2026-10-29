@@ -22,6 +22,8 @@ import {
 } from './schemas'
 import { filtroAlmacen } from '@/features/branches/queries'
 import { buscarProductos, MIN_CARACTERES } from './busqueda'
+import { cargarDatosDePrecio } from '@/features/precios/service'
+import type { DatosDePrecio } from './precios-reglas'
 import { resolverCliente } from './cliente-service'
 import {
   cancelarPedido as runCancelarPedido, cobrarPedido as runCobrarPedido, crearPedido as runCrearPedido,
@@ -98,6 +100,11 @@ export interface PosProduct {
    * presentación (el suyo propio o, si no tiene, el base × factor). El servidor lo recalcula al cobrar: esto es solo lo que se muestra.
    */
   presentation?: { id: string; name: string; unitType: string; factor: string; precio: string; precioPropio: boolean } | null
+  /**
+   * Lo que el carrito necesita para calcular el precio EN PANTALLA con el mismo motor que el servidor (F6.7c): precio Base, tramos Base y la entrada de la lista elegida.
+   * Nunca trae costos. El servidor vuelve a calcularlo todo al cobrar.
+   */
+  precios?: DatosDePrecio
 }
 
 /**
@@ -141,6 +148,7 @@ export async function lookupForPos(
 
     const { producto: product, variante } = r
     const { cantidad: stock, minimo: minStock, estado } = estadoDeCodigo(r)
+    const precios = (await cargarDatosDePrecio(db, [product.id], parsed.data.priceListId ?? null)).get(product.id)
 
     return {
       ok: true,
@@ -161,6 +169,7 @@ export async function lookupForPos(
         stockStatus: estado,
         warehouseId: warehouse.id,
         warehouseName: warehouse.name,
+        ...(precios ? { precios } : {}),
         presentation: r.presentacion
           ? {
               id: r.presentacion.id, name: r.presentacion.name, unitType: r.presentacion.unitType, factor: r.presentacion.factor.toString(),
@@ -179,13 +188,35 @@ export async function lookupForPos(
  */
 export async function searchForPos(
   texto: string,
+  priceListId: string | null = null,
 ): Promise<ActionResult<PosProduct[]>> {
   const parsed = z.string().trim().min(MIN_CARACTERES).max(80).safeParse(texto)
   if (!parsed.success) return { ok: true, data: [] }
+  const lista = z.string().trim().min(1).max(64).nullable().safeParse(priceListId)
+  if (!lista.success) return { ok: true, data: [] }
 
   return withTenant('searchForPos', async (db, ctx) => {
-    const data = await buscarProductos(db, ctx, parsed.data)
-    return { ok: true, data }
+    const resultados = await buscarProductos(db, ctx, parsed.data)
+    const precios = await cargarDatosDePrecio(db, resultados.map((p) => p.productId), lista.data)
+    return { ok: true, data: resultados.map((p) => (precios.has(p.productId) ? { ...p, precios: precios.get(p.productId)! } : p)) }
+  })
+}
+
+/**
+ * Los datos de precio de varios productos con otra lista (F6.7c): el cajero cambió de lista —o eligió un cliente con la suya— y el carrito se recalcula con el motor puro. Solo precios
+ * (nunca costos). Una lista inexistente o dada de baja devuelve la Base.
+ */
+export async function preciosParaLista(
+  raw: unknown,
+): Promise<ActionResult<Record<string, DatosDePrecio>>> {
+  const parsed = z.object({
+    priceListId: z.string().trim().min(1).max(64).nullable(),
+    productIds: z.array(z.string().trim().min(1).max(64)).min(1).max(200),
+  }).safeParse(raw)
+  if (!parsed.success) return validationFailure(parsed.error)
+  return withTenant('preciosParaLista', async (db) => {
+    const mapa = await cargarDatosDePrecio(db, parsed.data.productIds, parsed.data.priceListId)
+    return { ok: true, data: Object.fromEntries(mapa) }
   })
 }
 
@@ -238,6 +269,8 @@ export interface PosCustomer {
   name: string
   /** Se acaba de crear en esta llamada. */
   creado: boolean
+  /** Lista de precios por defecto del cliente (F6.7c); `null` = Base. */
+  priceListId?: string | null
   /** Si es nuevo: de dónde salió el nombre. */
   origen?: 'TECLEADO' | 'PADRON'
 }

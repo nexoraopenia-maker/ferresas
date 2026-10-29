@@ -1,6 +1,7 @@
 import { redondearCentimos as cent } from '@/lib/dinero'
 import { redondear } from '@/lib/quantity'
 import type { PosProduct } from './actions'
+import { precioDeLinea, type DatosDePrecio, type PrecioDeLinea } from './precios-reglas'
 
 export interface LineaCarrito {
   key: string
@@ -18,13 +19,30 @@ export interface LineaCarrito {
 }
 
 /**
- * Importe bruto de una línea, igual que el servidor: con precio propio manda precio × lo ingresado (redondeado una vez);
- * si no, el precio base × la cantidad base.
+ * Lo que el motor necesita para esta línea: lo que trajo la búsqueda con la lista elegida, o —en un pedido tomado, con sus precios congelados— solo el precio de la línea, sin tramos.
  */
-export const brutoDe = (l: LineaCarrito) =>
-  l.presentacion?.precioPropio && l.ingresada != null
-    ? cent(l.presentacion.precio * l.ingresada)
-    : cent(l.producto.salePrice * l.quantity)
+export const datosDePrecioDe = (l: LineaCarrito): DatosDePrecio => l.producto.precios ?? { salePrice: l.producto.salePrice, baseTiers: [], entrada: null }
+
+/**
+ * Precio, importe bruto y fuente de una línea, con EL MISMO motor (`precioDeLinea`) que usa el servidor al cobrar: lista elegida y volumen según la cantidad BASE de la línea; una
+ * presentación con precio propio lo conserva solo si manda la Base sin tramo. Lo que se muestra y lo que se cobra salen de la misma función.
+ */
+export const precioDe = (l: LineaCarrito): PrecioDeLinea => {
+  const propio = l.presentacion?.precioPropio && l.ingresada != null
+    ? { precio: l.presentacion.precio / l.presentacion.factor, bruto: cent(l.presentacion.precio * l.ingresada) }
+    : null
+  return precioDeLinea(datosDePrecioDe(l), l.quantity, propio)
+}
+
+/** Importe bruto de una línea, igual que el servidor. */
+export const brutoDe = (l: LineaCarrito) => precioDe(l).bruto
+
+/** Cambian los datos de precio de una línea (otra lista): el descuento en % se recalcula sobre el importe nuevo y uno fijo nunca pasa del importe. */
+export const conPrecios = (l: LineaCarrito, precios: DatosDePrecio | undefined): LineaCarrito => {
+  if (!precios) return l
+  const nueva: LineaCarrito = { ...l, producto: { ...l.producto, precios } }
+  return { ...nueva, discount: l.pct !== undefined ? descuentoDe(nueva) : Math.min(l.discount, brutoDe(nueva)) }
+}
 
 /** Importe del descuento de una línea (ya con su cantidad nueva): mismo redondeo que el servidor. */
 export const descuentoDe = (l: LineaCarrito) => cent(brutoDe(l) * ((l.pct ?? 0) / 100))
@@ -52,3 +70,14 @@ export const itemDe = (l: LineaCarrito) => ({
   discount: l.discount,
   ...(l.presentacion ? { presentationId: l.presentacion.id, enteredQuantity: String(l.ingresada) } : {}),
 })
+
+/**
+ * Lo que se le dice al cajero de dónde salió el precio de una línea: el nombre de la lista si el precio es de la lista, «Volumen desde N» si se aplicó un tramo, nada si es el precio normal.
+ * `nombreLista` es la lista elegida del carrito (solo se nombra si el precio realmente salió de ella).
+ */
+export const etiquetaDePrecio = (l: LineaCarrito, nombreLista: string | null): string | null => {
+  const p = precioDe(l)
+  if (p.fuente === 'VOLUMEN') return `Volumen desde ${p.tramo}`
+  if (p.fuente === 'LISTA') return nombreLista ? `Lista ${nombreLista}` : 'Precio de lista'
+  return null
+}

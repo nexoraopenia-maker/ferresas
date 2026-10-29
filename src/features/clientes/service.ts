@@ -53,7 +53,7 @@ export function resolverDocumento(docNumber: string | undefined): { docType: 'DN
 const SELECCION = {
   id: true, name: true, docType: true, docNumber: true, phone: true, email: true, address: true, notes: true,
   creditLimit: true, creditBalance: true, creditTermDays: true, creditBlockedAt: true, isActive: true, deletedAt: true,
-  createdAt: true, updatedAt: true,
+  createdAt: true, updatedAt: true, priceListId: true,
 } as const
 
 /** Los campos que un usuario edita, en el orden en que se auditan. */
@@ -266,6 +266,8 @@ export interface AbonoFicha {
 export interface FichaCliente {
   id: string; name: string; docType: string; docNumber: string | null; phone: string | null; email: string | null
   address: string | null; notes: string | null; activo: boolean; creado: string
+  /** Lista de precios por defecto (F6.7); `null` = Base. */
+  priceListId: string | null
   /** El documento se puede cambiar solo mientras no haya ventas. */
   documentoEditable: boolean
   credito: InfoCreditoCliente
@@ -309,7 +311,7 @@ export async function obtenerFichaCliente(db: TenantPrismaClient, ctx: TenantCon
   const cuentasAbiertas = abiertas.map(aCuenta)
   return {
     id: c.id, name: c.name, docType: c.docType, docNumber: c.docNumber, phone: c.phone, email: c.email, address: c.address, notes: c.notes,
-    activo: c.deletedAt === null, creado: c.createdAt.toISOString(), documentoEditable: ventas === 0,
+    activo: c.deletedAt === null, creado: c.createdAt.toISOString(), priceListId: c.priceListId, documentoEditable: ventas === 0,
     credito: construirInfoCredito(
       c.id,
       { name: c.name, docType: c.docType, docNumber: c.docNumber, isActive: c.isActive, deletedAt: c.deletedAt, creditLimit: num(c.creditLimit), creditBalance: num(c.creditBalance), creditBlockedAt: c.creditBlockedAt, creditTermDays: c.creditTermDays },

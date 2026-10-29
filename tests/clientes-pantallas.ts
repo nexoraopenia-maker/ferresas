@@ -171,7 +171,7 @@ async function main() {
 
   console.log('\nG) La ficha completa por permisos')
   const ficha: FichaCliente = {
-    id: 'c1', name: 'Ana Quispe', docType: 'DNI', docNumber: '41300001', phone: '987654321', email: 'ana@x.com', address: 'Av. Sol 1', notes: null, activo: true, creado: '2026-01-02T00:00:00.000Z', documentoEditable: true,
+    id: 'c1', name: 'Ana Quispe', docType: 'DNI', docNumber: '41300001', phone: '987654321', email: 'ana@x.com', address: 'Av. Sol 1', notes: null, activo: true, creado: '2026-01-02T00:00:00.000Z', priceListId: null, documentoEditable: true,
     credito: { customerId: 'c1', nombre: 'Ana Quispe', limite: 1000, deuda: 300, disponible: 700, plazoDias: 30, venceSiFia: '2026-11-24', bloqueado: false, documentoValido: true, vencido: 200, cuentasVencidas: 1, puedeFiar: true, motivo: null },
     cuentasAbiertas: [ct(), ct({ id: 'r2', venta: 'V001-2', saldo: 100, monto: 100, abonado: 0, vencida: false, vence: '2026-12-01' })], cuentasCerradas: [], abonos: [ab()],
   }

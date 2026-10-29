@@ -17,10 +17,10 @@ import {
   unitLabel,
 } from '@/lib/quantity'
 import {
-  cobrarPedido, lookupForPos, registerPedido, registerQuote, registerSale, searchForPos, soltarPedido, tomarPedido,
+  cobrarPedido, lookupForPos, preciosParaLista, registerPedido, registerQuote, registerSale, searchForPos, soltarPedido, tomarPedido,
   type PosCustomer, type PosProduct,
 } from '../actions'
-import { brutoDe, contadaDe, conContada, descuentoDe, itemDe, mismaLinea, unidadDe, type LineaCarrito } from '../carrito'
+import { brutoDe, contadaDe, conContada, conPrecios, descuentoDe, etiquetaDePrecio, itemDe, mismaLinea, precioDe, unidadDe, type LineaCarrito } from '../carrito'
 import { MENSAJE_SIN_RED, useEnLinea } from '@/lib/en-linea'
 import { infoCreditoCliente } from '@/features/credito/actions'
 import type { InfoCreditoCliente } from '@/features/credito/reglas'
@@ -28,6 +28,7 @@ import { conFiadoPorElSaldo, disponibilidadFiado, evaluarPagos, lineaUnica, line
 import { FichaCredito } from './FichaCredito'
 import { lineasDeFilas, PanelPagos, quitarFiado, type FilaPago } from './PanelPagos'
 import { ReciboEmitido, type ReciboVenta } from './ReciboEmitido'
+import { SelectorListaPrecios } from './SelectorListaPrecios'
 import { CustomerPicker } from './CustomerPicker'
 import { ATAJOS_VISIBLES, usePosShortcuts } from './use-pos-shortcuts'
 
@@ -64,6 +65,7 @@ export function PosTerminal({
   topeDescuentoPct = 0,
   puedeFiar = false,
   puedeVerVenta = false,
+  listasPrecio = [],
 }: {
   warehouseName: string
   /** Zona del negocio: ver la nota en CashPanel. */
@@ -80,8 +82,14 @@ export function PosTerminal({
   puedeFiar?: boolean
   /** Puede ver el historial de ventas: el recibo ofrece abrir la venta recién cobrada. */
   puedeVerVenta?: boolean
+  /** Las listas de precio que se pueden elegir (F6.7c). Vacío = el negocio no usa listas y el selector no aparece. */
+  listasPrecio?: { id: string; name: string }[]
 }) {
   const [carrito, setCarrito] = useState<LineaCarrito[]>([])
+  // La lista de precios del carrito (F6.7c): `null` = Base. Se elige a mano o llega con el cliente que la tiene por defecto.
+  const [lista, setLista] = useState<string | null>(null)
+  const listaRef = useRef<string | null>(null)
+  const carritoRef = useRef<LineaCarrito[]>([])
   const enLinea = useEnLinea()
   const [escaneando, setEscaneando] = useState(false)
   const [busqueda, setBusqueda] = useState('')
@@ -112,6 +120,36 @@ export function PosTerminal({
   const [pedidoEnviado, setPedidoEnviado] = useState<{ number: string; total: number } | null>(null)
   const pedidoRef = useRef(pedido)
   useEffect(() => { pedidoRef.current = pedido }, [pedido])
+  useEffect(() => { carritoRef.current = carrito }, [carrito])
+
+  /**
+   * Cambia la lista de precios del carrito (a mano, o porque llegó un cliente que la tiene por defecto): pide los datos de precio de esa lista para lo que ya está en el carrito y
+   * recalcula con el motor compartido. Un pedido tomado tiene precios congelados y no se toca. Si la consulta falla, el carrito conserva lo que tenía y el servidor, que recalcula
+   * todo al cobrar, avisa con `PRICE_CHANGED` si el total ya no coincide.
+   */
+  const aplicarLista = useCallback(async (nueva: string | null) => {
+    if (pedidoRef.current) return
+    setLista(nueva)
+    listaRef.current = nueva
+    // Los resultados de búsqueda traían los datos de la lista anterior.
+    setResultados([]); setActivo(-1)
+    const ids = [...new Set(carritoRef.current.map((l) => l.producto.productId))]
+    if (ids.length === 0) return
+    const r = await preciosParaLista({ priceListId: nueva, productIds: ids })
+    if (listaRef.current !== nueva) return   // el cajero cambió otra vez mientras tanto
+    if (!r.ok) { setError('No pudimos actualizar los precios de la lista. Vuelve a elegirla.'); return }
+    setCarrito((prev) => prev.map((l) => conPrecios(l, r.data[l.producto.productId])))
+  }, [])
+
+  /** Elegir el cliente: si tiene una lista de precios por defecto, se aplica sola (el cajero puede cambiarla después). */
+  const elegirCliente = useCallback((c: PosCustomer | null) => {
+    setCliente(c)
+    const suya = c?.priceListId ?? null
+    if (suya && suya !== listaRef.current && listasPrecio.some((x) => x.id === suya) && !pedidoRef.current) {
+      void aplicarLista(suya)
+      setAviso(`Se aplicó la lista «${listasPrecio.find((x) => x.id === suya)!.name}» de este cliente.`)
+    }
+  }, [aplicarLista, listasPrecio])
   const idemRef = useRef<string | null>(null)
   const buscadorRef = useRef<HTMLInputElement>(null)
 
@@ -257,7 +295,7 @@ export function PosTerminal({
   const onDetected = useCallback(async (code: string): Promise<ResultadoLectura> => {
     setError(null)
     setAviso(null)
-    const res = await lookupForPos({ code })
+    const res = await lookupForPos({ code, priceListId: listaRef.current })
 
     if (!res.ok) {
       // Un QR ajeno (un enlace, un texto largo) no es un producto: mensaje claro, sin ruido.
@@ -289,7 +327,7 @@ export function PosTerminal({
     if (texto.trim().length < 2) { setResultados([]); setBuscado(''); setActivo(-1); setFalloBusqueda(false); return }
     temporizador.current = setTimeout(() => {
       startTransition(async () => {
-        const r = await searchForPos(texto)
+        const r = await searchForPos(texto, listaRef.current)
         if (seq === seqBusqueda.current) {
           setResultados(r.ok ? r.data : [])
           setFalloBusqueda(!r.ok)
@@ -314,11 +352,11 @@ export function PosTerminal({
     clearTimeout(temporizador.current)
     seqBusqueda.current++
     setError(null); setAviso(null)
-    const exacto = await lookupForPos({ code: texto })
+    const exacto = await lookupForPos({ code: texto, priceListId: listaRef.current })
     if (exacto.ok && exacto.data) {
       agregar(exacto.data); setBusqueda(''); setResultados([]); return
     }
-    const lista = resultados.length > 0 ? resultados : (await searchForPos(texto).then((r) => (r.ok ? r.data : [])))
+    const lista = resultados.length > 0 ? resultados : (await searchForPos(texto, listaRef.current).then((r) => (r.ok ? r.data : [])))
     const primero = lista[0]
     if (primero && (lista.length === 1 || (primero.relevancia ?? 9) <= 1)) {
       agregar(primero); setBusqueda(''); setResultados([]); return
@@ -386,6 +424,10 @@ export function PosTerminal({
         : await registerSale({
         warehouseId: carrito[0]!.producto.warehouseId,
         customerId: cliente?.id ?? null,
+        // La lista se manda SIEMPRE explícita (`null` = Base): el servidor no aplica por su cuenta la del cliente a lo que el cajero ya vio. Y el total que se mostró: si el servidor
+        // calcula otro, rechaza con PRICE_CHANGED en vez de cobrar algo distinto.
+        priceListId: lista,
+        totalEsperado: totales.total,
         items: carrito.map(itemDe),
         payments: pagos,
         documentType: 'NOTA_VENTA',
@@ -395,6 +437,8 @@ export function PosTerminal({
 
       if (!res.ok) {
         setError(res.message)
+        // Un precio o una lista cambiaron mientras se armaba la venta: se vuelven a pedir los precios y el cajero ve el total nuevo antes de cobrar.
+        if (res.code === 'PRICE_CHANGED') void aplicarLista(lista)
         // Si el bloqueo fue por stock, se ofrece forzar en lugar de dejar al
         // cajero atascado con el cliente delante.
         if (res.code === 'INSUFFICIENT_STOCK' && !forzarStock) {
@@ -409,6 +453,7 @@ export function PosTerminal({
       setPedido(null)
       setCarrito([])
       setCliente(null)
+      setLista(null); listaRef.current = null
       setForzarStock(false)
       setRecibido('')
       setDividir(false); setFilas([])
@@ -432,6 +477,7 @@ export function PosTerminal({
       const res = await registerQuote({
         warehouseId: carrito[0]!.producto.warehouseId,
         customerId: cliente?.id ?? null,
+        priceListId: lista,
         items: carrito.map((l) => ({
           productId: l.producto.productId,
           variantId: l.producto.variantId,
@@ -453,6 +499,7 @@ export function PosTerminal({
       // haría que el siguiente cliente heredara los productos del anterior.
       setCarrito([])
       setCliente(null)
+      setLista(null); listaRef.current = null
     })
   }
 
@@ -467,6 +514,7 @@ export function PosTerminal({
       const res = await registerPedido({
         warehouseId: carrito[0]!.producto.warehouseId,
         customerId: cliente?.id ?? null,
+        priceListId: lista,
         items: carrito.map((l) => ({
           productId: l.producto.productId, variantId: l.producto.variantId, quantity: l.quantity, discount: l.discount,
         })),
@@ -478,6 +526,7 @@ export function PosTerminal({
       // Se vacía: el pedido ya está en la cola y el siguiente cliente no debe heredarlo.
       setCarrito([])
       setCliente(null)
+      setLista(null); listaRef.current = null
     })
   }
 
@@ -693,7 +742,11 @@ export function PosTerminal({
       <div className="flex min-w-0 flex-col gap-5 lg:sticky lg:top-4">
       {/* --- Cliente: encima del carrito, que es donde se decide el
               comprobante ------------------------------------------------- */}
-      <CustomerPicker cliente={cliente} onChange={setCliente} />
+      <CustomerPicker cliente={cliente} onChange={elegirCliente} />
+      {listasPrecio.length > 0 && (
+        <SelectorListaPrecios listas={listasPrecio} valor={lista} onChange={(id) => void aplicarLista(id)} deshabilitado={!!pedido}
+          nota={pedido ? 'El pedido se cobra con los precios con que se armó.' : cliente?.priceListId && cliente.priceListId === lista ? 'Es la lista de este cliente.' : null} />
+      )}
       {cliente && puedeFiar && <FichaCredito ficha={ficha} cargando={fichaCargando} falla={fichaFalla} />}
 
       {/* --- Carrito ----------------------------------------------------- */}
@@ -722,26 +775,29 @@ export function PosTerminal({
                       <p className="text-xs text-ink-muted">
                         {l.presentacion ? (
                           <>
-                            {formatQuantity(contadaDe(l), l.presentacion.unitType)} {l.presentacion.name} × {money(l.presentacion.precioPropio ? l.presentacion.precio : cent(l.producto.salePrice * l.presentacion.factor))}
+                            {formatQuantity(contadaDe(l), l.presentacion.unitType)} {l.presentacion.name} × {money(l.presentacion.precioPropio && precioDe(l).fuente === 'BASE' ? l.presentacion.precio : cent(precioDe(l).precio * l.presentacion.factor))}
                             {' '}({formatQuantity(l.quantity, l.producto.unitType)} {unitLabel(l.producto.unitType)})
                           </>
                         ) : (
                           <>
                             {formatQuantity(l.quantity, l.producto.unitType)}{' '}
-                            {unitLabel(l.producto.unitType)} × {money(l.producto.salePrice)}
+                            {unitLabel(l.producto.unitType)} × {money(precioDe(l).precio)}
                           </>
                         )}
                         {sinStock && (
                           <> · solo {formatQuantity(l.producto.stock, l.producto.unitType)} en stock</>
                         )}
                       </p>
+                      {!pedido && etiquetaDePrecio(l, listasPrecio.find((x) => x.id === lista)?.name ?? null) && (
+                        <p data-precio="origen" className="mt-0.5 text-xs font-semibold text-industrial-700 dark:text-industrial-300">{etiquetaDePrecio(l, listasPrecio.find((x) => x.id === lista)?.name ?? null)}</p>
+                      )}
                     </div>
                     <p className="shrink-0 text-lg font-bold text-ink">{money(neto)}</p>
                   </div>
 
                   {pedido ? (
                     <p className="mt-2 text-sm text-ink-muted">
-                      {formatQuantity(l.quantity, l.producto.unitType)} {unitLabel(l.producto.unitType)} × {money(l.producto.salePrice)}
+                      {formatQuantity(l.quantity, l.producto.unitType)} {unitLabel(l.producto.unitType)} × {money(precioDe(l).precio)}
                     </p>
                   ) : (
                   <QuantityInput

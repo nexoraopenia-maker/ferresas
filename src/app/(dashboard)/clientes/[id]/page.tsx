@@ -5,6 +5,8 @@ import { puede } from '@/lib/puede'
 import { isBusinessError } from '@/lib/errors'
 import { FichaClienteVista } from '@/features/clientes/components/FichaClienteVista'
 import { obtenerFichaCliente, puedeVerClientes } from '@/features/clientes/service'
+import { listasParaVender } from '@/features/precios/service'
+import { ListaDePrecioCliente } from '@/features/precios/components/ListaDePrecioCliente'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,9 +21,14 @@ export default async function FichaClientePage({ params }: { params: Promise<{ i
     throw e
   })
   if (!ficha) notFound()
+  // Solo las listas activas; si el negocio no usa listas (y el cliente no tiene ninguna), el bloque no aparece.
+  const listas = await listasParaVender(getTenantPrisma(ctx))
 
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-4 p-4">
+      {(listas.length > 0 || ficha.priceListId !== null) && (
+        <ListaDePrecioCliente customerId={ficha.id} actual={ficha.priceListId} listas={listas} editable={puede(ctx, 'precios.gestionar') && ficha.activo} />
+      )}
       <FichaClienteVista
         ficha={ficha}
         permisos={{

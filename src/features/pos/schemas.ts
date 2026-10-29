@@ -64,6 +64,11 @@ export const registerSaleSchema = z.object({
   customerId: id.nullish(),
   /** Lista de precios (F6.7): ausente = la lista por defecto del cliente (si tiene), `null` = Base a propósito, un id = esa lista. El servidor recalcula los precios; esto solo elige la lista. */
   priceListId: id.nullable().optional(),
+  /**
+   * Lo que el POS mostró al cajero (F6.7c). Si el servidor calcula OTRO total —cambió un precio o una lista mientras armaba la venta—, rechaza con `PRICE_CHANGED` y el total de ahora,
+   * en lugar de cobrar algo distinto de lo que el cliente vio. Opcional: cobrar un pedido o una cotización (precios congelados) no lo manda.
+   */
+  totalEsperado: z.number().finite().min(0).max(99_999_999).optional(),
   items: z.array(saleLineSchema).min(1, 'Agrega al menos un producto.').max(200),
   payments: z.array(paymentLineSchema).min(1, 'Registra al menos un pago.').max(5),
   documentType: z.enum(['NOTA_VENTA', 'BOLETA', 'FACTURA', 'TICKET']).default('NOTA_VENTA'),
@@ -100,6 +105,8 @@ export type RegisterSaleInput = z.infer<typeof registerSaleSchema>
 export const posLookupSchema = z.object({
   code: z.string().trim().min(1, 'Escribe o escanea un código.').max(64),
   warehouseId: id.optional(),
+  /** Lista de precios con la que se arma el carrito (F6.7c): `null`/ausente = Base. Solo decide qué datos de precio se devuelven; el servidor recalcula al cobrar. */
+  priceListId: id.nullable().optional(),
 })
 
 export type PosLookupInput = z.infer<typeof posLookupSchema>

@@ -84,6 +84,14 @@ export const NAV_ITEMS: NavItem[] = [
     permisos: ['reposicion.ver'],
   },
   {
+    href: '/precios',
+    label: 'Listas de precio',
+    short: 'Precios',
+    // Etiqueta
+    icon: 'M3 12V5a2 2 0 0 1 2-2h7l9 9-8 8-9-9V12Zm5-4h.01',
+    permisos: ['precios.gestionar'],
+  },
+  {
     href: '/inventario/kardex',
     label: 'Kardex',
     short: 'Kardex',
