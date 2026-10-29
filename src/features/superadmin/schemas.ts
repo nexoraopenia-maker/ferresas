@@ -115,7 +115,7 @@ export const facturacionRealSchema = z.object({
 /** Pase de la conexión con SUNAT entre pruebas y producción (S5). */
 export const ambienteSunatSchema = z.object({
   tenantId: z.string().min(1).max(64),
-  accion: z.enum(['produccion', 'beta']),
+  accion: z.enum(['produccion', 'beta', 'confirmar_conexion']),
   reason: z.string().trim().min(10, 'Explica el motivo con al menos 10 caracteres.').max(500),
 })
 

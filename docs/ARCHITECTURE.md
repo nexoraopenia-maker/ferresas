@@ -1322,3 +1322,7 @@ Detalle en `docs/SUNAT-DIRECTO-DISENO.md` §17. Migración destructiva `20261128
 
 - **`/api/fiscal/worker`**: `GET` (Vercel Cron, cada minuto) y `POST` (programadores externos) son el mismo manejador; ambos exigen `FISCAL_WORKER_SECRET` por cabecera. `CRON_SECRET` debe valer lo mismo para que Vercel Cron lo envíe.
 - **PSE**: columnas `Tenant.pse*` eliminadas, `validarUrlPse`/`PSE_ALLOWED_HOSTS` fuera, el re-cifrado ya no toca `tenants`. Pruebas: `retirar-pse` (16).
+
+### Ajuste a S5: la conexión se prueba en producción
+
+Ver `docs/SUNAT-DIRECTO-DISENO.md` §18. `pasarASunatProduccion` ya no exige prueba de conexión; con la conexión en PRODUCCIÓN y sin prueba exitosa, `elegirProveedor` lanza `ConexionSinProbar` y la cola/bajas **liberan** sin gastar intentos. La prueba exitosa (o `confirmarConexionSunat`, solo SuperAdmin) adelanta lo que esperaba. Pruebas: `sunat-produccion` (60).

@@ -143,6 +143,11 @@ export function SunatConfig({
           Ambiente de PRUEBAS de SUNAT: lo que se envíe aquí no tiene validez tributaria. La emisión real la habilita soporte más adelante.
         </p>
       )}
+      {estado.ambiente === 'PRODUCCION' && !probado && (
+        <p role="alert" data-sunat="sin-probar" className="mt-2 rounded-xl bg-stock-out-soft px-3 py-2 text-sm font-semibold text-stock-out">
+          Tu conexión con SUNAT REAL todavía no se ha probado: tus comprobantes NO se envían hasta que pulses «Probar conexión» y salga bien. Los que emitas esperan en la cola y salen solos después.
+        </p>
+      )}
       {!claveMaestra && <p role="alert" className="mt-3 text-sm font-semibold text-stock-out">Guardar credenciales está deshabilitado: falta la clave de cifrado del servidor. Avisa a soporte.</p>}
 
       {puedeOperar && claveMaestra && (editando ? (

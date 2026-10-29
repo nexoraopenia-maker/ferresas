@@ -62,6 +62,7 @@ export default async function SuperadminPage() {
     suspendedReason: t.suspendedReason,
     modoFiscal: t.modoFiscal,
     ambienteSunat: t.ambienteSunat,
+    sunatProbada: t.sunatProbada,
     envioFiscal: t.envioFiscal,
     isDemo: t.isDemo,
     users: t.users,

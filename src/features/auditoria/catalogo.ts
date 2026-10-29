@@ -86,6 +86,7 @@ export const ACCIONES: Readonly<Record<string, { categoria: Categoria; etiqueta:
   'sunat.credenciales_quitadas': { categoria: CO, etiqueta: 'Certificado y usuario SOL de SUNAT quitados' },
   'sunat.prueba_conexion': { categoria: CO, etiqueta: 'Prueba de conexión con SUNAT' },
   'tenant.sunat.produccion': { categoria: CO, etiqueta: 'Conexión con SUNAT pasada a producción' },
+  'tenant.sunat.conexion_confirmada': { categoria: CO, etiqueta: 'Conexión con SUNAT real confirmada a mano por soporte' },
   'tenant.sunat.beta': { categoria: CO, etiqueta: 'Conexión con SUNAT devuelta a pruebas' },
   'tenant.facturacion_real.umbrales': { categoria: CO, etiqueta: 'Umbrales de facturación real cambiados' },
   'usuario.aceptar_invitacion': { categoria: EQ, etiqueta: 'Invitación aceptada' },

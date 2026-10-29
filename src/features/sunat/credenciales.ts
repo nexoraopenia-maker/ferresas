@@ -183,10 +183,12 @@ export interface CredencialesSunatDescifradas {
   ambiente: 'BETA' | 'PRODUCCION'
   /** URL del servicio de envío que corresponde al ambiente. */
   urlBill: string
+  /** La última «prueba de conexión» salió bien. En PRODUCCIÓN nada se envía hasta que sea `true` (S5b). */
+  conexionProbada: boolean
 }
 
 export async function credencialesSunatDelNegocio(db: TenantPrismaClient, tenantId: string): Promise<CredencialesSunatDescifradas | null> {
-  const c = await db.sunatCredential.findFirst({ select: { pfxEnc: true, pfxPasswordEnc: true, solUser: true, solPasswordEnc: true, ambiente: true } })
+  const c = await db.sunatCredential.findFirst({ select: { pfxEnc: true, pfxPasswordEnc: true, solUser: true, solPasswordEnc: true, ambiente: true, lastTestOk: true } })
   if (!c) return null
   try {
     return {
@@ -196,6 +198,7 @@ export async function credencialesSunatDelNegocio(db: TenantPrismaClient, tenant
       claveSol: descifrar(c.solPasswordEnc, tenantId),
       ambiente: c.ambiente,
       urlBill: c.ambiente === 'PRODUCCION' ? SUNAT_PRODUCCION_BILL : SUNAT_BETA_BILL,
+      conexionProbada: c.lastTestOk === true,
     }
   } catch (e) {
     if (e instanceof ClaveMaestraAusente || e instanceof CifradoInvalido) throw invalido('No se pudieron leer las credenciales de SUNAT del negocio. Vuelve a cargarlas.')
@@ -220,7 +223,7 @@ export async function probarConexionSunat(
 ): Promise<ResultadoPrueba> {
   exigir(ctx, 'config.fiscal')
   const ahora = deps.ahora ?? new Date()
-  const previa = await db.sunatCredential.findFirst({ select: { id: true, lastTestAt: true, certValidFrom: true, certValidTo: true } })
+  const previa = await db.sunatCredential.findFirst({ select: { id: true, lastTestAt: true, certValidFrom: true, certValidTo: true, ambiente: true } })
   if (!previa) return { ok: false, mensaje: 'Primero carga el certificado y el usuario SOL.' }
   if (previa.lastTestAt && ahora.getTime() - previa.lastTestAt.getTime() < ESPERA_ENTRE_PRUEBAS_MS) {
     throw new BusinessError('RATE_LIMITED', 'Espera unos segundos antes de volver a probar: SUNAT bloquea a quien prueba claves muy seguido.')
@@ -238,7 +241,8 @@ export async function probarConexionSunat(
     else if (!tenant.taxId) resultado = { ok: false, mensaje: 'Completa el RUC del negocio.' }
     else {
       const r = await consultarCdr(deps.urlBill ?? cred.urlBill, { ruc: tenant.taxId, usuarioSol: cred.usuarioSol, claveSol: cred.claveSol }, { tipo: '01', serie: 'F001', numero: 1 }, deps)
-      if (r.tipo === 'transitorio') resultado = { ok: false, mensaje: 'No se pudo comunicar con SUNAT en este momento. Intenta de nuevo en unos minutos.' }
+      if (r.tipo === 'transitorio' && /HTTP 404/.test(r.mensaje)) resultado = { ok: false, mensaje: 'El servicio de consulta de SUNAT no respondió (404). Avisa a soporte: pueden confirmar la conexión a mano.' }
+      else if (r.tipo === 'transitorio') resultado = { ok: false, mensaje: 'No se pudo comunicar con SUNAT en este momento. Intenta de nuevo en unos minutos.' }
       else if (r.tipo === 'fallo' && esFalloDeAcceso(r.fallo.codigo)) resultado = { ok: false, mensaje: 'SUNAT no aceptó el usuario SOL o su clave. Revísalos (y que el usuario secundario tenga el perfil de comprobantes electrónicos).' }
       else resultado = { ok: true, mensaje: cert.vence.getTime() - ahora.getTime() < 30 * DIA ? 'SUNAT aceptó las credenciales, pero el certificado vence pronto: renuévalo.' : 'SUNAT aceptó las credenciales y el certificado está vigente.' }
     }
@@ -251,6 +255,11 @@ export async function probarConexionSunat(
   await db.$transaction(async (tx) => {
     const t = tx as unknown as TenantPrismaClient
     await t.sunatCredential.update({ where: { id: previa.id }, data: { lastTestAt: ahora, lastTestOk: resultado.ok, lastTestMessage: resultado.mensaje.slice(0, 300) } })
+    // En producción la prueba exitosa abre la compuerta del envío: lo que esperaba (se liberaba cada 5 min) sale YA, sin hacer esperar al dueño.
+    if (resultado.ok && previa.ambiente === 'PRODUCCION') {
+      await t.fiscalDispatch.updateMany({ where: { status: 'PENDIENTE', nextAttemptAt: { gt: ahora } }, data: { nextAttemptAt: ahora } })
+      await t.taxVoid.updateMany({ where: { status: { in: ['PENDIENTE', 'ENVIADA'] }, nextAttemptAt: { gt: ahora } }, data: { nextAttemptAt: ahora } })
+    }
     await t.auditLog.create({
       data: {
         tenantId: ctx.tenantId, actorId: ctx.userId, actorRole: ctx.role, action: 'sunat.prueba_conexion', entityType: 'SunatCredential', entityId: previa.id,

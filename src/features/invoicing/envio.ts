@@ -39,6 +39,17 @@ export { NotaEsperaOriginal } from './notas'
  *    que DEVUELVE el proveedor tras firmar.
  */
 
+/**
+ * La conexión con SUNAT REAL todavía no se probó (S5b): nada sale hasta que el dueño (o soporte) la confirme. NO es un fallo del comprobante ni del envío: la cola lo
+ * LIBERA sin gastar intentos (como un negocio en pausa), para que el comprobante no se agote esperando a que alguien pruebe la conexión.
+ */
+export class ConexionSinProbar extends Error {
+  constructor() {
+    super('La conexión con SUNAT real todavía no se ha probado. El dueño debe pulsar «Probar conexión» en Comprobantes → Conexión con SUNAT; mientras tanto el comprobante espera.')
+    this.name = 'ConexionSinProbar'
+  }
+}
+
 export interface ResultadoEnvio {
   estado: TaxDocumentStatus
   /** El proveedor falló de forma transitoria: se puede reintentar sin riesgo. */
@@ -245,6 +256,8 @@ export async function elegirProveedor(
       'La conexión con SUNAT está en el ambiente de PRUEBAS: los comprobantes reales quedan pendientes hasta que soporte active la producción.',
     )
   }
+  // Producción: el primer comprobante oficial no sale hasta que la conexión se probó YA en producción (el pase la borra). Se prueba sin emitir nada (consulta, no envío).
+  if (cred.ambiente === 'PRODUCCION' && !cred.conexionProbada) throw new ConexionSinProbar()
   return {
     proveedor: obtenerProveedor('sunat-directo'),
     credenciales: {

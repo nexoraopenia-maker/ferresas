@@ -22,7 +22,7 @@ import {
   updateTenantProfileSchema,
 } from './schemas'
 import { cambiarFacturacionReal, fijarUmbralesAlerta } from './facturacion-real-service'
-import { evaluarPaseASunatProduccion, pasarASunatProduccion, volverASunatBeta, type EvaluacionPase } from './produccion-sunat-service'
+import { confirmarConexionSunat, evaluarPaseASunatProduccion, pasarASunatProduccion, volverASunatBeta, type EvaluacionPase } from './produccion-sunat-service'
 import {
   resetOwnerPassword as runResetPassword,
   updateTenantProfile as runUpdateProfile,
@@ -449,7 +449,7 @@ export async function previsualizarPaseSunatAction(raw: unknown): Promise<Action
 }
 
 /** Pasa la conexión con SUNAT de un negocio a producción, o la devuelve a pruebas (solo SuperAdmin, con motivo). */
-export async function setAmbienteSunatAction(raw: unknown): Promise<ActionResult<{ ambiente: string; reencolados?: number; retenidos?: number }>> {
+export async function setAmbienteSunatAction(raw: unknown): Promise<ActionResult<{ ambiente?: string; confirmada?: boolean; reencolados?: number; retenidos?: number }>> {
   const parsed = ambienteSunatSchema.safeParse(raw)
   if (!parsed.success) {
     return { ok: false, code: 'VALIDATION', message: parsed.error.issues[0]?.message ?? 'Revisa los datos.', details: z.flattenError(parsed.error).fieldErrors }
@@ -458,7 +458,9 @@ export async function setAmbienteSunatAction(raw: unknown): Promise<ActionResult
     const admin = await requireSuperAdmin()
     const actor = { id: admin.id, email: admin.email }
     const input = { tenantId: parsed.data.tenantId, reason: parsed.data.reason }
-    const r = parsed.data.accion === 'produccion' ? await pasarASunatProduccion(input, actor) : await volverASunatBeta(input, actor)
+    const r = parsed.data.accion === 'produccion' ? await pasarASunatProduccion(input, actor)
+      : parsed.data.accion === 'beta' ? await volverASunatBeta(input, actor)
+      : await confirmarConexionSunat(input, actor)
     revalidatePath(ROUTES.superadmin)
     return { ok: true, data: r }
   } catch (e) {

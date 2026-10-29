@@ -1,6 +1,6 @@
 import { diaLocal } from '@/lib/periodos'
 import { getTenantPrisma, type TenantPrismaClient } from '@/lib/tenant-prisma'
-import { elegirProveedor, type DependenciasEnvio } from '@/features/invoicing/envio'
+import { ConexionSinProbar, elegirProveedor, type DependenciasEnvio } from '@/features/invoicing/envio'
 import { tipoComprobante } from '@/features/invoicing/catalogos'
 import { modoFiscal } from '@/features/invoicing/modo-fiscal'
 import { guardarArchivosBaja } from '@/features/sunat/archivos'
@@ -109,6 +109,8 @@ export async function procesarBaja(fila: BajaReclamada, deps: DependenciasEnvio 
     if (c.tipo === 'transitorio') return reintentar(c.mensaje)
     return resolver(db, fila, mio, v.taxDocument.id, ahora, { estado: c.aceptada ? 'ACEPTADA' : 'RECHAZADA', codigo: c.codigo, mensaje: c.mensaje, archivos: { cdrXml: c.cdrXml } })
   } catch (e) {
+    // La conexión real aún no se probó: la baja espera sin gastar intentos.
+    if (e instanceof ConexionSinProbar) return liberar(e.message)
     // Una configuración mala (certificado vencido, credenciales, ambiente de pruebas) o un error inesperado NO es un rechazo de SUNAT: se reintenta y, si no se arregla, queda AGOTADA.
     return reintentar(recortarError(e))
   }

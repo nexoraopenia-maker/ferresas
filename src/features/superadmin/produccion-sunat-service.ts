@@ -18,11 +18,9 @@ import { dentroDelPlazoDeEnvio } from '@/features/sunat/plazos'
  * la pantalla del negocio, con una advertencia) y solo sale si una persona lo envía a mano. Las bajas pendientes vuelven a la cola con intentos nuevos (su plazo lo
  * vuelve a comprobar la cola antes de enviar).
  *
- * ⚠️ Qué hace falta para «estar listo» es criterio nuestro (docs/SUNAT-SUPUESTOS.md #28): nada de esto es una exigencia de SUNAT.
+ * ⚠️ Qué hace falta para «estar listo» es criterio nuestro (docs/SUNAT-SUPUESTOS.md #28): nada de esto es una exigencia de SUNAT. La PRUEBA DE CONEXIÓN no es requisito del pase: se hace ya en producción
+ * y es la compuerta del primer envío (S5b, #29).
  */
-
-/** Cuánto vale una prueba de conexión exitosa para el pase (⚠️ criterio nuestro). */
-export const VIGENCIA_PRUEBA_HORAS = 24
 
 const DIA_MS = 86_400_000
 const DIAS_AVISO_CERTIFICADO = 30
@@ -74,10 +72,9 @@ export async function evaluarPaseASunatProduccion(tenantId: string, ahora: Date 
     }
     if (!c.certRuc) faltantes.push('RUC legible en el certificado (no se pudo leer, así que no se puede comprobar que sea del negocio)')
     else if (t.taxId && c.certRuc !== t.taxId) faltantes.push(`certificado del mismo RUC que el negocio (el certificado es del ${c.certRuc} y el negocio es ${t.taxId})`)
-    if (!c.lastTestAt || c.lastTestOk !== true) faltantes.push('prueba de conexión con SUNAT exitosa (la última falló o no se hizo)')
-    else if (ahora.getTime() - c.lastTestAt.getTime() > VIGENCIA_PRUEBA_HORAS * 3_600_000) {
-      faltantes.push(`prueba de conexión reciente (la última exitosa tiene más de ${VIGENCIA_PRUEBA_HORAS} horas: repítela)`)
-    }
+    // La prueba de conexión YA NO es requisito del pase: BETA no sirve para probar credenciales (las acepta todas) ni ofrece la consulta de CDR. La conexión se prueba ya en
+    // PRODUCCIÓN, y hasta entonces ningún comprobante sale (ver `ConexionSinProbar` en invoicing/envio.ts).
+    advertencias.push('Tras el pase, ningún comprobante sale a SUNAT real hasta que el dueño pulse «Probar conexión» y salga bien (o soporte la confirme a mano). Pídele que la haga enseguida.')
   }
 
   const pend = await prisma.taxDocument.findMany({ where: { tenantId, isTrial: false, status: 'PENDIENTE' }, select: { issuedAt: true }, take: 20_000 })
@@ -185,5 +182,36 @@ export async function volverASunatBeta(input: { tenantId: string; reason: string
       },
     })
     return { ambiente: 'BETA' as const }
+  })
+}
+
+/**
+ * Escape de SOPORTE: da por probada la conexión de un negocio que YA está en producción cuando la «prueba de conexión» del dueño no puede concluir (p. ej. el servicio de consulta de
+ * SUNAT no responde) pero se verificó por otro camino. Solo SuperAdmin, con motivo, auditado. No sirve en BETA ni si ya está probada: no se debilita la compuerta por descuido.
+ */
+export async function confirmarConexionSunat(
+  input: { tenantId: string; reason: string }, actor: Actor, ahora: Date = new Date(),
+): Promise<{ confirmada: true }> {
+  const t = await cargar(input.tenantId)
+  const c = t.sunatCredential
+  if (c?.ambiente !== 'PRODUCCION') throw new BusinessError('INVALID_DOCUMENT', 'La conexión no está en producción: no hay nada que confirmar.')
+  if (c.lastTestOk === true) throw new BusinessError('INVALID_DOCUMENT', 'La conexión ya figura como probada.')
+  return prisma.$transaction(async (tx) => {
+    const r = await tx.sunatCredential.updateMany({
+      where: { tenantId: t.id, ambiente: 'PRODUCCION', OR: [{ lastTestOk: null }, { lastTestOk: false }] },
+      data: { lastTestAt: ahora, lastTestOk: true, lastTestMessage: `Confirmada a mano por soporte (${actor.email}).`, updatedById: actor.id },
+    })
+    if (r.count !== 1) throw new BusinessError('INVALID_DOCUMENT', 'El estado cambió mientras tanto. Recarga e inténtalo de nuevo.')
+    // La compuerta se abre: lo que esperaba sale ya.
+    await tx.fiscalDispatch.updateMany({ where: { tenantId: t.id, status: 'PENDIENTE', nextAttemptAt: { gt: ahora } }, data: { nextAttemptAt: ahora } })
+    await tx.taxVoid.updateMany({ where: { tenantId: t.id, status: { in: ['PENDIENTE', 'ENVIADA'] }, nextAttemptAt: { gt: ahora } }, data: { nextAttemptAt: ahora } })
+    await tx.auditLog.create({
+      data: {
+        tenantId: t.id, actorId: actor.id, actorRole: 'SUPERADMIN', actorEmail: actor.email,
+        action: 'tenant.sunat.conexion_confirmada', entityType: 'Tenant', entityId: t.id, reason: input.reason,
+        before: { conexionProbada: false }, after: { conexionProbada: true, manual: true },
+      },
+    })
+    return { confirmada: true as const }
   })
 }

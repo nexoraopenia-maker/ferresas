@@ -33,7 +33,7 @@ export interface TenantPerfil {
   email: string | null
 }
 
-type Accion = 'suspender' | 'reactivar' | 'soporte' | 'password' | 'perfil' | 'facturacion' | 'real_habilitar' | 'real_pausar' | 'real_reanudar' | 'real_ensayo' | 'sunat_produccion' | 'sunat_beta' | 'umbrales'
+type Accion = 'suspender' | 'reactivar' | 'soporte' | 'password' | 'perfil' | 'facturacion' | 'real_habilitar' | 'real_pausar' | 'real_reanudar' | 'real_ensayo' | 'sunat_produccion' | 'sunat_beta' | 'sunat_confirmar' | 'umbrales'
 
 const COPY: Record<Exclude<Accion, 'perfil' | 'facturacion'>, {
   titulo: string
@@ -89,6 +89,12 @@ const COPY: Record<Exclude<Accion, 'perfil' | 'facturacion'>, {
     boton: 'Pasar a producción',
     placeholder: 'Ej. Certificado y usuario SOL verificados con el dueño el 12/11',
   },
+  sunat_confirmar: {
+    titulo: 'Confirmar la conexión con SUNAT a mano',
+    descripcion: 'Solo si la «Probar conexión» del dueño no puede concluir (p. ej. el servicio de consulta de SUNAT no responde) y verificaste la conexión por otro camino. Desde ahora los comprobantes de este negocio SALEN a SUNAT real.',
+    boton: 'Confirmar',
+    placeholder: 'Ej. Verificado con una consulta manual en el portal de SUNAT el 12/11',
+  },
   sunat_beta: {
     titulo: 'Volver SUNAT a pruebas',
     descripcion: 'Solo si NO salió ningún comprobante a SUNAT real. Los nuevos quedarán pendientes hasta volver a producción.',
@@ -129,6 +135,7 @@ export function TenantActions({
   isActive,
   modoFiscal,
   ambienteSunat,
+  sunatProbada,
   umbrales,
   perfil,
   onFacturacion,
@@ -138,6 +145,7 @@ export function TenantActions({
   isActive: boolean
   modoFiscal: ModoFiscal
   ambienteSunat: 'BETA' | 'PRODUCCION' | null
+  sunatProbada: boolean
   umbrales: { avisoHoras: number; criticoHoras: number; avisoPropio: number | null; criticoPropio: number | null }
   perfil: TenantPerfil
   onFacturacion: () => void
@@ -197,7 +205,7 @@ export function TenantActions({
         : accion === 'soporte' ? await startImpersonation({ tenantId, reason })
         : accion === 'password' ? await resetTenantOwnerPassword({ tenantId, reason, password: nuevaClave })
         : accion === 'umbrales' ? await setUmbralesAlertaAction({ tenantId, reason, warnHours: horas(avisoH), criticalHours: horas(criticoH) })
-        : accion === 'sunat_produccion' || accion === 'sunat_beta' ? await setAmbienteSunatAction({ tenantId, reason, accion: accion === 'sunat_produccion' ? 'produccion' : 'beta' })
+        : accion === 'sunat_produccion' || accion === 'sunat_beta' || accion === 'sunat_confirmar' ? await setAmbienteSunatAction({ tenantId, reason, accion: accion === 'sunat_produccion' ? 'produccion' : accion === 'sunat_confirmar' ? 'confirmar_conexion' : 'beta' })
         : accion.startsWith('real_') ? await setFacturacionRealAction({ tenantId, reason, accion: accion.replace('real_', '').replace('ensayo', 'volver_a_ensayo') })
         : await updateTenantProfileAction({
             tenantId,
@@ -278,6 +286,7 @@ export function TenantActions({
               {modoFiscal === 'PAUSADO' && <DropdownMenuItem onSelect={() => abrir('real_reanudar')}>Reanudar el envío a SUNAT</DropdownMenuItem>}
               {(modoFiscal === 'REAL' || modoFiscal === 'PAUSADO') && <DropdownMenuItem onSelect={() => abrir('real_ensayo')}>Volver a modo ensayo</DropdownMenuItem>}
               {(modoFiscal === 'REAL' || modoFiscal === 'PAUSADO') && ambienteSunat === 'BETA' && <DropdownMenuItem onSelect={() => abrir('sunat_produccion')}>Pasar SUNAT a producción</DropdownMenuItem>}
+              {ambienteSunat === 'PRODUCCION' && !sunatProbada && <DropdownMenuItem onSelect={() => abrir('sunat_confirmar')}>Confirmar la conexión con SUNAT a mano</DropdownMenuItem>}
               {ambienteSunat === 'PRODUCCION' && <DropdownMenuItem onSelect={() => abrir('sunat_beta')}>Volver SUNAT a pruebas</DropdownMenuItem>}
               <DropdownMenuItem onSelect={() => abrir('umbrales')}>Umbrales de la alarma de envío</DropdownMenuItem>
             </>

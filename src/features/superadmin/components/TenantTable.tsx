@@ -19,6 +19,7 @@ export interface TenantTableRow extends BillingData {
   suspendedReason: string | null
   modoFiscal: ModoFiscal
   ambienteSunat: 'BETA' | 'PRODUCCION' | null
+  sunatProbada: boolean
   isDemo: boolean
   envioFiscal: { sinEnviar: number; agotados: number; masAntiguoHoras: number | null; nivel: 'ok' | 'aviso' | 'critico'; avisoHoras: number; criticoHoras: number; avisoPropio: number | null; criticoPropio: number | null }
   users: number
@@ -210,7 +211,7 @@ export function TenantTable({
                       : t.envioFiscal.nivel === 'aviso' ? 'bg-stock-low-soft text-stock-low'
                       : t.modoFiscal === 'ENSAYO' ? 'bg-surface-sunken text-ink-muted' : 'bg-stock-ok-soft text-stock-ok'}`}>
                       Facturación: {ETIQUETA_MODO[t.modoFiscal]}
-                      {t.ambienteSunat && ` · SUNAT ${t.ambienteSunat === 'PRODUCCION' ? 'real' : 'en pruebas'}`}
+                      {t.ambienteSunat && ` · SUNAT ${t.ambienteSunat === 'PRODUCCION' ? (t.sunatProbada ? 'real' : 'real SIN PROBAR (no envía)') : 'en pruebas'}`}
                       {t.envioFiscal.sinEnviar > 0 && t.envioFiscal.masAntiguoHoras !== null &&
                         ` · ${t.envioFiscal.sinEnviar} sin enviar, el más antiguo ${describirAntiguedad(t.envioFiscal.masAntiguoHoras)}`}
                       {t.envioFiscal.agotados > 0 && ` · ${t.envioFiscal.agotados} AGOTADO${t.envioFiscal.agotados === 1 ? '' : 'S'}`}
@@ -265,6 +266,7 @@ export function TenantTable({
                     isActive={t.isActive}
                     modoFiscal={t.modoFiscal}
                     ambienteSunat={t.ambienteSunat}
+                    sunatProbada={t.sunatProbada}
                     umbrales={t.envioFiscal}
                     perfil={{
                       name: t.tenantName,

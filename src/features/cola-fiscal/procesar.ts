@@ -1,7 +1,7 @@
 import { getTenantPrisma } from '@/lib/tenant-prisma'
 import type { TenantContext } from '@/lib/tenant-context'
 import {
-  consultarInterno, enviarInterno, NotaEsperaOriginal, type ActorEnvio, type DependenciasEnvio,
+  ConexionSinProbar, consultarInterno, enviarInterno, NotaEsperaOriginal, type ActorEnvio, type DependenciasEnvio,
 } from '@/features/invoicing/envio'
 import { modoFiscal } from '@/features/invoicing/modo-fiscal'
 import { agotar, completar, liberar, pasarAConsulta, reprogramar, type FilaReclamada } from './repositorio'
@@ -74,6 +74,8 @@ export async function procesarFila(
   } catch (e) {
     // La nota depende de su original: no es un fallo suyo. Se libera SIN gastar el intento (como un negocio pausado).
     if (e instanceof NotaEsperaOriginal) return (await liberar(fila, en(ESPERA_NOTA_S), e.message)) ? 'liberado' : 'perdido'
+    // La conexión real aún no se probó: espera sin gastar intentos (se revisa cada 5 min; apenas se pruebe, sale).
+    if (e instanceof ConexionSinProbar) return (await liberar(fila, en(ESPERA_NOTA_S), e.message)) ? 'liberado' : 'perdido'
     return fallo(recortarError(e))
   }
 }

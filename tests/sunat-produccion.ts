@@ -5,10 +5,10 @@ import { readFileSync } from 'node:fs'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
 import { completarRuc } from '../src/lib/documentos'
-import { guardarCredencialesSunat } from '../src/features/sunat/credenciales'
+import { guardarCredencialesSunat, probarConexionSunat } from '../src/features/sunat/credenciales'
 import { dentroDelPlazoDeEnvio, PLAZO_ENVIO_DIAS } from '../src/features/sunat/plazos'
 import { solicitarBajaComprobante } from '../src/features/sunat/baja'
-import { evaluarPaseASunatProduccion, pasarASunatProduccion, volverASunatBeta, VIGENCIA_PRUEBA_HORAS } from '../src/features/superadmin/produccion-sunat-service'
+import { confirmarConexionSunat, evaluarPaseASunatProduccion, pasarASunatProduccion, volverASunatBeta } from '../src/features/superadmin/produccion-sunat-service'
 import { enviarManual } from '../src/features/cola-fiscal/manual'
 import { ejecutarWorker } from '../src/features/cola-fiscal/worker'
 import { claveIdempotencia } from '../src/features/cola-fiscal/reglas'
@@ -18,7 +18,7 @@ import { iniciarSunatFalso } from './falsos/sunat-falso'
 import type { TenantContext } from '../src/lib/tenant-context'
 
 /**
- * S5 · Pase a producción de SUNAT, solo SuperAdmin: las comprobaciones previas (certificado vigente, mismo RUC, prueba de conexión reciente y exitosa…), qué pasa con lo que
+ * S5 · Pase a producción de SUNAT, solo SuperAdmin: las comprobaciones previas (certificado vigente, mismo RUC…; la prueba de conexión YA NO es requisito: se hace en producción y es la compuerta del primer envío), qué pasa con lo que
  * quedó PENDIENTE mientras la conexión estaba en pruebas (lo que está en plazo vuelve a la cola; lo que lo superó se RETIENE con advertencia), y el camino de vuelta.
  * ⚠️ Qué hace falta para «estar listo» es criterio nuestro (docs/SUNAT-SUPUESTOS.md #28).
  */
@@ -79,7 +79,7 @@ async function cuerpo() {
   console.log('\n2) Qué impide el pase (cada cosa por separado)')
   const ok = await listo('ok')
   const evOk = await evaluarPaseASunatProduccion(ok.t.id)
-  check('>>> con todo en regla no falta nada y no hay advertencias', evOk.faltantes.length === 0 && evOk.advertencias.length === 0 && evOk.ambiente === 'BETA', evOk.faltantes.join(' | '))
+  check('>>> con todo en regla no falta nada y solo queda el aviso de probar la conexión tras el pase', evOk.faltantes.length === 0 && evOk.advertencias.length === 1 && /^Tras el pase, ningún comprobante sale a SUNAT real hasta que el dueño pulse «Probar conexión»/.test(evOk.advertencias[0]!) && evOk.ambiente === 'BETA', evOk.faltantes.join(' | '))
   const faltaCon = async (tag: string, cambia: (A: Awaited<ReturnType<typeof negocio>>) => Promise<void>, clave: RegExp, unico = false) => {
     const A = await listo(tag)
     await cambia(A)
@@ -92,12 +92,14 @@ async function cuerpo() {
   await faltaCon('certificado aún no vigente', (A) => upCred(A, { certValidFrom: new Date(Date.now() + DIA), certValidTo: new Date(Date.now() + 400 * DIA) }).then(() => {}), /todavía no empieza/)
   await faltaCon('certificado de otro RUC', (A) => upCred(A, { certRuc: completarRuc('2099999999') }).then(() => {}), /mismo RUC/)
   await faltaCon('certificado sin RUC legible', (A) => upCred(A, { certRuc: null }).then(() => {}), /RUC legible/)
-  await faltaCon('sin prueba de conexión', (A) => upCred(A, { lastTestAt: null, lastTestOk: null, lastTestMessage: null }).then(() => {}), /prueba de conexión/)
-  await faltaCon('prueba fallida', (A) => upCred(A, { lastTestOk: false }).then(() => {}), /prueba de conexión/)
-  await faltaCon('prueba vieja', (A) => upCred(A, { lastTestAt: new Date(Date.now() - (VIGENCIA_PRUEBA_HORAS + 1) * H) }).then(() => {}), /reciente/)
-  const casi = await listo('prueba casi vieja')
-  await upCred(casi, { lastTestAt: new Date(Date.now() - (VIGENCIA_PRUEBA_HORAS - 1) * H) })
-  check('una prueba de hace menos de 24 h todavía sirve', (await evaluarPaseASunatProduccion(casi.t.id)).faltantes.length === 0)
+  for (const [nombre, data] of [['sin prueba de conexión', { lastTestAt: null, lastTestOk: null, lastTestMessage: null }], ['con la última prueba FALLIDA', { lastTestOk: false }], ['con una prueba de hace una semana', { lastTestAt: new Date(Date.now() - 7 * DIA) }]] as const) {
+    const P = await listo(nombre)
+    await upCred(P, data)
+    const evP = await evaluarPaseASunatProduccion(P.t.id)
+    check(`>>> ${nombre}: YA NO impide el pase (BETA no sirve para probar credenciales)`, evP.faltantes.length === 0, evP.faltantes.join(' | '))
+    check(`${nombre}: avisa que nada sale hasta probar la conexión en producción`, evP.advertencias.some((a) => /«Probar conexión»/.test(a)))
+  }
+  const casi = await listo('para el camino de vuelta')
   await faltaCon('ya en producción', (A) => upCred(A, { ambiente: 'PRODUCCION' }).then(() => {}), /ya está en producción/)
   await faltaCon('negocio en ensayo', (A) => prisma.tenant.update({ where: { id: A.t.id }, data: { realBillingEnabledAt: null } }).then(() => {}), /modo ensayo/)
   await faltaCon('RUC del negocio inválido', (A) => prisma.tenant.update({ where: { id: A.t.id }, data: { taxId: '12345' } }).then(() => {}), /RUC del negocio/, true)
@@ -120,8 +122,8 @@ async function cuerpo() {
 
   console.log('\n3) Pasar: lo que cambia, lo que no, y la concurrencia')
   const bloq = await negocio('bloq')
-  await credencialSunatFalsa(bloq.t.id, { ruc: bloq.taxId, prueba: null })
-  check('>>> con faltantes se rechaza, los nombra y NO cambia nada (ni auditoría)', /Falta:.*prueba de conexión/.test(await msg(pasarASunatProduccion({ tenantId: bloq.t.id, reason: MOTIVO }, actor))) && (await bloq.cred()).ambiente === 'BETA' && (await prisma.auditLog.count({ where: { tenantId: bloq.t.id, action: 'tenant.sunat.produccion' } })) === 0)
+  await credencialSunatFalsa(bloq.t.id, { ruc: bloq.taxId, desde: new Date(Date.now() - 400 * DIA), hasta: new Date(Date.now() - DIA) })
+  check('>>> con faltantes se rechaza, los nombra y NO cambia nada (ni auditoría)', /Falta:.*VENCIDO/.test(await msg(pasarASunatProduccion({ tenantId: bloq.t.id, reason: MOTIVO }, actor))) && (await bloq.cred()).ambiente === 'BETA' && (await prisma.auditLog.count({ where: { tenantId: bloq.t.id, action: 'tenant.sunat.produccion' } })) === 0)
   const [p1, p2] = await Promise.allSettled([pasarASunatProduccion({ tenantId: ok.t.id, reason: MOTIVO }, actor), pasarASunatProduccion({ tenantId: ok.t.id, reason: MOTIVO }, actor)])
   const cOk = await ok.cred()
   check('>>> dos SuperAdmin a la vez: pasa UNO, y una sola auditoría', [p1, p2].filter((r) => r.status === 'fulfilled').length === 1 && cOk.ambiente === 'PRODUCCION' && (await prisma.auditLog.count({ where: { tenantId: ok.t.id, action: 'tenant.sunat.produccion' } })) === 1)
@@ -150,8 +152,6 @@ async function cuerpo() {
   check('>>> en BETA el worker no envía nada a SUNAT (los comprobantes reales no salen)', falso.recibidas.length === 0 && (await R.d(dentro3.id)).status === 'PENDIENTE')
   const ev = await evaluarPaseASunatProduccion(R.t.id)
   check('la previsualización cuenta lo pendiente: 3 en plazo y 2 fuera de plazo (sin contar pruebas ni aceptados), y 1 baja', ev.pendientes.enPlazo === 3 && ev.pendientes.fueraDePlazo === 2 && ev.bajasPendientes === 1 && ev.advertencias.some((a) => /2 comprobante.*superaron el plazo/.test(a)))
-  check('>>> y mientras no haya prueba reciente no se puede pasar', /prueba de conexión/.test(await msg(pasarASunatProduccion({ tenantId: R.t.id, reason: MOTIVO }, actor))))
-  await prisma.sunatCredential.update({ where: { tenantId: R.t.id }, data: { lastTestAt: new Date(), lastTestOk: true, lastTestMessage: 'ok' } })
   const ahora = new Date()
   const pase = await pasarASunatProduccion({ tenantId: R.t.id, reason: MOTIVO }, actor, ahora)
   check('>>> el pase informa cuántos volvieron a la cola (3: el worker ya había adoptado al que no tenía fila), cuántos quedaron retenidos y cuántas bajas', pase.reencolados === 3 && pase.retenidos === 2 && pase.bajasReencoladas === 1 && pase.ambiente === 'PRODUCCION', JSON.stringify(pase))
@@ -162,6 +162,16 @@ async function cuerpo() {
   check('el documento de prueba y el ya aceptado no se tocan', (await R.cola(prueba.id)) === null && (await R.cola(aceptado.id))?.attempts === 0 && (await R.d(prueba.id)).status === 'PENDIENTE')
   const vb = await prisma.taxVoid.findFirstOrThrow({ where: { taxDocumentId: fbaja.id } })
   check('la baja pendiente vuelve a la cola con intentos nuevos', vb.attempts === 0 && vb.lastError === null && vb.nextAttemptAt.getTime() <= ahora.getTime() + 1000)
+  const antesBloqueo = falso.recibidas.length
+  await worker(falso.url)
+  const bloqueado = await R.cola(dentro1.id)
+  check('>>> recién pasado a producción, SIN conexión probada, NADA sale: ni comprobantes ni bajas', falso.recibidas.length === antesBloqueo && (await R.d(dentro1.id)).status === 'PENDIENTE' && (await prisma.taxVoid.findFirstOrThrow({ where: { taxDocumentId: fbaja.id } })).status === 'PENDIENTE')
+  check('>>> y esperar NO gasta intentos ni los agota (se libera): la fila sigue PENDIENTE con intentos en cero y el motivo a la vista', bloqueado?.status === 'PENDIENTE' && bloqueado.attempts === 0 && /Probar conexión/.test(bloqueado.lastError ?? '') && (await prisma.taxVoid.findFirstOrThrow({ where: { taxDocumentId: fbaja.id } })).attempts === 0)
+  const intento = await enviarManual(R.db, R.ctx, dentro2.id, { urlSunat: falso.url }).then((r) => r, (e) => e)
+  check('>>> tampoco sale por el envío manual: dice que falta probar la conexión', (intento.reintentable === true || intento instanceof Error) && falso.recibidas.length === antesBloqueo && /Probar conexión/.test(intento.mensaje ?? String(intento.message ?? '')))
+  const prueba1 = await probarConexionSunat(R.db, R.ctx, { urlBill: falso.url })
+  const cR = await R.cred()
+  check('>>> el dueño prueba la conexión YA en producción (consulta, sin emitir nada): sale bien y queda en la bitácora', prueba1.ok && cR.lastTestOk === true && cR.lastTestAt !== null && falso.recibidas.every((r) => r.operacion !== 'sendBill'))
   await worker(falso.url)
   check('>>> el worker envía a SUNAT lo que estaba en plazo (con y sin fila de cola) y SOLO eso', (await R.d(dentro1.id)).status === 'ACEPTADO' && (await R.d(dentro2.id)).status === 'ACEPTADO' && (await R.d(dentro3.id)).status === 'ACEPTADO')
   check('>>> lo retenido NO se envió solo: sigue PENDIENTE y SUNAT jamás lo vio', (await R.d(fuera1.id)).status === 'PENDIENTE' && (await R.d(fuera2.id)).status === 'PENDIENTE' && falso.recibidas.filter((r) => r.operacion === 'sendBill').length === 3)
@@ -179,6 +189,42 @@ async function cuerpo() {
   check('>>> un pendiente fuera de plazo SIN fila de cola recibe una fila retenida (AGOTADO, con su idempotencia) y el de en plazo no recibe nada todavía', filaFuera?.status === 'AGOTADO' && filaFuera.idempotencyKey === claveIdempotencia(O.t.id, oFuera.id) && (await O.cola(oDentro.id)) === null)
   await worker(null)
   check('>>> el worker adopta al de en plazo pero JAMÁS al retenido', (await O.cola(oDentro.id)) !== null && (await prisma.fiscalDispatch.count({ where: { taxDocumentId: oFuera.id } })) === 1 && (await O.cola(oFuera.id))?.status === 'AGOTADO')
+
+  console.log('\n4c) La compuerta de la conexión sin probar')
+  const G = await negocio('compuerta')
+  const cg = generarCertificadoDePrueba({ ruc: G.taxId, clave: CLAVE_PFX })
+  await guardarCredencialesSunat(G.db, G.ctx, { pfxBase64: cg.pfx.toString('base64'), claveCertificado: CLAVE_PFX, usuarioSol: 'USERSOL1', claveSol: SOL })
+  const falsoG = await iniciarSunatFalso({ usuarios: { [`${G.taxId}USERSOL1`]: SOL } })
+  await prisma.sunatCredential.update({ where: { tenantId: G.t.id }, data: { ambiente: 'PRODUCCION', lastTestAt: new Date(), lastTestOk: false, lastTestMessage: 'x' } })
+  const dG = await G.doc({ cola: { status: 'PENDIENTE', attempts: 0 } })
+  await prisma.fiscalDispatch.updateMany({ where: { taxDocumentId: dG.id }, data: { nextAttemptAt: new Date(Date.now() - 1000) } })   // ya le toca: si no sale, es por la compuerta
+  const wG = () => ejecutarWorker({ reloj: () => new Date(), deps: { urlSunat: falsoG.url }, presupuestoMs: 600_000, margenEnvioMs: 0 })
+  await wG()
+  check('>>> con la última prueba FALLIDA tampoco sale nada (la compuerta pide una prueba exitosa)', falsoG.recibidas.length === 0 && (await G.cola(dG.id))?.attempts === 0)
+  const enBeta = await listo('confirmar en beta')
+  await upCred(enBeta, { lastTestAt: null, lastTestOk: null, lastTestMessage: null })
+  check('>>> confirmar a mano en BETA se rechaza («no está en producción») y no cambia nada', /no está en producción/.test(await msg(confirmarConexionSunat({ tenantId: enBeta.t.id, reason: MOTIVO }, actor))) && (await enBeta.cred()).lastTestOk === null)
+  check('>>> confirmar lo que YA figura como probado se rechaza («ya figura como probada»)', /ya figura como probada/.test(await msg(confirmarConexionSunat({ tenantId: R.t.id, reason: MOTIVO }, actor))))
+  const dobleN = await negocio('doble')
+  await credencialSunatFalsa(dobleN.t.id, { ruc: dobleN.taxId, ambiente: 'PRODUCCION' })
+  const dobles = await Promise.allSettled([confirmarConexionSunat({ tenantId: dobleN.t.id, reason: MOTIVO }, actor), confirmarConexionSunat({ tenantId: dobleN.t.id, reason: MOTIVO }, actor)])
+  check('>>> dos confirmaciones a la vez: una sola vale y una sola auditoría', dobles.filter((r) => r.status === 'fulfilled').length === 1 && (await prisma.auditLog.count({ where: { tenantId: dobleN.t.id, action: 'tenant.sunat.conexion_confirmada' } })) === 1)
+  const bProbe = await negocio('beta-prueba')
+  const cb = generarCertificadoDePrueba({ ruc: bProbe.taxId, clave: CLAVE_PFX })
+  await guardarCredencialesSunat(bProbe.db, bProbe.ctx, { pfxBase64: cb.pfx.toString('base64'), claveCertificado: CLAVE_PFX, usuarioSol: 'USERSOL1', claveSol: SOL })
+  falsoG.usuarios[`${bProbe.taxId}USERSOL1`] = SOL
+  const dB = await bProbe.doc({ cola: { status: 'PENDIENTE', attempts: 0 } })
+  const pB = await probarConexionSunat(bProbe.db, bProbe.ctx, { urlBill: falsoG.url })
+  check('>>> en BETA, una prueba exitosa NO adelanta la cola (solo abre la compuerta en producción)', pB.ok && ((await bProbe.cola(dB.id))?.nextAttemptAt.getTime() ?? 0) > Date.now() + 4 * H)
+  const conf = await confirmarConexionSunat({ tenantId: G.t.id, reason: 'Verificado por otro camino con el dueño' }, actor)
+  const cG = await G.cred()
+  check('>>> soporte confirma a mano: queda probada, con quién lo hizo, y la auditoría guarda motivo y correo', conf.confirmada && cG.lastTestOk === true && /soporte/.test(cG.lastTestMessage ?? '') && cG.updatedById === actor.id && (await prisma.auditLog.count({ where: { tenantId: G.t.id, action: 'tenant.sunat.conexion_confirmada', actorEmail: actor.email } })) === 1)
+  check('>>> y no se puede confirmar dos veces', await code(confirmarConexionSunat({ tenantId: G.t.id, reason: MOTIVO }, actor)) === 'INVALID_DOCUMENT')
+  await wG()
+  check('>>> confirmada la conexión, el comprobante pendiente sale por fin a SUNAT', (await G.d(dG.id)).status === 'ACEPTADO' && falsoG.recibidas.some((r) => r.operacion === 'sendBill'))
+  const noRespondeProbe = await probarConexionSunat(G.db, G.ctx, { urlBill: falsoG.url, fetch: (async () => new Response('Not Found', { status: 404 })) as never, ahora: new Date(Date.now() + 60_000) })
+  check('>>> si el servicio de consulta de SUNAT responde 404, la prueba no sale y el dueño lee que debe avisar a soporte', !noRespondeProbe.ok && /soporte/.test(noRespondeProbe.mensaje))
+  await falsoG.detener()
 
   console.log('\n5) El camino de vuelta')
   check('no se vuelve a pruebas si ya está en pruebas', /no está en producción/.test(await msg(volverASunatBeta({ tenantId: casi.t.id, reason: MOTIVO }, actor))) && (await casi.cred()).ambiente === 'BETA')
@@ -204,6 +250,7 @@ async function cuerpo() {
   const acciones = readFileSync('src/features/superadmin/actions.ts', 'utf8')
   const pasa = acciones.slice(acciones.indexOf('export async function setAmbienteSunatAction'))
   check('>>> la acción exige SuperAdmin ANTES de tocar nada, y exige un motivo de 10 caracteres', pasa.indexOf('requireSuperAdmin()') > 0 && pasa.indexOf('requireSuperAdmin()') < pasa.indexOf('pasarASunatProduccion(') && /min\(10/.test(readFileSync('src/features/superadmin/schemas.ts', 'utf8').slice(readFileSync('src/features/superadmin/schemas.ts', 'utf8').indexOf('ambienteSunatSchema'))))
+  check('>>> confirmar la conexión a mano pasa por la MISMA acción exclusiva del SuperAdmin', /confirmar_conexion/.test(readFileSync('src/features/superadmin/schemas.ts', 'utf8')) && /confirmarConexionSunat\(input, actor\)/.test(pasa) && pasa.indexOf('requireSuperAdmin()') < pasa.indexOf('confirmarConexionSunat(input, actor)'))
   check('la previsualización también es solo del SuperAdmin', /previsualizarPaseSunatAction[\s\S]*requireSuperAdmin\(\)[\s\S]*evaluarPaseASunatProduccion/.test(acciones))
   const escritores = (await import('node:child_process')).execSync(`grep -rln "ambiente: 'PRODUCCION'" src --include='*.ts' --include='*.tsx' | grep -v generated`).toString().trim().split('\n').sort()
   check('>>> ningún otro código de la aplicación escribe el ambiente de PRODUCCION (solo el servicio del SuperAdmin; el resto lo compara)', escritores.every((f) => f === 'src/features/superadmin/produccion-sunat-service.ts' || !/data:[^}]*ambiente: 'PRODUCCION'/.test(readFileSync(f, 'utf8'))), escritores.join(', '))
