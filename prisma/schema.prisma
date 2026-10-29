@@ -527,6 +527,7 @@ model Tenant {
   cashRegisters         CashRegister[]
   /// Credenciales de SUNAT directo (certificado y usuario SOL secundario), cifradas. Una por negocio.
   sunatCredential SunatCredential?
+  taxDocumentFiles TaxDocumentFile[]
 }
 
 // ============================================================================
@@ -2004,6 +2005,8 @@ model TaxDocument {
   /// Devolución que originó esta nota de crédito (F6.1).
   returns   SaleReturn[]      @relation("DevolucionNota")
   items     TaxDocumentItem[]
+  /// El XML firmado y el CDR que devolvió SUNAT (S3). Se conservan: no hay borrado automático (mínimo 5 años ⚠️).
+  archivos  TaxDocumentFile[]
 
   @@unique([tenantId, id])
   /// La restricción LEGAL: no puede haber dos comprobantes con el mismo
@@ -3320,4 +3323,34 @@ model SunatCredential {
 
   @@index([certValidTo])
   @@map("sunat_credentials")
+}
+
+enum TaxFileKind {
+  /// El XML UBL ya firmado, tal como se envió a SUNAT.
+  XML_FIRMADO
+  /// La constancia de recepción (CDR) que devolvió SUNAT, el XML del `ApplicationResponse`.
+  CDR
+}
+
+/// Archivos fiscales de un comprobante (S3): lo que se envió y lo que SUNAT respondió. Es la prueba ante SUNAT, así que se escribe UNA vez
+/// (único por comprobante y tipo) y no se borra. Va comprimido (gzip) en `content`; `sha256` y `size` son del contenido SIN comprimir.
+/// Aislado por negocio como todo: clave compuesta al comprobante.
+model TaxDocumentFile {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  taxDocumentId String
+  taxDocument   TaxDocument @relation(fields: [tenantId, taxDocumentId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  kind    TaxFileKind
+  content Bytes
+  sha256  String
+  size    Int
+
+  createdAt DateTime @default(now())
+
+  @@unique([taxDocumentId, kind])
+  @@index([tenantId, taxDocumentId])
+  @@map("tax_document_files")
 }

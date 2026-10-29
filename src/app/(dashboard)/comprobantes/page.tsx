@@ -33,6 +33,7 @@ export default async function ComprobantesPage() {
         issuedAt: true,
         saleId: true, isTrial: true, externalId: true, reasonCode: true,
         relatedDocument: { select: { fullNumber: true } },
+        archivos: { select: { kind: true } },
         // Una nota de crédito VIVA de este comprobante (una rechazada no cuenta): la total (única, por índice) o, desde F6.2, una parcial por devolución.
         // Con cualquiera de las dos no se ofrece emitir otra nota total (contaría dos veces lo devuelto).
         notes: {
@@ -145,6 +146,7 @@ export default async function ComprobantesPage() {
           motivo: d.reasonCode,
           notaTotal: d.notes[0]?.fullNumber ?? null,
           tieneIdProveedor: !!d.externalId,
+          archivos: d.archivos.map((a) => a.kind),
           cola: d.dispatch ? { estado: d.dispatch.status, intentos: d.dispatch.attempts, proximo: d.dispatch.nextAttemptAt.toISOString(), error: d.dispatch.lastError } : null,
         }))}
       />

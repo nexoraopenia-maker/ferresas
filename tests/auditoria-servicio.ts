@@ -62,7 +62,7 @@ async function cuerpo() {
   const instantes = ['2026-10-22T15:00:00.000Z', '2026-10-23T15:00:00.000Z', '2026-10-24T15:00:00.000Z']
   for (let i = 0; i < 120; i++) await reg(n, { action: 'sale.discount', en: instantes[i % 3]!, entityType: 'Sale', entityId: `venta-${i}`, actor: u.cajero!.id })
   await reg(n, { action: 'credito.abono', en: '2026-10-25T15:00:00.000Z', entityType: 'Cliente', entityId: 'cli-1', after: { monto: 40 } })
-  await reg(n, { action: 'pse.configurar', en: '2026-10-25T16:00:00.000Z', entityType: 'Tenant', entityId: 'cfg', before: null, after: { url: 'https://api.pse.pe', token: 'TOKEN-SECRETO-1', anidado: { claveSol: 'CLAVE-SOL-2', passwordHash: 'HASH-3', ok: 'visible' } } })
+  await reg(n, { action: 'sunat.credenciales_guardadas', en: '2026-10-25T16:00:00.000Z', entityType: 'Tenant', entityId: 'cfg', before: null, after: { url: 'https://api.pse.pe', token: 'TOKEN-SECRETO-1', anidado: { claveSol: 'CLAVE-SOL-2', passwordHash: 'HASH-3', ok: 'visible' } } })
   await reg(n, { action: 'algo.nuevo', en: '2026-10-25T17:00:00.000Z', entityId: 'x-1' })
   await reg(n, { action: 'impersonation.start', en: '2026-10-25T18:00:00.000Z', actor: null, email: 'soporte@saas.pe', reason: 'ticket 123' })
   await reg(n, { action: 'sale.below_stock', en: '2026-10-25T19:00:00.000Z', impersonationId: 'imp-1', entityType: 'Sale', entityId: 'v-soporte' })
@@ -126,7 +126,7 @@ async function cuerpo() {
   check('un filtro sin resultados da lista vacía', (await listarAuditoria(n.db(owner), owner, P({ entidad: 'no-existe' }), AHORA)).filas.length === 0)
 
   console.log('\nF) Lo que se muestra de cada registro')
-  const pse = todas.find((f) => f.accion === 'pse.configurar')!
+  const pse = todas.find((f) => f.accion === 'sunat.credenciales_guardadas')!
   check('>>> los secretos NO salen: token, clave SOL y hash tapados aun anidados; lo demás sí', !JSON.stringify(pse).includes('SECRETO') && !JSON.stringify(pse).includes('CLAVE-SOL') && !JSON.stringify(pse).includes('HASH-3') && pse.despues!.texto.includes('visible') && pse.despues!.texto.includes('https://api.pse.pe') && pse.despues!.texto.includes('«oculto»'))
   check('sin antes/después guardado → null (la pantalla dice «no guardó detalle»)', pse.antes === null && todas.find((f) => f.accion === 'algo.nuevo')!.despues === null)
   const sop = todas.find((f) => f.accion === 'sale.below_stock')!

@@ -9,7 +9,8 @@ import type { TenantContext } from '@/lib/tenant-context'
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { IDENTIDAD_SUNAT, UNIDAD_SUNAT, tipoComprobante } from './catalogos'
 import { obtenerProveedor, ErrorConfiguracionProveedor } from './providers'
-import { credencialesPseDelNegocio } from './pse-config'
+import { credencialesSunatDelNegocio } from '@/features/sunat/credenciales'
+import { guardarArchivosFiscales } from '@/features/sunat/archivos'
 import type {
   ComprobanteFiscal, CredencialesProveedor, LineaFiscal, ProveedorFacturacion,
 } from './providers/types'
@@ -20,7 +21,7 @@ import { CODIGOS_NOTA_CREDITO_PARCIAL, documentoRelacionadoDe } from './notas'
 export { NotaEsperaOriginal } from './notas'
 
 /**
- * Envío de un comprobante al proveedor de facturación (PSE/OSE).
+ * Envío de un comprobante al proveedor de facturación (hoy: SUNAT directo; el simulado para demos y pruebas).
  *
  * Camino: `TaxDocument` (PENDIENTE) → `ComprobanteFiscal` → XML UBL de
  * comprobación → proveedor → respuesta guardada en el mismo `TaxDocument`.
@@ -63,6 +64,8 @@ export interface DependenciasEnvio {
   proveedor?: ProveedorFacturacion
   credenciales?: CredencialesProveedor
   ahora?: Date
+  /** Solo pruebas: la URL del servicio de SUNAT a usar en lugar de la del ambiente (solo se acepta una de SUNAT o el SUNAT falso fuera de producción). */
+  urlSunat?: string
 }
 
 const CREDENCIALES_DEMO: CredencialesProveedor = { usuario: 'mock:acepta', clave: 'demo', modoPruebas: true }
@@ -220,15 +223,29 @@ async function elegirProveedor(
     return { proveedor: deps.proveedor, credenciales: deps.credenciales }
   }
 
-  // Lo normal: el PSE que el dueño configuró, con su token descifrado en el servidor.
-  const cred = await credencialesPseDelNegocio(db, tenantId)
+  // Lo normal: SUNAT directo, con las credenciales que el dueño cargó (descifradas aquí, en el servidor, y solo para este envío).
+  const cred = await credencialesSunatDelNegocio(db, tenantId)
   if (!cred) {
     throw new BusinessError(
       'INVALID_DOCUMENT',
-      'No hay un proveedor de facturación electrónica configurado. El comprobante queda pendiente de envío.',
+      'No hay credenciales de SUNAT cargadas (certificado digital y usuario SOL). El comprobante queda pendiente de envío.',
     )
   }
-  return { proveedor: obtenerProveedor('pse-rest'), credenciales: cred }
+  // Los comprobantes REALES no se envían al ambiente de PRUEBAS de SUNAT: allí no tienen valor y quedarían "aceptados" aquí sin existir ante SUNAT.
+  // Pasar a producción es del SuperAdmin (S5); mientras tanto el comprobante queda pendiente, que es la verdad.
+  if (cred.ambiente !== 'PRODUCCION' && !deps.urlSunat) {
+    throw new BusinessError(
+      'INVALID_DOCUMENT',
+      'La conexión con SUNAT está en el ambiente de PRUEBAS: los comprobantes reales quedan pendientes hasta que soporte active la producción.',
+    )
+  }
+  return {
+    proveedor: obtenerProveedor('sunat-directo'),
+    credenciales: {
+      usuario: '', clave: '', modoPruebas: cred.ambiente !== 'PRODUCCION', urlBase: deps.urlSunat ?? cred.urlBill,
+      certificadoBase64: cred.pfx.toString('base64'), claveCertificado: cred.claveCertificado, usuarioSol: cred.usuarioSol, claveSol: cred.claveSol,
+    },
+  }
 }
 
 /** Un problema de configuración del proveedor no es un rechazo del comprobante: no cambia su estado. */
@@ -293,6 +310,8 @@ export async function enviarInterno(
       },
     })
     if (cambio.count === 1) {
+      // Lo que se envió y lo que SUNAT respondió, en la MISMA transacción que el cambio de estado: no puede quedar «aceptado» sin su constancia.
+      await guardarArchivosFiscales(t, actor.tenantId, doc.id, r.archivos)
       await t.auditLog.create({
         data: {
           tenantId: actor.tenantId, actorId: actor.id, actorRole: actor.role,
@@ -350,6 +369,7 @@ export async function consultarInterno(
       },
     })
     if (cambio.count === 1) {
+      await guardarArchivosFiscales(t, actor.tenantId, doc.id, e.cdrXml ? { cdrXml: e.cdrXml } : undefined)
       await t.auditLog.create({
         data: {
           tenantId: actor.tenantId, actorId: actor.id, actorRole: actor.role,

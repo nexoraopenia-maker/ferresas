@@ -1,40 +1,33 @@
 import type { ProveedorFacturacion } from './types'
 import { proveedorMock } from './mock'
-import { crearProveedorPseRest } from './pse-rest'
+import { crearProveedorSunatDirecto } from '@/features/sunat/proveedor'
 
 /**
  * Selección del proveedor de facturación.
  *
- * Un solo sitio donde se decide. Añadir un PSE real es:
- *   1. crear `providers/<nombre>.ts` que exporte un `ProveedorFacturacion`
- *   2. registrarlo en el mapa de abajo
+ * Un solo sitio donde se decide. Hoy hay dos: el `mock` (cuentas de demostración y pruebas) y `sunat-directo` (el sistema firma y envía directo a
+ * SUNAT, sin intermediario). Añadir otro es crear `providers/<nombre>.ts` y registrarlo aquí; nada más del sistema cambia.
  *
- * Nada más del sistema cambia. Esa es la razón de ser de esta capa.
- *
- * Por defecto el mock, a propósito: mientras no haya contrato con un
- * proveedor, emitir contra "nada" en silencio sería peor que emitir contra un
- * simulador que al menos ejerce los caminos de rechazo y reintento.
+ * Por defecto el mock, a propósito: emitir contra «nada» en silencio sería peor que emitir contra un simulador que al menos ejerce los caminos de
+ * rechazo y reintento. Un negocio REAL nunca usa el mock: `elegirProveedor` (envio.ts) lo decide según el modo fiscal.
  */
 
 const PROVEEDORES: Record<string, ProveedorFacturacion> = {
   mock: proveedorMock,
-  'pse-rest': crearProveedorPseRest(),
+  'sunat-directo': crearProveedorSunatDirecto(),
 }
 
 export function obtenerProveedor(
   nombre?: string,
   opciones: { esDemo?: boolean } = {},
 ): ProveedorFacturacion {
-  // Una cuenta de demostración NUNCA habla con un proveedor real, sea cual sea
-  // la configuración del entorno: sus comprobantes son de mentira.
+  // Una cuenta de demostración NUNCA habla con un proveedor real, sea cual sea la configuración del entorno: sus comprobantes son de mentira.
   if (opciones.esDemo) return PROVEEDORES.mock!
   const elegido = nombre ?? process.env.FACTURACION_PROVEEDOR ?? 'mock'
   const p = PROVEEDORES[elegido]
   if (!p) {
     const disponibles = Object.keys(PROVEEDORES).join(', ')
-    throw new Error(
-      `Proveedor de facturación desconocido: "${elegido}". Disponibles: ${disponibles}.`,
-    )
+    throw new Error(`Proveedor de facturación desconocido: "${elegido}". Disponibles: ${disponibles}.`)
   }
   return p
 }
@@ -45,5 +38,5 @@ export function proveedoresDisponibles(): string[] {
 }
 
 export * from './types'
-export { crearProveedorPseRest, ErrorConfiguracionProveedor } from './pse-rest'
+export { ErrorConfiguracionProveedor } from './errores'
 export { reiniciarMock } from './mock'

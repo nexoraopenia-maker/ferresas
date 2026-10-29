@@ -26,6 +26,8 @@ export interface TaxDocRow {
   /** Documento de PRUEBA: serie PB001/PF001, sin valor tributario; no se envía ni cambia de estado. */
   isTrial: boolean
   series: string
+  /** Archivos fiscales guardados (S3): el XML firmado y el CDR de SUNAT, para descargarlos. */
+  archivos: ('XML_FIRMADO' | 'CDR')[]
   /** Notas: número del comprobante que modifican, y el código de su motivo. */
   documentoRelacionado: string | null
   motivo: string | null
@@ -243,6 +245,12 @@ export function TaxDocumentList({
                         >
                           80 mm
                         </a>
+                      )}
+                      {d.archivos.length > 0 && (
+                        <span data-comprobante="archivos" className="ml-2 inline-flex gap-2 align-middle text-xs font-semibold">
+                          {d.archivos.includes('XML_FIRMADO') && <a href={`/api/comprobantes/${d.id}/archivo?tipo=xml`} className="underline">XML</a>}
+                          {d.archivos.includes('CDR') && <a href={`/api/comprobantes/${d.id}/archivo?tipo=cdr`} className="underline">CDR</a>}
+                        </span>
                       )}
                       {puedeEnviar && !d.isTrial && (d.status === 'PENDIENTE' || d.status === 'ENVIADO') && (
                         <button

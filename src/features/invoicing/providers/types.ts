@@ -130,6 +130,8 @@ export interface ResultadoEmision {
    * `false` si es un rechazo de fondo (RUC mal, correlativo duplicado):
    * reintentar eso solo gasta cupo y confunde los logs.
    */
+  /** Los archivos fiscales de la respuesta (S3): el XML ya firmado y el CDR de SUNAT. Se guardan junto al cambio de estado. */
+  archivos?: { xmlFirmado?: string; cdrXml?: string }
   reintentable: boolean
 }
 
@@ -140,6 +142,8 @@ export interface EstadoComprobante {
   codigoRespuesta: string | null
   mensaje: string | null
   aceptadoEn: string | null
+  /** El CDR (XML del `ApplicationResponse`) si la consulta lo trae (S3). */
+  cdrXml?: string | null
 }
 
 export type FormatoDescarga = 'XML' | 'CDR' | 'PDF'

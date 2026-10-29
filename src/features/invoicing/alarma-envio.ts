@@ -1,5 +1,6 @@
 import type { TenantPrismaClient } from '@/lib/tenant-prisma'
 import { modoFiscal, type ModoFiscal } from './modo-fiscal'
+import { PLAZO_ENVIO_DIAS } from '@/features/sunat/plazos'
 
 /**
  * Alarma de comprobantes SIN ENVIAR.
@@ -16,7 +17,8 @@ import { modoFiscal, type ModoFiscal } from './modo-fiscal'
  */
 
 export const UMBRAL_AVISO_POR_DEFECTO_HORAS = 24
-export const UMBRAL_CRITICO_POR_DEFECTO_HORAS = 72
+/** El aviso CRÍTICO coincide con el plazo máximo de envío (3 días ⚠️): pasado ese tiempo, el comprobante ya está fuera de plazo. */
+export const UMBRAL_CRITICO_POR_DEFECTO_HORAS = PLAZO_ENVIO_DIAS * 24
 
 export interface Umbrales { avisoHoras: number; criticoHoras: number }
 

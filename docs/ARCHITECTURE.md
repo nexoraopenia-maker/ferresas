@@ -1283,3 +1283,13 @@ Detalle y desviaciones en `docs/SUNAT-DIRECTO-DISENO.md` §13. Migración `20261
 - **Pantalla** `SunatConfig` (3 pasos, campos de contraseña, se borra todo al guardar, tope de 100 KB) y `CertificadoAlertBar` en el panel. El PSE (URL y Token) salió de la pantalla.
 - **Pruebas**: `cifrado` (48), `sunat-credenciales` (54, contra la base y el SUNAT falso: permisos, validaciones, cifrado, que ningún secreto salga —ni en estado, errores, auditoría ni pruebas—, rotación de punta a punta, prueba de conexión, CHECK de la base), `sunat-pantalla` (30) y `sunat-cliente` (57).
 - **Mutaciones S2:** 31 aplicadas (más una sin efecto que se descarta) y 31 detectadas. Tres mutantes de `cifrado` y uno de pantalla se escaparon al principio (el identificador reservado «v1», el v1 con una sola clave y el paso 3 «hecho» tras una prueba fallida); se reforzaron las pruebas y se detectan.
+
+## SUNAT directo, fase S3: proveedor `sunat-directo`, archivos fiscales y retiro del PSE
+
+Detalle en `docs/SUNAT-DIRECTO-DISENO.md` §14. Migración `20261126100000_archivos_fiscales` (aditiva).
+
+- **Camino:** cola real → `enviarInterno` → `elegirProveedor` (negocio REAL: credenciales de SUNAT descifradas en el servidor; **si el ambiente es BETA los comprobantes reales NO salen**) → `sunat-directo.emitir` (UBL → firma → ZIP → `sendBill` → CDR) → en UNA transacción: estado del comprobante, `tax_document_files` y auditoría.
+- **`archivos.ts`:** `guardarArchivosFiscales` (gzip, SHA-256 del contenido, idempotente: no reemplaza), `leerArchivoFiscal` (verifica la huella; `comprobantes.emitir` o `reportes.ver`), `archivosDeComprobante`.
+- **Pruebas:** `sunat-proveedor` (38, contra el SUNAT falso), `sunat-envio` (31, con la base y la cola reales: factura, boleta y nota de crédito de punta a punta, rechazo, caída, acceso denegado, sin credenciales, BETA, pausa, documentos de prueba, inmutabilidad, aislamiento e integridad de los archivos) y la lista de comprobantes en `sunat-pantalla`. Se eliminaron las pruebas del PSE (`pse-rest`, `pse-sandbox`, `pse-negocio`) junto con su código.
+- **No cubre:** que SUNAT acepte el XML, los códigos y los nombres de archivo reales (docs/SUNAT-SUPUESTOS.md); la comunicación de baja (S4); el paso a producción y el guion contra BETA (S5); el borrado de las columnas `Tenant.pse*`.
+- **Mutaciones S3:** 26 aplicadas y 26 detectadas (cuatro se escaparon al principio —consultar un rechazo, conservar lo enviado en un rechazo por fallo SOAP, la boleta que espera y guardar el CDR en una consulta tardía— y se reforzaron las pruebas).
