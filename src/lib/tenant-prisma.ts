@@ -57,6 +57,7 @@ const TENANT_SCOPED = new Set([
   'Supplier',
   'Customer',
   'PriceList',
+  'CashRegister',
   'PriceListEntry',
   'PriceTier',
   'Product',
@@ -108,7 +109,8 @@ const TENANT_SCOPED = new Set([
  * servicio lo pida: un servicio que olvide acotar por sucursal no filtra datos
  * de un local ajeno. Es el mismo principio que `tenantId`, un nivel más abajo.
  *
- * Quedan fuera A PROPÓSITO `Warehouse`, `Stock` y `DocumentCounter`: una
+ * Quedan fuera A PROPÓSITO `Warehouse`, `Stock`, `DocumentCounter` y `CashRegister` (F6.8: la «Caja principal» de una sucursal NUEVA la crea quien da de alta la sucursal, que aún
+ * no la tiene entre las suyas; el alcance lo comprueban los servicios de cajas): una
  * transferencia obliga a mirar el almacén de OTRA sucursal, y ahí el acotado
  * lo hacen los servicios (`filtroAlmacen`, `verificarAlmacenDeSucursal`).
  * Las transferencias se ven desde cualquiera de sus dos extremos.

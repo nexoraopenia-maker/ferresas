@@ -44,6 +44,9 @@ export const PERMISOS = [
   'caja.cerrar_ajeno',
   'caja.movimientos',
   'caja.ajuste',
+  // Varias cajas por sucursal (F6.8): administrar las cajas (crear, renombrar, dar de baja) y ver el consolidado del día de la sucursal. Abrir y cerrar SU turno sigue siendo `caja.abrir_cerrar`.
+  'caja.administrar',
+  'caja.consolidado',
   'productos.ver_costo',
   'productos.editar_precio',
   'productos.crear',
@@ -260,6 +263,8 @@ export const ETIQUETAS: Record<Permiso, string> = {
   'caja.arqueo': 'Ver arqueos y descuadres',
   'caja.cerrar_ajeno': 'Cerrar el turno de caja de otra persona',
   'caja.movimientos': 'Registrar gastos menores y otros movimientos de caja pequeños',
+  'caja.administrar': 'Crear, renombrar y dar de baja las cajas de una sucursal',
+  'caja.consolidado': 'Ver el consolidado del día de todas las cajas de una sucursal',
   'caja.ajuste': 'Registrar cualquier ingreso o egreso de caja, corregir arqueos y compensar abonos de turnos cerrados',
   'productos.ver_costo': 'Ver costos y márgenes',
   'productos.editar_precio': 'Cambiar precios de venta',

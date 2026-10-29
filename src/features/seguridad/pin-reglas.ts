@@ -46,6 +46,9 @@ export const PERMISOS_FUERA_DEL_PIN: readonly Permiso[] = [
   // Los precios y vender bajo el costo son decisiones del dueño: un PIN de 4 cifras no las abre (F6.7).
   'precios.gestionar',
   'ventas.bajo_costo',
+  // Administrar las cajas y ver el consolidado de todas son decisiones del dueño: un PIN de 4 cifras no las abre (F6.8).
+  'caja.administrar',
+  'caja.consolidado',
 ]
 
 export type ErrorPin = 'FORMATO' | 'FACIL'

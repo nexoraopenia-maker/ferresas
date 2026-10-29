@@ -35,7 +35,9 @@ async function cuerpo() {
     const u = await prisma.user.create({ data: { tenantId: t.id, email: `o-${randomUUID()}@x.com`.toLowerCase(), name: 'Dueño', role: 'OWNER' } })
     await asignarSucursal(t.id, u.id, b1.branch.id); await asignarSucursal(t.id, u.id, b2.branch.id)
     const s1 = await prisma.cashSession.create({ data: { tenantId: t.id, branchId: b1.branch.id, openedById: u.id, openingAmount: 100 } })
-    const s2 = await prisma.cashSession.create({ data: { tenantId: t.id, branchId: b2.branch.id, openedById: u.id, openingAmount: 100 } })
+    // F6.8: una persona tiene como mucho UN turno abierto, así que el de la segunda sucursal es de otra persona.
+    const u2 = await prisma.user.create({ data: { tenantId: t.id, email: `o2-${randomUUID()}@x.com`.toLowerCase(), name: 'Dueño 2', role: 'OWNER' } })
+    const s2 = await prisma.cashSession.create({ data: { tenantId: t.id, branchId: b2.branch.id, openedById: u2.id, openingAmount: 100 } })
     const O: TenantContext = { tenantId: t.id, userId: u.id, role: 'OWNER', access: 'FULL', branchId: b1.branch.id, branchIds: [b1.branch.id, b2.branch.id], permisosExtra: [] }
     return { t, b1, b2, u, s1, s2, O }
   }

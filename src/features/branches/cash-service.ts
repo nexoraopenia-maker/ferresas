@@ -182,7 +182,7 @@ export async function totalesDelTurno(t: TenantPrismaClient, sessionId: string):
 /**
  * Abre el turno de caja de la sucursal.
  *
- * El índice parcial `cash_sessions_una_abierta_por_sucursal` garantiza que no
+ * Los índices parciales de `cash_sessions` (uno por caja, uno por persona y, para los turnos sin caja, uno por sucursal; F6.8) garantizan que no
  * haya dos turnos abiertos en el mismo local. Es la base de datos la que lo
  * impide, no esta función: dos cajeros pulsando "abrir" a la vez pasarían los
  * dos por cualquier comprobación previa, y entonces las ventas se repartirían

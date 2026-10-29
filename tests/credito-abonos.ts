@@ -46,10 +46,11 @@ async function negocio(tag: string, o: { real?: boolean } = {}) {
     for (const b of [b1.branch.id, b2.branch.id]) await asignarSucursal(t.id, u.id, b)
     return u
   }
-  const owner = await mk('OWNER'), cajeroU = await mk('CAJERO'), almU = await mk('ALMACENERO'), vendU = await mk('VENDEDOR')
+  const owner = await mk('OWNER'), owner2 = await mk('OWNER'), cajeroU = await mk('CAJERO'), almU = await mk('ALMACENERO'), vendU = await mk('VENDEDOR')
   const ctxDe = (u: { id: string }, role: Role, branchId: string, extra: TenantContext['permisosExtra'] = []): TenantContext =>
     ({ tenantId: t.id, userId: u.id, role, access: 'FULL', branchId, branchIds: [b1.branch.id, b2.branch.id], permisosExtra: extra })
-  const O1 = ctxDe(owner, 'OWNER', b1.branch.id), O2 = ctxDe(owner, 'OWNER', b2.branch.id)
+  // F6.8: una persona tiene como mucho UN turno abierto en toda la cuenta: la sucursal 2 la lleva otra persona.
+  const O1 = ctxDe(owner, 'OWNER', b1.branch.id), O2 = ctxDe(owner2, 'OWNER', b2.branch.id)
   const Caj = ctxDe(cajeroU, 'CAJERO', b1.branch.id), Alm = ctxDe(almU, 'ALMACENERO', b1.branch.id), Vend = ctxDe(vendU, 'VENDEDOR', b1.branch.id)
   const dbOf = (c: TenantContext) => getTenantPrisma(c)
   const prod = await prisma.product.create({ data: { tenantId: t.id, sku: 'P1', name: 'Producto', salePrice: 100 } })

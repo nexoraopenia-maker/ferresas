@@ -527,6 +527,7 @@ model Tenant {
   priceLists            PriceList[]
   priceListEntries      PriceListEntry[]
   priceTiers            PriceTier[]
+  cashRegisters         CashRegister[]
 }
 
 // ============================================================================
@@ -2207,6 +2208,7 @@ model Branch {
   @@index([tenantId, deletedAt])
   @@map("branches")
   inventoryCounts InventoryCount[]
+  cashRegisters CashRegister[]
 }
 
 /**
@@ -2249,6 +2251,10 @@ model CashSession {
 
   branchId String
   branch   Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  /// La caja (puesto de cobro) en la que se abrió el turno (F6.8). NULO solo durante la migración en dos pasos: el código lo trata como la «Caja principal» de la sucursal; un paso posterior lo vuelve NOT NULL.
+  registerId String?
+  register   CashRegister? @relation(fields: [tenantId, registerId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction)
 
   openedById String
   openedBy   User    @relation("CashOpenedBy", fields: [openedById], references: [id], onDelete: Restrict)
@@ -2298,6 +2304,9 @@ model CashSession {
   openingNotes String?
   closingNotes String?
 
+  /// La foto del desglose del cierre (ventas por método de pago, devoluciones, descuentos, movimientos…), congelada al cerrar (F6.8). Los turnos anteriores a F6.8 no la tienen. Solo en turnos CERRADA.
+  closingBreakdown Json?
+
   openedAt DateTime  @default(now())
   closedAt DateTime?
 
@@ -2312,9 +2321,14 @@ model CashSession {
   movements         CashMovement[]       @relation("CashMovementSession")
   corrections       CashMovement[]       @relation("CashMovementRelatedSession")
 
+  // OJO: los índices únicos que garantizan «un turno abierto por caja», «por persona» y «sin caja por sucursal» son PARCIALES y no se pueden escribir aquí; viven en la migración:
+  //   CREATE UNIQUE INDEX cash_sessions_una_abierta_por_caja ON cash_sessions ("tenantId", "registerId") WHERE status = 'ABIERTA' AND "registerId" IS NOT NULL;
+  //   CREATE UNIQUE INDEX cash_sessions_una_abierta_por_persona ON cash_sessions ("tenantId", "openedById") WHERE status = 'ABIERTA';
+  //   CREATE UNIQUE INDEX cash_sessions_una_abierta_sin_caja ON cash_sessions ("tenantId", "branchId") WHERE status = 'ABIERTA' AND "registerId" IS NULL;
   @@unique([tenantId, id])
   @@index([tenantId, branchId, status])
   @@index([tenantId, branchId, openedAt])
+  @@index([tenantId, registerId])
   @@map("cash_sessions")
 }
 
@@ -3231,4 +3245,35 @@ model PriceTier {
   @@unique([tenantId, priceListId, productId, minQuantity])
   @@index([tenantId, productId])
   @@map("price_tiers")
+}
+
+// ============================================================================
+//  CAJAS (PUESTOS DE COBRO) POR SUCURSAL (F6.8)
+// ============================================================================
+
+/// Una caja: el puesto de cobro de una sucursal («Caja 1», «Caja mostrador»). Hasta 5 vivas por sucursal (lo comprueba el servicio, bloqueando la sucursal). Cada caja tiene a lo sumo un turno abierto.
+/// Baja lógica: una caja con turnos no se borra. Cada sucursal conserva al menos una viva.
+model CashRegister {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  branchId String
+  branch   Branch @relation(fields: [tenantId, branchId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction)
+
+  name String
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  sessions CashSession[]
+
+  // OJO: el nombre es único sin distinguir mayúsculas entre las cajas NO borradas de la sucursal. Eso lo hace el índice parcial de la migración:
+  //   CREATE UNIQUE INDEX cash_registers_name_uniq ON cash_registers ("tenantId", "branchId", lower("name")) WHERE "deletedAt" IS NULL;
+  @@unique([tenantId, id])
+  @@index([tenantId, branchId])
+  @@map("cash_registers")
 }

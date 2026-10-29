@@ -124,7 +124,10 @@ async function cuerpo() {
   console.log('\nF) Efectivo esperado insuficiente: se marca, NO se bloquea')
   const C2 = await E.cliente(); await E.fiar(400, C2.id)
   // Otro turno de la sucursal 2 con poco efectivo y otra anulación de un abono de turno cerrado de esa sucursal.
-  const O2: TenantContext = { ...O, branchId: E.b2.branch.id }
+  // F6.8: una persona tiene como mucho UN turno abierto en toda la cuenta; la caja de la sucursal 2 es de otra persona.
+  const dueno2 = await prisma.user.create({ data: { tenantId: E.t.id, email: `dueno2-${randomUUID()}@x.com`.toLowerCase(), name: 'Dueño 2', role: 'OWNER' } })
+  for (const b of [E.b1, E.b2]) await asignarSucursal(E.t.id, dueno2.id, b.branch.id)
+  const O2: TenantContext = { ...O, userId: dueno2.id, branchId: E.b2.branch.id }
   const Tb = await E.abrir(0, O2)
   const abB = await registrarAbono(db(O2), O2, registrarAbonoSchema.parse({ customerId: C2.id, method: 'EFECTIVO', amount: 90, idempotencyKey: randomUUID() }))
   await closeCashSession(db(O2), O2, closeCashSchema.parse({ sessionId: Tb.id, countedAmount: 90 }))

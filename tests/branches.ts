@@ -237,8 +237,10 @@ async function main() {
   check('abre con fondo de 100', caja.openingAmount === 100 && caja.status === 'ABIERTA')
   check('>>> no se puede abrir una SEGUNDA caja en la misma sucursal',
     await code(() => openCashSession(db, ctx, openCashSchema.parse({ openingAmount: 50 }))) === 'DUPLICATE_CODE')
-  check('otra sucursal SÍ puede tener su propia caja abierta',
-    (await openCashSession(db2, ctx2, openCashSchema.parse({ openingAmount: 200 }))).status === 'ABIERTA')
+  // F6.8: una persona tiene como mucho UN turno abierto en toda la cuenta, así que la caja de la otra sucursal la abre otra persona.
+  const dueno2 = await prisma.user.create({ data: { tenantId: t.id, email: `dueno2-${M}@x.com`, name: 'Dueño 2', role: 'OWNER' } })
+  check('otra sucursal SÍ puede tener su propia caja abierta (la abre otra persona)',
+    (await openCashSession(db2, { ...ctx2, userId: dueno2.id }, openCashSchema.parse({ openingAmount: 200 }))).status === 'ABIERTA')
 
   // Venta en efectivo: entra al cajón, con vuelto.
   const vCaja = await registerSale(db, ctx, registerSaleSchema.parse({
