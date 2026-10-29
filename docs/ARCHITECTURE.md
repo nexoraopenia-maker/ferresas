@@ -1304,3 +1304,12 @@ Detalle y desviaciones en `docs/SUNAT-DIRECTO-DISENO.md` §15. Migración `20261
 - **Archivos:** `tax_void_files` (XML enviado + CDR del ticket) con las garantías de `tax_document_files` (una vez por tipo, gzip, huella verificada al leer, inmutable por disparador); descarga `…/archivo?tipo=baja-xml|baja-cdr`.
 - **Contrato:** `ProveedorFacturacion.comunicarBaja` / `consultarBaja` (dos tiempos); el simulado no comunica bajas.
 - **Pruebas:** `sunat-baja` (122): reglas y plazo, XML, proveedor contra el SUNAT falso (que ahora acepta nombres RC y RA), y de punta a punta con la base y la cola real (permisos, validaciones, desenlaces, caída, plazo vencido, pausa, concurrencia y cerco del lease, archivos inmutables, aislamiento entre negocios).
+
+## SUNAT directo, fase S5: pase a producción (solo SuperAdmin)
+
+Detalle en `docs/SUNAT-DIRECTO-DISENO.md` §16. Sin migración (usa `sunat_credentials.ambiente` de S2).
+
+- **`superadmin/produccion-sunat-service.ts`**: `evaluarPaseASunatProduccion` (qué falta, advertencias y cuántos pendientes hay en/fuera de plazo; no cambia nada), `pasarASunatProduccion` (transacción: ambiente BETA→PRODUCCION atómico sobre el estado previo, reordena la cola, borra la última prueba de conexión y audita) y `volverASunatBeta` (solo si no salió nada a SUNAT real). Único código que escribe `PRODUCCION`.
+- **Cola:** en plazo → PENDIENTE con intentos en cero; fuera de plazo → AGOTADO retenido con motivo (se crea la fila si faltaba, para que `adoptarHuerfanos` no lo envíe); el envío manual lo reabre a propósito. Bajas pendientes → intentos nuevos.
+- **Pantalla:** en «Gestionar ⋮» del SuperAdmin: «Pasar SUNAT a producción» (con previsualización; no confirma si falta algo) y «Volver SUNAT a pruebas»; la tabla muestra «SUNAT real / en pruebas».
+- **Pruebas:** `sunat-produccion` (48): cada comprobación por separado, concurrencia, el flujo de lo pendiente de punta a punta contra el SUNAT falso, el camino de vuelta, y que solo el SuperAdmin escribe el ambiente.

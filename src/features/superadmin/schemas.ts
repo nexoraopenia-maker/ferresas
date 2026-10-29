@@ -112,6 +112,13 @@ export const facturacionRealSchema = z.object({
   reason: z.string().trim().min(10, 'Explica el motivo con al menos 10 caracteres.').max(500),
 })
 
+/** Pase de la conexión con SUNAT entre pruebas y producción (S5). */
+export const ambienteSunatSchema = z.object({
+  tenantId: z.string().min(1).max(64),
+  accion: z.enum(['produccion', 'beta']),
+  reason: z.string().trim().min(10, 'Explica el motivo con al menos 10 caracteres.').max(500),
+})
+
 /** Umbrales (en horas) a partir de los cuales el panel avisa de comprobantes sin enviar. */
 export const umbralesAlertaSchema = z.object({
   tenantId: z.string().min(1).max(64),

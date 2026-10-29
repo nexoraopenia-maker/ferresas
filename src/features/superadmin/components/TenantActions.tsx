@@ -1,6 +1,7 @@
 'use client'
 
 import type { ModoFiscal } from '@/features/invoicing/modo-fiscal'
+import type { EvaluacionPase } from '../produccion-sunat-service'
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
@@ -15,6 +16,8 @@ import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
 import {
   reactivateTenant,
   resetTenantOwnerPassword,
+  previsualizarPaseSunatAction,
+  setAmbienteSunatAction,
   setFacturacionRealAction,
   setUmbralesAlertaAction,
   startImpersonation,
@@ -30,7 +33,7 @@ export interface TenantPerfil {
   email: string | null
 }
 
-type Accion = 'suspender' | 'reactivar' | 'soporte' | 'password' | 'perfil' | 'facturacion' | 'real_habilitar' | 'real_pausar' | 'real_reanudar' | 'real_ensayo' | 'umbrales'
+type Accion = 'suspender' | 'reactivar' | 'soporte' | 'password' | 'perfil' | 'facturacion' | 'real_habilitar' | 'real_pausar' | 'real_reanudar' | 'real_ensayo' | 'sunat_produccion' | 'sunat_beta' | 'umbrales'
 
 const COPY: Record<Exclude<Accion, 'perfil' | 'facturacion'>, {
   titulo: string
@@ -80,6 +83,18 @@ const COPY: Record<Exclude<Accion, 'perfil' | 'facturacion'>, {
     boton: 'Volver a ensayo',
     placeholder: 'Ej. Se habilitó por error antes de terminar la validación',
   },
+  sunat_produccion: {
+    titulo: 'Pasar SUNAT a producción',
+    descripcion: 'Desde ahora los comprobantes de este negocio se envían a SUNAT REAL, con valor tributario. Solo si ya se probó la conexión y el certificado es el del negocio.',
+    boton: 'Pasar a producción',
+    placeholder: 'Ej. Certificado y usuario SOL verificados con el dueño el 12/11',
+  },
+  sunat_beta: {
+    titulo: 'Volver SUNAT a pruebas',
+    descripcion: 'Solo si NO salió ningún comprobante a SUNAT real. Los nuevos quedarán pendientes hasta volver a producción.',
+    boton: 'Volver a pruebas',
+    placeholder: 'Ej. Se pasó a producción por error antes de verificar el certificado',
+  },
   umbrales: {
     titulo: 'Umbrales de la alarma de envío',
     descripcion: 'Horas sin enviar a partir de las cuales el dueño y tú ven el aviso y luego el estado crítico. Vacío = valor por defecto de la plataforma.',
@@ -113,6 +128,7 @@ export function TenantActions({
   tenantName,
   isActive,
   modoFiscal,
+  ambienteSunat,
   umbrales,
   perfil,
   onFacturacion,
@@ -121,6 +137,7 @@ export function TenantActions({
   tenantName: string
   isActive: boolean
   modoFiscal: ModoFiscal
+  ambienteSunat: 'BETA' | 'PRODUCCION' | null
   umbrales: { avisoHoras: number; criticoHoras: number; avisoPropio: number | null; criticoPropio: number | null }
   perfil: TenantPerfil
   onFacturacion: () => void
@@ -137,6 +154,8 @@ export function TenantActions({
   const [criticoH, setCriticoH] = useState('')
   const [verClave, setVerClave] = useState(false)
   const [pending, startTransition] = useTransition()
+  const [pase, setPase] = useState<EvaluacionPase | null>(null)
+  const [paseError, setPaseError] = useState<string | null>(null)
 
   // Perfil editable
   const [form, setForm] = useState<TenantPerfil>(perfil)
@@ -158,7 +177,12 @@ export function TenantActions({
     setError(null)
     setCampos({})
     setForm(perfil)
+    setPase(null)
+    setPaseError(null)
     setAccion(a)
+    if (a === 'sunat_produccion') {
+      void previsualizarPaseSunatAction({ tenantId }).then((r) => { if (r.ok) setPase(r.data); else setPaseError(r.message) })
+    }
   }
 
   const ejecutar = () => {
@@ -173,6 +197,7 @@ export function TenantActions({
         : accion === 'soporte' ? await startImpersonation({ tenantId, reason })
         : accion === 'password' ? await resetTenantOwnerPassword({ tenantId, reason, password: nuevaClave })
         : accion === 'umbrales' ? await setUmbralesAlertaAction({ tenantId, reason, warnHours: horas(avisoH), criticalHours: horas(criticoH) })
+        : accion === 'sunat_produccion' || accion === 'sunat_beta' ? await setAmbienteSunatAction({ tenantId, reason, accion: accion === 'sunat_produccion' ? 'produccion' : 'beta' })
         : accion.startsWith('real_') ? await setFacturacionRealAction({ tenantId, reason, accion: accion.replace('real_', '').replace('ensayo', 'volver_a_ensayo') })
         : await updateTenantProfileAction({
             tenantId,
@@ -220,7 +245,9 @@ export function TenantActions({
     ? reason.trim().length >= 10 && form.name.trim().length >= 3
     : accion === 'password'
       ? reason.trim().length >= 10 && nuevaClave.trim().length >= 8
-      : reason.trim().length >= 10
+      : accion === 'sunat_produccion'
+        ? reason.trim().length >= 10 && pase !== null && pase.faltantes.length === 0
+        : reason.trim().length >= 10
 
   return (
     <>
@@ -250,6 +277,8 @@ export function TenantActions({
               {modoFiscal === 'REAL' && <DropdownMenuItem onSelect={() => abrir('real_pausar')}>Pausar el envío a SUNAT</DropdownMenuItem>}
               {modoFiscal === 'PAUSADO' && <DropdownMenuItem onSelect={() => abrir('real_reanudar')}>Reanudar el envío a SUNAT</DropdownMenuItem>}
               {(modoFiscal === 'REAL' || modoFiscal === 'PAUSADO') && <DropdownMenuItem onSelect={() => abrir('real_ensayo')}>Volver a modo ensayo</DropdownMenuItem>}
+              {(modoFiscal === 'REAL' || modoFiscal === 'PAUSADO') && ambienteSunat === 'BETA' && <DropdownMenuItem onSelect={() => abrir('sunat_produccion')}>Pasar SUNAT a producción</DropdownMenuItem>}
+              {ambienteSunat === 'PRODUCCION' && <DropdownMenuItem onSelect={() => abrir('sunat_beta')}>Volver SUNAT a pruebas</DropdownMenuItem>}
               <DropdownMenuItem onSelect={() => abrir('umbrales')}>Umbrales de la alarma de envío</DropdownMenuItem>
             </>
           )}
@@ -332,6 +361,22 @@ export function TenantActions({
               <p className="mb-3 rounded-xl bg-stock-low-soft px-3 py-2 text-sm font-semibold text-stock-low">
                 Verás la cuenta en modo solo lectura. Todo queda registrado.
               </p>
+            )}
+            {accion === 'sunat_produccion' && (
+              <div data-sunat="pase" className="mb-3 flex flex-col gap-2 text-sm">
+                {paseError && <p role="alert" className="rounded-xl bg-stock-out-soft px-3 py-2 font-semibold text-stock-out">{paseError}</p>}
+                {!pase && !paseError && <p className="text-ink-muted">Comprobando…</p>}
+                {pase && pase.faltantes.length > 0 && (
+                  <div className="rounded-xl bg-stock-out-soft px-3 py-2 text-stock-out">
+                    <p className="font-bold">Falta antes de pasar:</p>
+                    <ul className="ml-4 list-disc">{pase.faltantes.map((f) => <li key={f}>{f}</li>)}</ul>
+                  </div>
+                )}
+                {pase && pase.faltantes.length === 0 && <p className="rounded-xl bg-stock-ok-soft px-3 py-2 font-semibold text-stock-ok">Todo en orden para pasar a producción.</p>}
+                {pase && pase.advertencias.length > 0 && (
+                  <ul className="ml-4 list-disc rounded-xl bg-stock-low-soft px-3 py-2 text-stock-low">{pase.advertencias.map((a) => <li key={a}>{a}</li>)}</ul>
+                )}
+              </div>
             )}
             {accion === 'password' && (
               <p className="mb-3 rounded-xl bg-stock-low-soft px-3 py-2 text-sm font-semibold text-stock-low">

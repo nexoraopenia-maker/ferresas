@@ -13,6 +13,7 @@ import { IMPERSONATION_MAX_MINUTES } from '@/lib/impersonation'
 import { SUPPORT_COOKIE, emitirSupportToken, verificarSupportToken } from '@/lib/support-token'
 import {
   reactivateTenantSchema,
+  ambienteSunatSchema,
   facturacionRealSchema,
   umbralesAlertaSchema,
   resetOwnerPasswordSchema,
@@ -21,6 +22,7 @@ import {
   updateTenantProfileSchema,
 } from './schemas'
 import { cambiarFacturacionReal, fijarUmbralesAlerta } from './facturacion-real-service'
+import { evaluarPaseASunatProduccion, pasarASunatProduccion, volverASunatBeta, type EvaluacionPase } from './produccion-sunat-service'
 import {
   resetOwnerPassword as runResetPassword,
   updateTenantProfile as runUpdateProfile,
@@ -433,6 +435,36 @@ export async function setFacturacionRealAction(raw: unknown): Promise<ActionResu
   }
 }
 
+
+/** Qué le falta a un negocio para pasar su conexión con SUNAT a producción, y qué pasaría con lo pendiente (solo SuperAdmin; no cambia nada). */
+export async function previsualizarPaseSunatAction(raw: unknown): Promise<ActionResult<EvaluacionPase>> {
+  const tenantId = typeof (raw as { tenantId?: unknown })?.tenantId === 'string' ? (raw as { tenantId: string }).tenantId.slice(0, 64) : ''
+  if (!tenantId) return { ok: false, code: 'VALIDATION', message: 'Falta el negocio.' }
+  try {
+    await requireSuperAdmin()
+    return { ok: true, data: await evaluarPaseASunatProduccion(tenantId) }
+  } catch (e) {
+    return fallo(e, 'previsualizarPaseSunatAction')
+  }
+}
+
+/** Pasa la conexión con SUNAT de un negocio a producción, o la devuelve a pruebas (solo SuperAdmin, con motivo). */
+export async function setAmbienteSunatAction(raw: unknown): Promise<ActionResult<{ ambiente: string; reencolados?: number; retenidos?: number }>> {
+  const parsed = ambienteSunatSchema.safeParse(raw)
+  if (!parsed.success) {
+    return { ok: false, code: 'VALIDATION', message: parsed.error.issues[0]?.message ?? 'Revisa los datos.', details: z.flattenError(parsed.error).fieldErrors }
+  }
+  try {
+    const admin = await requireSuperAdmin()
+    const actor = { id: admin.id, email: admin.email }
+    const input = { tenantId: parsed.data.tenantId, reason: parsed.data.reason }
+    const r = parsed.data.accion === 'produccion' ? await pasarASunatProduccion(input, actor) : await volverASunatBeta(input, actor)
+    revalidatePath(ROUTES.superadmin)
+    return { ok: true, data: r }
+  } catch (e) {
+    return fallo(e, 'setAmbienteSunatAction')
+  }
+}
 
 /** Fija los umbrales de alerta de envío fiscal de un negocio (solo SuperAdmin). */
 export async function setUmbralesAlertaAction(raw: unknown): Promise<ActionResult<null>> {

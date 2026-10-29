@@ -37,7 +37,7 @@ export async function faltantesParaHabilitar(tenantId: string): Promise<string[]
   const t = await prisma.tenant.findFirst({
     where: { id: tenantId, deletedAt: null },
     select: {
-      isDemo: true, taxId: true, pseConfiguredAt: true, realBillingEnabledAt: true,
+      isDemo: true, taxId: true, realBillingEnabledAt: true, sunatCredential: { select: { id: true } },
       branches: { where: { isActive: true, deletedAt: null }, select: { name: true, address: true, ubigeo: true } },
     },
   })
@@ -46,7 +46,7 @@ export async function faltantesParaHabilitar(tenantId: string): Promise<string[]
 
   const f: string[] = []
   if (!t.taxId || !validarRuc(t.taxId).valido) f.push('RUC del negocio válido')
-  if (!t.pseConfiguredAt) f.push('proveedor PSE configurado (URL y token)')
+  if (!t.sunatCredential) f.push('credenciales de SUNAT cargadas (certificado digital y usuario SOL)')
   if (t.branches.length === 0) f.push('al menos una sucursal activa')
   for (const b of t.branches) {
     if (!b.address || b.address.trim().length < 8) f.push(`dirección completa en la sucursal «${b.name}»`)

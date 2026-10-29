@@ -49,6 +49,8 @@ export interface TenantRow {
   suspendedReason: string | null
   /** Modo fiscal: DEMO, ENSAYO (por defecto), REAL o PAUSADO. */
   modoFiscal: ModoFiscal
+  /** Ambiente de la conexión con SUNAT (null = sin credenciales cargadas). */
+  ambienteSunat: 'BETA' | 'PRODUCCION' | null
   isDemo: boolean
   /** Alarma de comprobantes sin enviar (solo con facturación real habilitada). */
   envioFiscal: { sinEnviar: number; agotados: number; masAntiguoHoras: number | null; nivel: NivelAlarma; avisoHoras: number; criticoHoras: number; avisoPropio: number | null; criticoPropio: number | null }
@@ -102,6 +104,7 @@ export async function getSuperAdminDashboard(
       suspendedReason: true,
       realBillingEnabledAt: true,
       realBillingPausedAt: true,
+      sunatCredential: { select: { ambiente: true } },
       fiscalAlertWarnHours: true,
       fiscalAlertCriticalHours: true,
       isDemo: true,
@@ -192,6 +195,7 @@ export async function getSuperAdminDashboard(
         isActive: tenant.isActive,
         suspendedReason: tenant.suspendedReason,
         modoFiscal: modoFiscal(tenant),
+        ambienteSunat: tenant.sunatCredential?.ambiente ?? null,
         isDemo: tenant.isDemo,
         envioFiscal: envioDe(tenant, pendientes.get(tenant.id), agotadosPorNegocio.get(tenant.id) ?? 0, now),
         users: tenant._count.users,

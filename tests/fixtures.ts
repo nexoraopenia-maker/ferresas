@@ -127,3 +127,13 @@ export async function cajaDe(tenantId: string, branchId: string): Promise<string
   if (c) return c.id
   return (await prisma.cashRegister.create({ data: { tenantId, branchId, name: 'Caja principal' }, select: { id: true } })).id
 }
+
+
+/** Credenciales de SUNAT de mentira (texto cifrado con la forma correcta, sin secretos): para pruebas que solo necesitan que EXISTAN. */
+export const credencialSunatFalsa = (tenantId: string, o: { ruc?: string | null; ambiente?: 'BETA' | 'PRODUCCION'; desde?: Date; hasta?: Date; prueba?: { en: Date; ok: boolean } | null } = {}) =>
+  prisma.sunatCredential.create({ data: {
+    tenantId, pfxEnc: 'v1.x.x.x', pfxPasswordEnc: 'v1.x.x.x', solUser: 'USERSOL1', solPasswordEnc: 'v1.x.x.x', ambiente: o.ambiente ?? 'BETA',
+    certSubject: 'CN=Prueba', certIssuer: 'CN=Prueba', certSerial: '1', certRuc: o.ruc === undefined ? null : o.ruc,
+    certValidFrom: o.desde ?? new Date(Date.now() - 86_400_000), certValidTo: o.hasta ?? new Date(Date.now() + 90 * 86_400_000),
+    lastTestAt: o.prueba?.en ?? null, lastTestOk: o.prueba ? o.prueba.ok : null, lastTestMessage: o.prueba ? 'prueba' : null,
+  } })

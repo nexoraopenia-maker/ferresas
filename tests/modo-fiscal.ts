@@ -6,7 +6,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { SyntaxKind } from 'ts-morph'
 import { abrir, ficheros, proyecto, RAIZ, rel } from './ast'
-import { asignarSucursal, crearSucursalConAlmacen, abrirTurno } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, abrirTurno, credencialSunatFalsa } from './fixtures'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
 import { completarRuc } from '../src/lib/documentos'
@@ -73,8 +73,9 @@ async function main() {
 
     // ── Negocios de prueba ────────────────────────────────────────────────
     const mkNegocio = async (tag: string, opts: { demo?: boolean } = {}) => {
-      const t = await prisma.tenant.create({ data: { slug: `mf-${tag}-${randomUUID().slice(0, 6)}`, name: `Modo ${tag}`, legalName: `MODO ${tag.toUpperCase()} SAC`, taxId: ruc(), planId: plan.id, isDemo: !!opts.demo, pseConfiguredAt: new Date() } })
+      const t = await prisma.tenant.create({ data: { slug: `mf-${tag}-${randomUUID().slice(0, 6)}`, name: `Modo ${tag}`, legalName: `MODO ${tag.toUpperCase()} SAC`, taxId: ruc(), planId: plan.id, isDemo: !!opts.demo } })
       creados.push(t.id)
+      if (!opts.demo) await credencialSunatFalsa(t.id)
       await prisma.subscription.create({ data: { tenantId: t.id, planId: plan.id, provider: 'STRIPE', status: 'ACTIVE', externalSubscriptionId: `sub_${randomUUID().slice(0, 8)}`, externalCustomerId: 'cus_mf' } })
       const { branch, warehouse: w } = await crearSucursalConAlmacen(t.id)
       await prisma.branch.update({ where: { id: branch.id }, data: { address: 'Av. Los Constructores 123, Lima', ubigeo: '150101' } })

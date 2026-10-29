@@ -46,6 +46,7 @@ const BASE: Record<string, string> = {
   'src/features/superadmin/billing-service.ts': 'planes y cobros de los negocios',
   'src/features/superadmin/tenant-admin-service.ts': 'restablecer contraseña y editar el perfil de un negocio',
   'src/features/superadmin/facturacion-real-service.ts': 'interruptor de facturación real: único código que lo escribe',
+  'src/features/superadmin/produccion-sunat-service.ts': 'pase de la conexión con SUNAT a producción: único código que cambia el ambiente (solo SuperAdmin) y que reordena la cola de varios documentos',
   'src/features/superadmin/components/ImpersonationBanner.tsx': 'banner de soporte (componente de servidor): lee la sesión de suplantación',
   // — Diagnóstico (protegido por CRON_SECRET) y catálogo global —
   'src/app/api/diagnostics/route.ts': 'estado del sistema, protegido por CRON_SECRET; sin datos de negocios',

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { SyntaxKind } from 'ts-morph'
 import { ficheros, proyecto, RAIZ, rel } from './ast'
-import { asignarSucursal, crearSucursalConAlmacen, abrirTurno } from './fixtures'
+import { asignarSucursal, crearSucursalConAlmacen, abrirTurno, credencialSunatFalsa } from './fixtures'
 import { prisma } from '../src/lib/prisma'
 import { getTenantPrisma } from '../src/lib/tenant-prisma'
 import { completarRuc } from '../src/lib/documentos'
@@ -140,11 +140,12 @@ async function main() {
     const C = await mkNegocio('c')
     await prisma.tenant.update({ where: { id: C.t.id }, data: { taxId: null } })
     const falta = await faltantesParaHabilitar(C.t.id)
-    check('>>> sin RUC, sin PSE y sin dirección/ubigeo lo dice todo junto', ['RUC', 'proveedor PSE', 'dirección', 'ubigeo'].every((k) => falta.some((x) => x.includes(k))), falta.join(' | '))
+    check('>>> sin RUC, sin credenciales de SUNAT y sin dirección/ubigeo lo dice todo junto', ['RUC', 'credenciales de SUNAT', 'dirección', 'ubigeo'].every((k) => falta.some((x) => x.includes(k))), falta.join(' | '))
     const actor = { id: (await prisma.user.create({ data: { email: `sa-${randomUUID()}@x.com`, name: 'SA', role: 'SUPERADMIN' } })).id, email: 'soporte@plataforma.pe' }
     check('habilitar con faltantes se rechaza y los nombra', (await msg(cambiarFacturacionReal({ tenantId: C.t.id, accion: 'habilitar', reason: 'Sandbox validado el 12/11' }, actor))).includes('Falta:'))
     check('>>> y NO cambia nada', (await prisma.tenant.findUniqueOrThrow({ where: { id: C.t.id } })).realBillingEnabledAt === null)
-    await prisma.tenant.update({ where: { id: C.t.id }, data: { taxId: ruc(), pseConfiguredAt: new Date() } })
+    await prisma.tenant.update({ where: { id: C.t.id }, data: { taxId: ruc() } })
+    await credencialSunatFalsa(C.t.id)
     await prisma.branch.update({ where: { id: C.branch.id }, data: { address: 'Av. Los Constructores 123, Lima', ubigeo: '150101' } })
     check('con todo en regla ya no falta nada', (await faltantesParaHabilitar(C.t.id)).length === 0)
 

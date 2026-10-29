@@ -23,3 +23,6 @@ export const diasEntre = (desde: string, hasta: string): number => Math.round((a
  * (⚠️ la forma de contar, y el plazo mismo, vienen del dueño: docs/SUNAT-SUPUESTOS.md). Los dos días son de la zona horaria del negocio.
  */
 export const dentroDelPlazoDeBaja = (diaEmision: string, diaHoy: string): boolean => diasEntre(diaEmision, diaHoy) <= PLAZO_BAJA_DIAS
+
+/** ¿Sigue dentro del plazo para ENVIAR un comprobante a SUNAT? Mismos días calendario que la baja (el día de emisión es el 0). */
+export const dentroDelPlazoDeEnvio = (diaEmision: string, diaHoy: string): boolean => diasEntre(diaEmision, diaHoy) <= PLAZO_ENVIO_DIAS
