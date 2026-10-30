@@ -30,8 +30,7 @@ const claveAntes = process.env.PSE_MASTER_KEY
 const mfaAntes = process.env.MFA_ACTIVO
 
 async function main() {
-  // El segundo factor viene APAGADO por defecto (decisión del dueño); esta suite prueba su funcionamiento con el interruptor encendido, y al final su apagado.
-  process.env.MFA_ACTIVO = 'true'
+  // El segundo factor está APAGADO DE FORMA FIJA (decisión del dueño): esta suite prueba las reglas y el servicio, y que NADA lo vuelve a exigir, ni siquiera MFA_ACTIVO=true.
   process.env.PSE_MASTER_KEY = Buffer.alloc(32, 7).toString('base64')
 
   console.log('\n1) TOTP: vectores del RFC 6238 (puro)')
@@ -165,8 +164,8 @@ async function main() {
   const ctxAdmin = await resolveTenantContext(admin.id)
   const ctxOwner = await resolveTenantContext(owner.id)
   const ctxCajero = await resolveTenantContext(cajero.id)
-  check('ADMIN sin MFA → mfaPendiente', ctxAdmin.mfaPendiente === true)
-  check('OWNER sin MFA → mfaPendiente', ctxOwner.mfaPendiente === true)
+  check('>>> ADMIN sin MFA → NO pendiente: el segundo factor está apagado de forma fija', ctxAdmin.mfaPendiente === false)
+  check('>>> OWNER sin MFA → NO pendiente', ctxOwner.mfaPendiente === false)
   check('>>> CAJERO sin MFA → NO pendiente (no se frena el mostrador)', ctxCajero.mfaPendiente === false)
   await prisma.tenant.update({ where: { id: t.id }, data: { isDemo: true } })
   check('>>> en un negocio DEMO no se exige (la cuenta pública de prueba)', (await resolveTenantContext(admin.id)).mfaPendiente === false)
@@ -200,17 +199,20 @@ async function main() {
   check('...y queda auditado', (await prisma.auditLog.count({ where: { tenantId: t.id, action: 'mfa.restablecer', entityId: cajero.id } })) === 1)
   const ctxDueno = ctxDe(owner)
   await restablecerMfaDeUsuario(getTenantPrisma(ctxDueno), ctxDueno, admin2.id)
-  check('el DUEÑO restablece a un administrador, que deberá activarlo de nuevo', (await resolveTenantContext(admin2.id)).mfaPendiente === true)
+  check('el DUEÑO restablece a un administrador (queda sin MFA, y no se le exige activarlo de nuevo mientras esté apagado)', (await prisma.user.findUniqueOrThrow({ where: { id: admin2.id } })).mfaEnabledAt === null && (await resolveTenantContext(admin2.id)).mfaPendiente === false)
 
-  console.log('\nInterruptor general del segundo factor (apagado por defecto)')
-  check('>>> sin MFA_ACTIVO (o con cualquier valor que no sea «true») el segundo factor NO se exige', !segundoFactorExigido({}) && !segundoFactorExigido({ MFA_ACTIVO: 'false' }) && !segundoFactorExigido({ MFA_ACTIVO: '1' }) && !segundoFactorExigido({ MFA_ACTIVO: 'TRUE' }) && !segundoFactorExigido({ MFA_ACTIVO: '' }) && segundoFactorExigido({ MFA_ACTIVO: 'true' }))
-  const admin3 = await prisma.user.create({ data: { tenantId: t.id, email: `a3-${randomUUID()}@x.com`, name: 'Admin3', role: 'ADMIN' } })
-  check('con el interruptor ENCENDIDO un administrador sin MFA queda pendiente', (await resolveTenantContext(admin3.id)).mfaPendiente === true)
-  delete process.env.MFA_ACTIVO
-  check('>>> con el interruptor APAGADO (el valor por defecto) no hay MFA pendiente: nadie es redirigido a activarlo', (await resolveTenantContext(admin3.id)).mfaPendiente === false && (await resolveTenantContext(owner.id)).mfaPendiente === false)
-  const auth = (await import('node:fs')).readFileSync('src/auth.ts', 'utf8')
-  check('>>> y el inicio de sesión solo pide el código si el interruptor está encendido', /r\.ok && r\.user\.mfaActivo && segundoFactorExigido\(\)/.test(auth))
+  console.log('\nSegundo factor apagado de forma fija')
+  const envAntes = process.env.MFA_ACTIVO
   process.env.MFA_ACTIVO = 'true'
+  check('>>> segundoFactorExigido() es SIEMPRE false: ni con MFA_ACTIVO=true en el entorno ni pasándolo como argumento', segundoFactorExigido() === false && segundoFactorExigido({ MFA_ACTIVO: 'true' }) === false && segundoFactorExigido({}) === false)
+  const admin3 = await prisma.user.create({ data: { tenantId: t.id, email: `a3-${randomUUID()}@x.com`, name: 'Admin3', role: 'ADMIN' } })
+  check('>>> con MFA_ACTIVO=true, un administrador y el dueño sin MFA siguen SIN quedar pendientes', (await resolveTenantContext(admin3.id)).mfaPendiente === false && (await resolveTenantContext(owner.id)).mfaPendiente === false)
+  if (envAntes === undefined) delete process.env.MFA_ACTIVO; else process.env.MFA_ACTIVO = envAntes
+  const reglas = (await import('node:fs')).readFileSync('src/features/seguridad/mfa-reglas.ts', 'utf8')
+  const cuerpo = reglas.slice(reglas.indexOf('export const segundoFactorExigido'), reglas.indexOf('export const MAX_INTENTOS_MFA'))
+  check('>>> el código: `return false` en la PRIMERA línea y la lógica anterior solo como comentario (sin leer el entorno)', /=> \{\n  return false\n/.test(cuerpo) && !/^\s*return .*MFA_ACTIVO/m.test(cuerpo.replace(/^\s*\/\/.*$/gm, '')) && /\/\/ return _env\.MFA_ACTIVO === 'true'/.test(cuerpo))
+  const auth = (await import('node:fs')).readFileSync('src/auth.ts', 'utf8')
+  check('el inicio de sesión sigue consultando esta función (así un solo cambio la reactiva)', /r\.ok && r\.user\.mfaActivo && segundoFactorExigido\(\)/.test(auth))
 
   await prisma.tenant.deleteMany({ where: { id: { in: [t.id, otroT.id] } } })
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)

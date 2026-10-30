@@ -15,12 +15,17 @@ export const mfaObligatorio = (roles: readonly Role[]): boolean =>
   roles.some((r) => ROLES_CON_MFA_OBLIGATORIO.has(r))
 
 /**
- * INTERRUPTOR GENERAL del segundo factor. Por decisión del dueño el sistema NO lo pide por defecto: ni el código al iniciar sesión ni la activación obligatoria de dueño y
- * administrador. Para volver a exigirlo, define `MFA_ACTIVO=true` en el entorno (Vercel / .env.local). Nada se borra: el código, los secretos ya guardados y las pantallas de
- * activación siguen ahí, y al reactivar el interruptor las cuentas que lo habían activado vuelven a pedir el código.
- * ⚠️ Con el interruptor apagado una contraseña robada basta para entrar (también a la cuenta de SuperAdmin).
+ * SEGUNDO FACTOR APAGADO DE FORMA FIJA (decisión del dueño): esta función devuelve `false` en su PRIMERA línea y NO mira ninguna variable de entorno. Ni el inicio de sesión
+ * (`auth.ts`) pide el código, ni `resolveTenantContext` marca `mfaPendiente` (no se redirige a activarlo). `MFA_ACTIVO` ya no hace nada.
+ * Nada se borró: el código, los secretos guardados y las pantallas de activación siguen ahí. Para volver a exigirlo hay que quitar el `return false` y descomentar la lógica de
+ * abajo (un cambio de código y un despliegue).
+ * ⚠️ Con esto apagado una contraseña robada basta para entrar (también a la cuenta de SuperAdmin).
  */
-export const segundoFactorExigido = (env: Record<string, string | undefined> = process.env): boolean => env.MFA_ACTIVO === 'true'
+export const segundoFactorExigido = (_env: Record<string, string | undefined> = process.env): boolean => {
+  return false
+  // Lógica anterior (desactivada): solo se exigía con MFA_ACTIVO=true.
+  // return _env.MFA_ACTIVO === 'true'
+}
 
 export const MAX_INTENTOS_MFA = 5
 export const BLOQUEO_MFA_MS = 15 * 60_000

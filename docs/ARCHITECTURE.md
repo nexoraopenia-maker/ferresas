@@ -1329,7 +1329,7 @@ Ver `docs/SUNAT-DIRECTO-DISENO.md` §18. `pasarASunatProduccion` ya no exige pru
 
 ### Segundo factor (MFA): interruptor general
 
-`segundoFactorExigido()` (`features/seguridad/mfa-reglas.ts`): el MFA está **apagado por defecto** (decisión del dueño). Sin `MFA_ACTIVO=true` ni el inicio de sesión (`auth.ts`) pide el código, ni `resolveTenantContext` marca `mfaPendiente` (no se redirige a activarlo). No se borró nada: el código, los secretos guardados y las pantallas siguen; reactivar el interruptor restituye todo. Prueba: `mfa` (con el interruptor encendido y apagado).
+`segundoFactorExigido()` (`features/seguridad/mfa-reglas.ts`): el MFA está **apagado de forma fija** (decisión del dueño): la función devuelve `false` en su primera línea y ya no lee `MFA_ACTIVO`. Ni el inicio de sesión (`auth.ts`) pide el código, ni `resolveTenantContext` marca `mfaPendiente` (no se redirige a activarlo). No se borró nada: el código, los secretos guardados y las pantallas siguen; reactivar el interruptor restituye todo. Prueba: `mfa` (con el interruptor encendido y apagado).
 
 ### Baja definitiva de una ferretería (SuperAdmin)
 
