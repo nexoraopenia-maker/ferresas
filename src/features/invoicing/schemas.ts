@@ -147,3 +147,9 @@ export const solicitarBajaSchema = z.object({
 })
 
 export const reintentarBajaSchema = z.object({ taxDocumentId: z.string().min(1).max(64) })
+
+/** RUC y razón social del propio negocio (el servicio vuelve a validar el RUC con su dígito de control). */
+export const guardarDatosFiscalesSchema = z.object({
+  ruc: z.string().max(20),
+  razonSocial: z.string().max(300),
+})

@@ -6,10 +6,11 @@ import { getTenantPrisma, type TenantPrismaClient } from '@/lib/tenant-prisma'
 import { requireTenantContext } from '@/lib/session'
 import { isBusinessError, type ActionResult } from '@/lib/errors'
 import type { TenantContext } from '@/lib/tenant-context'
-import { emitirNotaCreditoSchema, fijarArranqueSchema, guardarCredencialesSunatSchema, reintentarBajaSchema, solicitarBajaSchema } from './schemas'
+import { emitirNotaCreditoSchema, fijarArranqueSchema, guardarCredencialesSunatSchema, guardarDatosFiscalesSchema, reintentarBajaSchema, solicitarBajaSchema } from './schemas'
 import { fijarArranqueSerie, listarSeriesConfigurables } from './counter-service'
 import { guardarCredencialesSunat, probarConexionSunat, quitarCredencialesSunat } from '@/features/sunat/credenciales'
 import { reintentarBaja, solicitarBajaComprobante } from '@/features/sunat/baja'
+import { guardarDatosFiscales } from '@/features/sunat/datos-fiscales'
 import { emitirNotaCreditoTotal } from './service'
 
 /**
@@ -114,6 +115,17 @@ export async function reintentarBajaAction(raw: unknown) {
     await reintentarBaja(db, ctx, parsed.data.taxDocumentId)
     revalidatePath('/comprobantes')
     return { ok: true as const, data: {} }
+  })
+}
+
+/** Guarda el RUC y la razón social del propio negocio (solo `config.fiscal`; el servicio lo exige). */
+export async function guardarDatosFiscalesAction(raw: unknown) {
+  const parsed = guardarDatosFiscalesSchema.safeParse(raw)
+  if (!parsed.success) return { ok: false as const, code: 'VALIDATION' as const, message: 'Revisa el RUC y la razón social.', details: z.flattenError(parsed.error).fieldErrors }
+  return withTenant('guardarDatosFiscalesAction', async (db, ctx) => {
+    const r = await guardarDatosFiscales(db, ctx, parsed.data)
+    revalidatePath('/comprobantes')
+    return { ok: true as const, data: { ruc: r.ruc, razonSocial: r.razonSocial } }
   })
 }
 

@@ -5,6 +5,8 @@ import { SeriesPanel } from '@/features/invoicing/components/SeriesPanel'
 import { listarSeriesConfigurables } from '@/features/invoicing/counter-service'
 import { puede } from '@/lib/puede'
 import { SunatConfig } from '@/features/invoicing/components/SunatConfig'
+import { DatosFiscalesForm } from '@/features/invoicing/components/DatosFiscalesForm'
+import { leerDatosFiscales } from '@/features/sunat/datos-fiscales'
 import { estadoCredencialesSunat } from '@/features/sunat/credenciales'
 import { modoFiscal } from '@/features/invoicing/modo-fiscal'
 import { bajasDeComprobantes, motivoDeNoBaja } from '@/features/sunat/baja'
@@ -79,6 +81,7 @@ export default async function ComprobantesPage() {
     : [null, null]
 
   const sunat = puedeSeries ? await estadoCredencialesSunat(db) : null
+  const datosFiscales = puedeSeries ? await leerDatosFiscales(db) : null
   const porEstado = Object.fromEntries(resumen.map((r) => [r.status, r._count._all]))
 
   return (
@@ -96,6 +99,13 @@ export default async function ComprobantesPage() {
         <Contador label="Aceptados" value={(porEstado.ACEPTADO ?? 0) + (porEstado.OBSERVADO ?? 0)} tono="ok" />
         <Contador label="Rechazados" value={porEstado.RECHAZADO ?? 0} tono="stop" />
       </section>
+
+      {datosFiscales && (
+        <DatosFiscalesForm
+          ruc={datosFiscales.ruc} razonSocial={datosFiscales.razonSocial} rucBloqueadoPor={datosFiscales.rucBloqueadoPor}
+          puedeOperar={ctx.access === 'FULL' || ctx.access === 'WARN'}
+        />
+      )}
 
       {sunat && (
         <SunatConfig

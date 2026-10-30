@@ -68,6 +68,7 @@ export const ACCIONES: Readonly<Record<string, { categoria: Categoria; etiqueta:
   'catalog.import': { categoria: IN, etiqueta: 'Catálogo importado' },
   'comprobante.enviar': { categoria: CO, etiqueta: 'Comprobante enviado a SUNAT' },
   'comprobante.respuesta': { categoria: CO, etiqueta: 'Respuesta de SUNAT recibida' },
+  'fiscal.datos_guardados': { categoria: CO, etiqueta: 'Datos fiscales del negocio (RUC y razón social) guardados' },
   'baja.solicitada': { categoria: CO, etiqueta: 'Baja de comprobante solicitada' },
   'baja.enviada': { categoria: CO, etiqueta: 'Comunicación de baja enviada a SUNAT' },
   'baja.aceptada': { categoria: CO, etiqueta: 'Baja de comprobante aceptada por SUNAT' },
