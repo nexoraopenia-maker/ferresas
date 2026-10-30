@@ -1,7 +1,8 @@
 'use client'
 
 import { useCallback, useRef, useState, useTransition } from 'react'
-import { InventoryScannerModal, type ResultadoLectura } from '@/components/inventory/InventoryScannerModal'
+import { InventoryScannerModal } from '@/components/inventory/InventoryScannerLazy'
+import type { ResultadoLectura } from '@/components/inventory/InventoryScannerModal'
 import { QuantityInput } from '@/components/ui/quantity-input'
 import { getStockStatusView } from '@/lib/stock-status'
 import { MENSAJE_SIN_RED, useEnLinea } from '@/lib/en-linea'

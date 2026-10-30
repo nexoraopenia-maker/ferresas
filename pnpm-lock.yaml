@@ -23,6 +23,9 @@ importers:
       '@zxing/browser':
         specifier: ^0.2.1
         version: 0.2.1(@zxing/library@0.23.0)
+      '@zxing/library':
+        specifier: ^0.23.0
+        version: 0.23.0
       bcryptjs:
         specifier: ^3.0.3
         version: 3.0.3

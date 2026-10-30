@@ -184,6 +184,17 @@ async function main() {
   }
   check('se revisó al menos un uso del escáner', cuantos >= 2, String(cuantos))
 
+  console.log('\n7) El escáner no entra al servidor y ZXing es dependencia DIRECTA (build en Vercel con pnpm)')
+  const { readFileSync } = await import('node:fs')
+  const lazy = readFileSync(join(RAIZ, 'src/components/inventory/InventoryScannerLazy.tsx'), 'utf8')
+  check('>>> el escáner se carga con next/dynamic y { ssr: false }', /dynamic\(/.test(lazy) && /ssr:\s*false/.test(lazy) && /^'use client'/.test(lazy))
+  const usuariosVal = ficheros(join(RAIZ, 'src'), (p) => p.endsWith('.tsx')).filter((f) => rel(f) !== 'src/components/inventory/InventoryScannerModal.tsx' && rel(f) !== 'src/components/inventory/InventoryScannerLazy.tsx')
+  const importaDirecto = usuariosVal.filter((f) => /import\s*\{[^}]*\bInventoryScannerModal\b[^}]*\}\s*from\s*'@\/components\/inventory\/InventoryScannerModal'/.test(readFileSync(f, 'utf8'))).map(rel)
+  check('>>> nadie importa el componente del escáner de forma estática (solo por el módulo diferido; los tipos con `import type`)', importaDirecto.length === 0, importaDirecto.join(', '))
+  const pkg = JSON.parse(readFileSync(join(RAIZ, 'package.json'), 'utf8')) as { dependencies: Record<string, string> }
+  check('>>> @zxing/library está declarada como dependencia directa (pnpm es estricto: una transitiva no se resuelve y rompe el build)', typeof pkg.dependencies['@zxing/library'] === 'string' && typeof pkg.dependencies['@zxing/browser'] === 'string')
+  check('y figura en pnpm-lock.yaml y package-lock.json', /'@zxing\/library':\n\s+specifier:/.test(readFileSync(join(RAIZ, 'pnpm-lock.yaml'), 'utf8')) && /"@zxing\/library": "\^0\.23\.0"/.test(readFileSync(join(RAIZ, 'package-lock.json'), 'utf8')))
+
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
   process.exit(fail === 0 ? 0 : 1)
 }

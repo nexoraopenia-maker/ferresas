@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
-import { InventoryScannerModal } from '@/components/inventory/InventoryScannerModal'
+import { InventoryScannerModal } from '@/components/inventory/InventoryScannerLazy'
 import { MENSAJE_SIN_RED, useEnLinea } from '@/lib/en-linea'
 import { formatQuantity, unitLabel } from '@/lib/quantity'
 import { anularPasadaAccion, buscarProductosAccion, misPasadasAccion, registrarPasadaAccion, resolverProductoAccion } from '../conteo-actions'
