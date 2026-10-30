@@ -14,7 +14,7 @@ import { SUPPORT_COOKIE, verificarSupportToken } from './support-token'
 import { OPERATOR_COOKIE, verificarOperadorToken } from './operator-token'
 import { tocarDispositivo } from '@/features/seguridad/dispositivos'
 import { BusinessError, TenantIsolationError } from './errors'
-import { mfaObligatorio } from '@/features/seguridad/mfa-reglas'
+import { mfaObligatorio, segundoFactorExigido } from '@/features/seguridad/mfa-reglas'
 import type { RouteSession } from './route-access'
 
 /**
@@ -324,7 +324,7 @@ export async function resolveTenantContext(
     topesDescuento: topes,
     // Rol que exige segundo factor y aún sin activarlo: `requireTenantContext` lo corta.
     // La cuenta demo es pública y de usar y tirar: no se le exige.
-    mfaPendiente: !user.tenant.isDemo && mfaObligatorio([user.role, ...user.extraRoles]) && user.mfaEnabledAt === null,
+    mfaPendiente: segundoFactorExigido() && !user.tenant.isDemo && mfaObligatorio([user.role, ...user.extraRoles]) && user.mfaEnabledAt === null,
   }
 }
 

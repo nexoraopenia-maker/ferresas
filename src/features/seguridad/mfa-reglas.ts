@@ -14,6 +14,14 @@ export const ROLES_CON_MFA_OBLIGATORIO: ReadonlySet<Role> = new Set<Role>(['OWNE
 export const mfaObligatorio = (roles: readonly Role[]): boolean =>
   roles.some((r) => ROLES_CON_MFA_OBLIGATORIO.has(r))
 
+/**
+ * INTERRUPTOR GENERAL del segundo factor. Por decisión del dueño el sistema NO lo pide por defecto: ni el código al iniciar sesión ni la activación obligatoria de dueño y
+ * administrador. Para volver a exigirlo, define `MFA_ACTIVO=true` en el entorno (Vercel / .env.local). Nada se borra: el código, los secretos ya guardados y las pantallas de
+ * activación siguen ahí, y al reactivar el interruptor las cuentas que lo habían activado vuelven a pedir el código.
+ * ⚠️ Con el interruptor apagado una contraseña robada basta para entrar (también a la cuenta de SuperAdmin).
+ */
+export const segundoFactorExigido = (env: Record<string, string | undefined> = process.env): boolean => env.MFA_ACTIVO === 'true'
+
 export const MAX_INTENTOS_MFA = 5
 export const BLOQUEO_MFA_MS = 15 * 60_000
 export const EMISOR_TOTP = 'FerreSaaS'

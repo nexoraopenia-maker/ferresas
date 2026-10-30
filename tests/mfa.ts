@@ -12,7 +12,7 @@ import {
   base32Decode, base32Encode, generarCodigosRecuperacion, generarSecreto, hashCodigoRecuperacion,
   hotp, normalizarCodigo, otpauthUrl, totp, verificarTotp,
 } from '../src/lib/totp'
-import { BLOQUEO_MFA_MS, MAX_INTENTOS_MFA, mfaObligatorio } from '../src/features/seguridad/mfa-reglas'
+import { BLOQUEO_MFA_MS, MAX_INTENTOS_MFA, mfaObligatorio, segundoFactorExigido } from '../src/features/seguridad/mfa-reglas'
 import {
   confirmarActivacionMfa, desactivarMfa, estadoMfa, iniciarActivacionMfa, regenerarCodigosRecuperacion,
   restablecerMfaDeUsuario, verificarSegundoFactor,
@@ -27,8 +27,11 @@ const check = (n: string, ok: boolean, extra = '') => {
 const code = (p: Promise<unknown>) => p.then(() => null).catch((e) => e.code ?? e.name ?? String(e))
 const TODOS: Role[] = ['OWNER', 'ADMIN', 'VENDEDOR', 'CAJERO', 'ALMACENERO', 'CONTADOR']
 const claveAntes = process.env.PSE_MASTER_KEY
+const mfaAntes = process.env.MFA_ACTIVO
 
 async function main() {
+  // El segundo factor viene APAGADO por defecto (decisión del dueño); esta suite prueba su funcionamiento con el interruptor encendido, y al final su apagado.
+  process.env.MFA_ACTIVO = 'true'
   process.env.PSE_MASTER_KEY = Buffer.alloc(32, 7).toString('base64')
 
   console.log('\n1) TOTP: vectores del RFC 6238 (puro)')
@@ -199,6 +202,16 @@ async function main() {
   await restablecerMfaDeUsuario(getTenantPrisma(ctxDueno), ctxDueno, admin2.id)
   check('el DUEÑO restablece a un administrador, que deberá activarlo de nuevo', (await resolveTenantContext(admin2.id)).mfaPendiente === true)
 
+  console.log('\nInterruptor general del segundo factor (apagado por defecto)')
+  check('>>> sin MFA_ACTIVO (o con cualquier valor que no sea «true») el segundo factor NO se exige', !segundoFactorExigido({}) && !segundoFactorExigido({ MFA_ACTIVO: 'false' }) && !segundoFactorExigido({ MFA_ACTIVO: '1' }) && !segundoFactorExigido({ MFA_ACTIVO: 'TRUE' }) && !segundoFactorExigido({ MFA_ACTIVO: '' }) && segundoFactorExigido({ MFA_ACTIVO: 'true' }))
+  const admin3 = await prisma.user.create({ data: { tenantId: t.id, email: `a3-${randomUUID()}@x.com`, name: 'Admin3', role: 'ADMIN' } })
+  check('con el interruptor ENCENDIDO un administrador sin MFA queda pendiente', (await resolveTenantContext(admin3.id)).mfaPendiente === true)
+  delete process.env.MFA_ACTIVO
+  check('>>> con el interruptor APAGADO (el valor por defecto) no hay MFA pendiente: nadie es redirigido a activarlo', (await resolveTenantContext(admin3.id)).mfaPendiente === false && (await resolveTenantContext(owner.id)).mfaPendiente === false)
+  const auth = (await import('node:fs')).readFileSync('src/auth.ts', 'utf8')
+  check('>>> y el inicio de sesión solo pide el código si el interruptor está encendido', /r\.ok && r\.user\.mfaActivo && segundoFactorExigido\(\)/.test(auth))
+  process.env.MFA_ACTIVO = 'true'
+
   await prisma.tenant.deleteMany({ where: { id: { in: [t.id, otroT.id] } } })
   console.log(`\n${fail === 0 ? '✔' : '✖'} ${pass} pasaron, ${fail} fallaron`)
   return fail
@@ -207,5 +220,6 @@ async function main() {
 correr(async () => {
   try { return await main() } finally {
     if (claveAntes === undefined) delete process.env.PSE_MASTER_KEY; else process.env.PSE_MASTER_KEY = claveAntes
+    if (mfaAntes === undefined) delete process.env.MFA_ACTIVO; else process.env.MFA_ACTIVO = mfaAntes
   }
 })

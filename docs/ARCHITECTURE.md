@@ -1326,3 +1326,7 @@ Detalle en `docs/SUNAT-DIRECTO-DISENO.md` §17. Migración destructiva `20261128
 ### Ajuste a S5: la conexión se prueba en producción
 
 Ver `docs/SUNAT-DIRECTO-DISENO.md` §18. `pasarASunatProduccion` ya no exige prueba de conexión; con la conexión en PRODUCCIÓN y sin prueba exitosa, `elegirProveedor` lanza `ConexionSinProbar` y la cola/bajas **liberan** sin gastar intentos. La prueba exitosa (o `confirmarConexionSunat`, solo SuperAdmin) adelanta lo que esperaba. Pruebas: `sunat-produccion` (60).
+
+### Segundo factor (MFA): interruptor general
+
+`segundoFactorExigido()` (`features/seguridad/mfa-reglas.ts`): el MFA está **apagado por defecto** (decisión del dueño). Sin `MFA_ACTIVO=true` ni el inicio de sesión (`auth.ts`) pide el código, ni `resolveTenantContext` marca `mfaPendiente` (no se redirige a activarlo). No se borró nada: el código, los secretos guardados y las pantallas siguen; reactivar el interruptor restituye todo. Prueba: `mfa` (con el interruptor encendido y apagado).

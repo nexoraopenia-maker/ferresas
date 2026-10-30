@@ -4,6 +4,7 @@ import Credentials from 'next-auth/providers/credentials'
 import { verifyCredentialsDetailed } from '@/lib/credentials'
 import { checkRateLimit, clientIp, RATE_RULES } from '@/lib/rate-limit'
 import { ROUTES } from '@/lib/route-access'
+import { segundoFactorExigido } from '@/features/seguridad/mfa-reglas'
 
 /**
  * Configuración de NextAuth (Auth.js v5).
@@ -135,7 +136,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const r = await verifyCredentialsDetailed(credentials)
         const ms = Date.now() - t0
 
-        if (r.ok && r.user.mfaActivo) {
+        if (r.ok && r.user.mfaActivo && segundoFactorExigido()) {
           /*
            * Segundo factor, ANTES de abrir sesión o registrar nada. Va aquí y
            * no solo en la Server Action porque este endpoint es público.
