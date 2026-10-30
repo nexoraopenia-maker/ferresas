@@ -34,16 +34,17 @@ async function cuerpo() {
   check('el re-cifrado de secretos ya no recorre `tenants`: solo credenciales de SUNAT y secretos de MFA', !/db\.tenant|tenant:/.test(recifrado))
   check('la validación de URLs que se conserva (padrón) sigue exportada: IP internas y forma', /export function esIpInterna/.test(readFileSync('src/features/invoicing/url-segura.ts', 'utf8')) && /export function validarFormaUrl/.test(readFileSync('src/features/invoicing/url-segura.ts', 'utf8')))
 
-  console.log('\n3) El worker fiscal en Vercel Cron')
-  const vercel = JSON.parse(readFileSync('vercel.json', 'utf8')) as { crons: { path: string; schedule: string }[] }
-  check('>>> vercel.json programa /api/fiscal/worker CADA MINUTO', vercel.crons.some((c) => c.path === '/api/fiscal/worker' && c.schedule === '* * * * *'))
-  check('y conserva el cron de vencimiento de pruebas', vercel.crons.some((c) => c.path === '/api/cron/expire-trials' && c.schedule === '0 3 * * *'))
+  console.log('\n3) El worker fiscal: sin cron de Vercel, llamado desde fuera')
+  const vercelTexto = readFileSync('vercel.json', 'utf8')
+  const vercel = JSON.parse(vercelTexto) as { regions?: string[]; crons?: unknown }
+  check('>>> vercel.json es JSON válido y ya NO programa ningún cron (el worker lo llama un programador externo)', vercel.crons === undefined && !/crons/.test(vercelTexto) && !/,\s*[}\]]/.test(vercelTexto))
+  check('y conserva la región', Array.isArray(vercel.regions) && vercel.regions.includes('cle1'))
   const ruta = readFileSync('src/app/api/fiscal/worker/route.ts', 'utf8')
   check('>>> la ruta acepta GET (lo único que sabe hacer Vercel Cron) y POST, ambos con el MISMO control de secreto', /export const POST = ejecutar/.test(ruta) && /export const GET = ejecutar/.test(ruta) && (ruta.match(/secretosIguales\(/g) ?? []).length === 1 && /process\.env\.FISCAL_WORKER_SECRET/.test(ruta))
   check('>>> el secreto sale solo de las cabeceras: nunca de la URL', !/searchParams|\.nextUrl|req\.url/.test(ruta))
   check('no depende de CRON_SECRET en el código (se configura con el mismo valor)', !/process\.env\.CRON_SECRET/.test(ruta))
   const env = readFileSync('.env.example', 'utf8')
-  check('.env.example explica que CRON_SECRET debe valer lo mismo que FISCAL_WORKER_SECRET y que un cron por minuto exige el plan Pro', /CRON_SECRET debe tener EXACTAMENTE el mismo valor/.test(env) && /plan Pro/.test(env))
+  check('.env.example explica que vercel.json ya no programa el cron, que el worker lo llama un programador externo por POST, y cuándo haría falta CRON_SECRET', /YA NO programa ningún cron/.test(env) && /POST https:\/\/<tu-dominio>\/api\/fiscal\/worker/.test(env) && /CRON_SECRET debe tener EXACTAMENTE el mismo valor/.test(env))
   const acceso = readFileSync('src/lib/route-access.ts', 'utf8')
   check('la ruta es pública para el proxy (se autentica sola) pero sigue figurando en la lista de rutas abiertas', /'\/api\/fiscal'/.test(acceso))
 }
