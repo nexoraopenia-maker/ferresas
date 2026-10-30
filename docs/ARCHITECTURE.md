@@ -1330,3 +1330,7 @@ Ver `docs/SUNAT-DIRECTO-DISENO.md` §18. `pasarASunatProduccion` ya no exige pru
 ### Segundo factor (MFA): interruptor general
 
 `segundoFactorExigido()` (`features/seguridad/mfa-reglas.ts`): el MFA está **apagado por defecto** (decisión del dueño). Sin `MFA_ACTIVO=true` ni el inicio de sesión (`auth.ts`) pide el código, ni `resolveTenantContext` marca `mfaPendiente` (no se redirige a activarlo). No se borró nada: el código, los secretos guardados y las pantallas siguen; reactivar el interruptor restituye todo. Prueba: `mfa` (con el interruptor encendido y apagado).
+
+### Baja definitiva de una ferretería (SuperAdmin)
+
+`darDeBajaDefinitiva` (`superadmin/tenant-admin-service.ts`, acción `eliminarTenantAction`, opción «Dar de baja definitivamente…» en «Gestionar ⋮»). **Es un soft delete, no un borrado físico**: los comprobantes, XML firmados y CDR se conservan (mínimo 5 años, ⚠️ #12) y la base no permite borrar una venta con comprobante. En una transacción: `deletedAt` + `isActive = false` (motivo en `suspendedReason`), todos los usuarios desactivados, suscripción local `CANCELED` (la pasarela, aparte), sesiones de soporte cerradas, **credenciales de SUNAT borradas** y auditoría `tenant.baja_definitiva`. Salvaguardas: motivo ≥ 10 caracteres, el SuperAdmin debe **escribir el nombre exacto** (validado en el servidor), no se da de baja con comprobantes o bajas todavía por resolver ante SUNAT, atómica ante dos SuperAdmin. No hay botón para deshacerla; el RUC y el subdominio quedan reservados. Prueba: `tenant-baja` (24).

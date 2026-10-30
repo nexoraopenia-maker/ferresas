@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
 import {
   reactivateTenant,
   resetTenantOwnerPassword,
+  eliminarTenantAction,
   previsualizarPaseSunatAction,
   setAmbienteSunatAction,
   setFacturacionRealAction,
@@ -33,7 +34,7 @@ export interface TenantPerfil {
   email: string | null
 }
 
-type Accion = 'suspender' | 'reactivar' | 'soporte' | 'password' | 'perfil' | 'facturacion' | 'real_habilitar' | 'real_pausar' | 'real_reanudar' | 'real_ensayo' | 'sunat_produccion' | 'sunat_beta' | 'sunat_confirmar' | 'umbrales'
+type Accion = 'suspender' | 'reactivar' | 'soporte' | 'password' | 'perfil' | 'facturacion' | 'real_habilitar' | 'real_pausar' | 'real_reanudar' | 'real_ensayo' | 'sunat_produccion' | 'sunat_beta' | 'sunat_confirmar' | 'baja_definitiva' | 'umbrales'
 
 const COPY: Record<Exclude<Accion, 'perfil' | 'facturacion'>, {
   titulo: string
@@ -94,6 +95,12 @@ const COPY: Record<Exclude<Accion, 'perfil' | 'facturacion'>, {
     descripcion: 'Solo si la «Probar conexión» del dueño no puede concluir (p. ej. el servicio de consulta de SUNAT no responde) y verificaste la conexión por otro camino. Desde ahora los comprobantes de este negocio SALEN a SUNAT real.',
     boton: 'Confirmar',
     placeholder: 'Ej. Verificado con una consulta manual en el portal de SUNAT el 12/11',
+  },
+  baja_definitiva: {
+    titulo: 'Dar de baja definitivamente',
+    descripcion: 'La cuenta queda inservible para siempre: nadie podrá entrar, no se enviará nada a SUNAT ni se cobrará, y desaparece de esta lista. Los comprobantes y sus archivos se CONSERVAN (obligación de 5 años). No se puede deshacer desde el panel.',
+    boton: 'Dar de baja definitivamente',
+    placeholder: 'Ej. El cliente cerró su negocio y pidió la baja el 12/11 (ticket #4821)',
   },
   sunat_beta: {
     titulo: 'Volver SUNAT a pruebas',
@@ -162,6 +169,7 @@ export function TenantActions({
   const [criticoH, setCriticoH] = useState('')
   const [verClave, setVerClave] = useState(false)
   const [pending, startTransition] = useTransition()
+  const [confirmaNombre, setConfirmaNombre] = useState('')
   const [pase, setPase] = useState<EvaluacionPase | null>(null)
   const [paseError, setPaseError] = useState<string | null>(null)
 
@@ -172,6 +180,7 @@ export function TenantActions({
     setAccion(null)
     setReason('')
     setNuevaClave('')
+    setConfirmaNombre('')
     setAvisoH('')
     setCriticoH('')
     setVerClave(false)
@@ -187,6 +196,7 @@ export function TenantActions({
     setForm(perfil)
     setPase(null)
     setPaseError(null)
+    setConfirmaNombre('')
     setAccion(a)
     if (a === 'sunat_produccion') {
       void previsualizarPaseSunatAction({ tenantId }).then((r) => { if (r.ok) setPase(r.data); else setPaseError(r.message) })
@@ -205,6 +215,7 @@ export function TenantActions({
         : accion === 'soporte' ? await startImpersonation({ tenantId, reason })
         : accion === 'password' ? await resetTenantOwnerPassword({ tenantId, reason, password: nuevaClave })
         : accion === 'umbrales' ? await setUmbralesAlertaAction({ tenantId, reason, warnHours: horas(avisoH), criticalHours: horas(criticoH) })
+        : accion === 'baja_definitiva' ? await eliminarTenantAction({ tenantId, reason, confirmacion: confirmaNombre })
         : accion === 'sunat_produccion' || accion === 'sunat_beta' || accion === 'sunat_confirmar' ? await setAmbienteSunatAction({ tenantId, reason, accion: accion === 'sunat_produccion' ? 'produccion' : accion === 'sunat_confirmar' ? 'confirmar_conexion' : 'beta' })
         : accion.startsWith('real_') ? await setFacturacionRealAction({ tenantId, reason, accion: accion.replace('real_', '').replace('ensayo', 'volver_a_ensayo') })
         : await updateTenantProfileAction({
@@ -255,7 +266,9 @@ export function TenantActions({
       ? reason.trim().length >= 10 && nuevaClave.trim().length >= 8
       : accion === 'sunat_produccion'
         ? reason.trim().length >= 10 && pase !== null && pase.faltantes.length === 0
-        : reason.trim().length >= 10
+        : accion === 'baja_definitiva'
+          ? reason.trim().length >= 10 && confirmaNombre.trim().toLowerCase() === tenantName.trim().toLowerCase()
+          : reason.trim().length >= 10
 
   return (
     <>
@@ -313,6 +326,9 @@ export function TenantActions({
               Reactivar cuenta
             </DropdownMenuItem>
           )}
+          <DropdownMenuItem tone="danger" onSelect={() => abrir('baja_definitiva')}>
+            Dar de baja definitivamente…
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -385,6 +401,16 @@ export function TenantActions({
                 {pase && pase.advertencias.length > 0 && (
                   <ul className="ml-4 list-disc rounded-xl bg-stock-low-soft px-3 py-2 text-stock-low">{pase.advertencias.map((a) => <li key={a}>{a}</li>)}</ul>
                 )}
+              </div>
+            )}
+            {accion === 'baja_definitiva' && (
+              <div data-baja-definitiva="confirmar" className="mb-3 flex flex-col gap-2 text-sm">
+                <p role="alert" className="rounded-xl bg-stock-out-soft px-3 py-2 font-semibold text-stock-out">
+                  Acción permanente. Se desactivan todos los usuarios, se cancela la suscripción en el sistema (si el cobro vive en una pasarela, cancélalo allí aparte) y se borran sus credenciales de SUNAT.
+                </p>
+                <Campo label={`Para confirmar escribe el nombre exacto: ${tenantName}`}>
+                  <input value={confirmaNombre} onChange={(e) => setConfirmaNombre(e.target.value)} autoComplete="off" autoFocus placeholder={tenantName} className={inputCls(undefined)} />
+                </Campo>
               </div>
             )}
             {accion === 'password' && (

@@ -14,6 +14,7 @@ import { SUPPORT_COOKIE, emitirSupportToken, verificarSupportToken } from '@/lib
 import {
   reactivateTenantSchema,
   ambienteSunatSchema,
+  bajaDefinitivaSchema,
   facturacionRealSchema,
   umbralesAlertaSchema,
   resetOwnerPasswordSchema,
@@ -24,6 +25,7 @@ import {
 import { cambiarFacturacionReal, fijarUmbralesAlerta } from './facturacion-real-service'
 import { confirmarConexionSunat, evaluarPaseASunatProduccion, pasarASunatProduccion, volverASunatBeta, type EvaluacionPase } from './produccion-sunat-service'
 import {
+  darDeBajaDefinitiva,
   resetOwnerPassword as runResetPassword,
   updateTenantProfile as runUpdateProfile,
 } from './tenant-admin-service'
@@ -481,5 +483,22 @@ export async function setUmbralesAlertaAction(raw: unknown): Promise<ActionResul
     return { ok: true, data: null }
   } catch (e) {
     return fallo(e, 'setUmbralesAlertaAction')
+  }
+}
+
+
+/** Baja DEFINITIVA de una ferretería (solo SuperAdmin; exige motivo y el nombre escrito a mano; ver `darDeBajaDefinitiva`). */
+export async function eliminarTenantAction(raw: unknown): Promise<ActionResult<{ usuariosDesactivados: number }>> {
+  const parsed = bajaDefinitivaSchema.safeParse(raw)
+  if (!parsed.success) {
+    return { ok: false, code: 'VALIDATION', message: parsed.error.issues[0]?.message ?? 'Revisa los datos.', details: z.flattenError(parsed.error).fieldErrors }
+  }
+  try {
+    const admin = await requireSuperAdmin()
+    const r = await darDeBajaDefinitiva(parsed.data, { id: admin.id, email: admin.email })
+    revalidatePath(ROUTES.superadmin)
+    return { ok: true, data: { usuariosDesactivados: r.usuariosDesactivados } }
+  } catch (e) {
+    return fallo(e, 'eliminarTenantAction')
   }
 }

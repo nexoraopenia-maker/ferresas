@@ -85,6 +85,7 @@ export const ACCIONES: Readonly<Record<string, { categoria: Categoria; etiqueta:
   'sunat.credenciales_guardadas': { categoria: CO, etiqueta: 'Certificado y usuario SOL de SUNAT guardados' },
   'sunat.credenciales_quitadas': { categoria: CO, etiqueta: 'Certificado y usuario SOL de SUNAT quitados' },
   'sunat.prueba_conexion': { categoria: CO, etiqueta: 'Prueba de conexión con SUNAT' },
+  'tenant.baja_definitiva': { categoria: CO, etiqueta: 'Ferretería dada de baja definitivamente' },
   'tenant.sunat.produccion': { categoria: CO, etiqueta: 'Conexión con SUNAT pasada a producción' },
   'tenant.sunat.conexion_confirmada': { categoria: CO, etiqueta: 'Conexión con SUNAT real confirmada a mano por soporte' },
   'tenant.sunat.beta': { categoria: CO, etiqueta: 'Conexión con SUNAT devuelta a pruebas' },

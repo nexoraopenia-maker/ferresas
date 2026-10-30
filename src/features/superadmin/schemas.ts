@@ -147,3 +147,10 @@ export const updateTenantProfileSchema = z.object({
 })
 
 export type UpdateTenantProfileInput = z.infer<typeof updateTenantProfileSchema>
+
+/** Baja definitiva de una ferretería: motivo y el nombre escrito a mano (se vuelve a comprobar en el servidor). */
+export const bajaDefinitivaSchema = z.object({
+  tenantId: z.string().min(1).max(64),
+  reason: z.string().trim().min(10, 'Explica el motivo con al menos 10 caracteres.').max(500),
+  confirmacion: z.string().max(200),
+})
